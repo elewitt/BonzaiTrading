@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bonzai Trading — own the market from anywhere</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  </head>
+  <body>
+    <script>
+      function _showErr(text) {
+        var el = document.getElementById('_dev_err');
+        if (!el) { el = document.createElement('div'); el.id = '_dev_err'; el.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;padding:32px;'; document.body.appendChild(el); }
+        el.innerHTML = '<pre style="color:red;font-size:13px;white-space:pre-wrap">' + text + '</pre>';
+      }
+      window.onerror = function(msg, src, line, col, err) { _showErr(err ? err.stack : msg); };
+      window.addEventListener('unhandledrejection', function(e) { _showErr('Unhandled rejection:\n' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason))); });
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
