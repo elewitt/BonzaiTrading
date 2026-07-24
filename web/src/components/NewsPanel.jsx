@@ -40,7 +40,14 @@ function SourceBadge({ source }) {
 export default function NewsPanel({ symbols }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const symbolKey = (symbols || []).join(",");
+  // A search replaces the portfolio-driven symbol list entirely with
+  // whatever ticker was typed — /api/news already accepts any symbol, not
+  // just ones the user holds (it just falls back to the raw string as the
+  // ticker/name when the registry doesn't recognize it), so no server
+  // change is needed to look up an arbitrary ticker.
+  const [searchInput, setSearchInput] = useState("");
+  const [searchSymbol, setSearchSymbol] = useState(null);
+  const symbolKey = searchSymbol ? searchSymbol : (symbols || []).join(",");
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -64,16 +71,42 @@ export default function NewsPanel({ symbols }) {
     return () => clearInterval(timerRef.current);
   }, [symbolKey]);
 
+  const runSearch = (e) => {
+    e.preventDefault();
+    const cleaned = searchInput.trim().replace(/^\$/, "").toUpperCase();
+    if (cleaned) setSearchSymbol(cleaned);
+  };
+  const clearSearch = () => {
+    setSearchInput("");
+    setSearchSymbol(null);
+  };
+
   return (
     <aside className="news-panel card">
-      <p className="table-card-title" style={{ marginBottom: 14 }}>News Feed</p>
+      <form className="news-search-row" onSubmit={runSearch}>
+        <input
+          className="perps-asset-search news-search-input"
+          placeholder="Search news — e.g. $TSLA"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
+        {searchSymbol && (
+          <button type="button" className="btn ghost news-search-clear" onClick={clearSearch}>Clear</button>
+        )}
+      </form>
+
+      <p className="table-card-title" style={{ marginBottom: 14 }}>
+        {searchSymbol ? `News for $${searchSymbol}` : "News Feed"}
+      </p>
 
       {loading && !items.length && (
         <div className="loading-dots" style={{ marginTop: 8 }}><span /><span /><span /></div>
       )}
 
       {!loading && !items.length && (
-        <p className="tiny muted">No news found for your positions.</p>
+        <p className="tiny muted">
+          {searchSymbol ? `No news found for $${searchSymbol}.` : "No news found for your positions."}
+        </p>
       )}
 
       <div className="news-feed">

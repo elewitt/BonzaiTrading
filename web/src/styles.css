@@ -36,6 +36,7 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .label  { text-transform: uppercase; letter-spacing: .13em; color: var(--moss); font-size: 11px; font-weight: 500; }
 .warn   { color: var(--loss); }
 .gain   { color: var(--gain); }
+.gold   { color: var(--gold); }
 
 /* ——— Header ——— */
 .lv-head {
@@ -57,6 +58,8 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   color: var(--ink); display: flex; align-items: center; gap: 13px;
 }
 .wordmark-logo { height: 44px; width: 44px; border-radius: 10px; display: block; object-fit: cover; flex-shrink: 0; }
+.wordmark-btn { border: none; background: none; padding: 0; font-family: inherit; cursor: pointer; transition: opacity .15s; }
+.wordmark-btn:hover { opacity: .8; }
 .head-right { display: flex; gap: 10px; align-items: center; }
 .chip {
   border: 1px solid var(--line);
@@ -157,70 +160,64 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .auth-cta { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .auth-signin-btn { width: 100%; font-size: 15px; padding: 14px; }
 
-/* ——— Demo animation card ——— */
+/* ——— Demo animation card ———
+   Reuses the real dashboard's own design language (var(--paper/--card/
+   --ink/--line/--pine), Young Serif headline values, .seg-btn tabs,
+   .cat-badge/.pos-side-badge chips, .alloc-bar-track) instead of a
+   standalone dark mockup, so this reads as an actual screen from the
+   product rather than generic marketing art. */
 .demo-card {
-  background:
-    radial-gradient(ellipse 65% 55% at 88% 8%, rgba(40,130,70,0.2) 0%, transparent 60%),
-    radial-gradient(ellipse 45% 40% at 12% 92%, rgba(20,90,45,0.14) 0%, transparent 60%),
-    #0C1A10;
-  border-radius: 20px;
-  padding: 22px 24px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 22px 22px 18px;
   position: relative;
   overflow: hidden;
   transition: opacity 0.6s ease;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.22), 0 1px 4px rgba(0,0,0,0.18);
+  box-shadow: 0 2px 5px rgba(10,24,18,.07), 0 18px 42px rgba(10,24,18,.14), inset 0 1px 0 rgba(255,255,255,.6);
+  text-align: left;
 }
 .demo-card.demo-fading { opacity: 0; }
-.demo-glow {
-  position: absolute; right: -60px; top: -60px;
-  width: 240px; height: 240px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(60,180,90,0.12) 0%, transparent 65%);
-  pointer-events: none;
-}
-.demo-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px;
-}
-.demo-wordmark {
-  font-family: 'Young Serif', Georgia, serif;
-  font-size: 16px; color: #48CC7A; letter-spacing: -0.02em;
-}
-.demo-header-label {
-  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
-  color: #2A4C34; font-weight: 500;
+
+.demo-value-block { margin-bottom: 16px; }
+.demo-eyebrow { margin: 0 0 4px; font-size: 10px; }
+.demo-value {
+  font-size: 30px; margin: 0; color: var(--ink);
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
 }
 
 /* Prompt row */
-.demo-prompt-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.demo-prompt-box {
-  flex: 1; min-height: 42px; padding: 10px 14px;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px; font-size: 13px; color: #CBE8D6;
-  display: flex; align-items: center; gap: 0; font-family: inherit;
-  position: relative;
+.demo-prompt-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+/* .field combined for specificity — .field's own font-size/padding are
+   defined later in this file and would otherwise win at equal specificity. */
+.demo-prompt-box.field {
+  flex: 1; min-height: 20px; display: flex; align-items: center;
+  font-size: 12.5px; padding: 9px 12px; overflow: hidden; white-space: nowrap;
 }
-.demo-placeholder { color: #2E5040; font-style: italic; }
-.demo-typed { color: #CBE8D6; }
+.demo-placeholder { color: var(--moss); font-style: italic; }
+.demo-typed { color: var(--ink); }
 .demo-cursor {
-  display: inline-block; width: 2px; height: 14px;
-  background: #48CC7A; border-radius: 1px; margin-left: 2px;
+  display: inline-block; width: 1.5px; height: 13px;
+  background: var(--pine); border-radius: 1px; margin-left: 2px;
   animation: demo-blink 1s step-end infinite; vertical-align: middle;
 }
 @keyframes demo-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
-.demo-go-btn {
-  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
-  background: #163A23; border: 1px solid rgba(72,204,122,0.2);
-  color: #48CC7A; font-size: 16px; font-weight: 600;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.2s;
+/* .btn.primary combined for specificity — same reasoning as .demo-prompt-box.field. */
+.demo-go-btn.btn {
+  flex-shrink: 0; padding: 8px 16px; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
 }
-.demo-go-btn.demo-go-active { background: #1A4A2A; }
 .demo-spinner {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid rgba(72,204,122,0.2);
-  border-top-color: #48CC7A;
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.35);
+  border-top-color: #fff;
   animation: spin .7s linear infinite; display: block;
 }
+
+/* Product tabs — the real .seg-ctrl/.seg-btn, just smaller to fit the card */
+.demo-seg-ctrl { margin-bottom: 16px; }
+.demo-seg-btn.seg-btn { font-size: 10.5px; padding: 5px 10px; }
 
 /* Processing */
 .demo-processing {
@@ -230,70 +227,86 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   margin-bottom: 0;
 }
 .demo-processing.demo-visible {
-  height: 28px; opacity: 1; margin-bottom: 14px;
+  height: 24px; opacity: 1; margin-bottom: 10px;
 }
 .demo-proc-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: #48CC7A;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--pine);
   animation: demo-proc-pulse 1.2s ease-in-out infinite;
 }
 .demo-proc-dot:nth-child(2) { animation-delay: 0.2s; }
 .demo-proc-dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes demo-proc-pulse { 0%,100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
-.demo-proc-text { font-size: 12px; color: #3A6048; font-style: italic; }
+.demo-proc-text { font-size: 11px; color: var(--moss); font-style: italic; }
 
-/* Result panel */
+/* Result panel — the real .table-card, just recessed a shade against the
+   lighter card above it so it still reads as its own panel. */
 .demo-result {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 14px 4px;
   opacity: 0; transform: translateY(6px);
   transition: opacity 0.4s ease, transform 0.4s ease;
 }
 .demo-result.demo-visible { opacity: 1; transform: translateY(0); }
-.demo-result-header {
-  display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px;
-}
-.demo-result-eyebrow {
-  font-size: 10px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: #2E5040;
-}
-.demo-result-value {
-  font-family: 'Young Serif', Georgia, serif; font-size: 26px; color: #E8F4EE; letter-spacing: -0.02em;
-}
-.demo-rows { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
+.demo-table-title.table-card-title { font-size: 11px; margin: 0 0 10px; }
+.demo-rows { display: flex; flex-direction: column; }
 
-/* Each allocation row */
-.demo-row {
-  display: flex; align-items: center; gap: 9px;
+/* Allocation-style rows (portfolio / predictions) — mirrors Donut.jsx's
+   own .legend-row grid exactly. */
+.demo-alloc-row {
+  display: grid; grid-template-columns: 10px 1.7fr .8fr 1.3fr; gap: 10px;
+  align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line);
   opacity: 0; transform: translateY(5px);
   transition: opacity 0.28s ease, transform 0.28s ease;
 }
-.demo-row.demo-row-visible { opacity: 1; transform: translateY(0); }
-.demo-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.demo-sym {
-  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-  font-weight: 500; color: #9ECFB6; width: 38px; flex-shrink: 0;
+.demo-alloc-row:last-child { border-bottom: none; }
+.demo-alloc-row.demo-row-visible { opacity: 1; transform: translateY(0); }
+.demo-row-dot { width: 8px; height: 8px; border-radius: 2.5px; }
+.demo-row-price { text-align: right; }
+
+/* Attribute rows (perps / borrow) — label : value, same tokens/colors,
+   simpler shape since these describe one position, not a % composition. */
+.demo-attr-headline { display: flex; align-items: center; gap: 8px; padding-bottom: 10px !important; }
+.demo-attr-asset { font-size: 15px; font-weight: 600; color: var(--ink); }
+.demo-attr-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  opacity: 0; transform: translateY(5px);
+  transition: opacity 0.28s ease, transform 0.28s ease;
 }
-.demo-name { font-size: 11px; color: #3E6050; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; }
-.demo-bar-track {
-  width: 110px; flex-shrink: 0; height: 5px;
-  background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden;
-}
-.demo-bar-fill {
-  height: 100%; border-radius: 999px; width: 0;
-  transition: width 0.65s cubic-bezier(0.34, 1.2, 0.64, 1);
-}
-.demo-pct {
-  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-  color: #3E6050; width: 28px; text-align: right; flex-shrink: 0;
-}
+.demo-attr-row:last-child { border-bottom: none; }
+.demo-attr-row.demo-row-visible { opacity: 1; transform: translateY(0); }
+.demo-attr-code { width: 40px; flex-shrink: 0; }
+.demo-attr-label { flex: 1; }
+.demo-attr-value { font-size: 12.5px; color: var(--ink); font-weight: 500; }
+/* .gain combined for specificity — .demo-attr-value's own color would
+   otherwise win at equal specificity since it's defined later. */
+.demo-attr-value.gain { color: var(--gain); }
 
 /* Confirm row */
 .demo-confirm-row {
-  display: flex; align-items: center; gap: 8px;
-  padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 0; margin-top: 2px; border-top: 1px solid var(--line);
   opacity: 0; transform: translateY(4px);
   transition: opacity 0.3s ease 0.1s, transform 0.3s ease 0.1s;
 }
 .demo-confirm-row.demo-row-visible { opacity: 1; transform: translateY(0); }
-.demo-confirm-icon { font-size: 13px; color: #48CC7A; }
-.demo-confirm-text { font-size: 12px; color: #3A6048; }
+.demo-confirm-icon { font-size: 12px; color: var(--gain); }
+.demo-confirm-text { font-size: 11.5px; color: var(--moss); }
+
+/* Scene indicator — four dots signaling the card cycles through the whole
+   product line, not just replaying one demo. */
+.demo-scene-dots {
+  display: flex; justify-content: center; gap: 6px;
+  margin-top: 16px; position: relative; z-index: 1;
+}
+.demo-scene-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--line);
+  transition: background 0.4s ease, transform 0.4s ease;
+}
+.demo-scene-dot-active { background: var(--pine); transform: scale(1.4); }
 
 /* ——— Inputs ——— */
 .field {
@@ -572,12 +585,54 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   margin: 0 -10px 8px; padding: 10px 10px 9px;
 }
 .table-card .thead span { font-size: 10px; font-weight: 600; letter-spacing: .1em; }
+
+/* ——— Perps Positions table (main dashboard) — a real <table> so header
+   and body columns are guaranteed to line up, with column separators and
+   the same plain sans-serif numeral treatment as the summary card above
+   it (font-variant-numeric keeps digits tabular without going monospace) ——— */
+.positions-table-wrap { overflow-x: auto; margin: 0 -10px; }
+.positions-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.positions-table thead tr { background: var(--paper); }
+.positions-table th, .positions-table td {
+  padding: 12px 14px; text-align: right; border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+.positions-table th:last-child, .positions-table td:last-child { border-right: none; padding-right: 10px; }
+.positions-table th:first-child, .positions-table td:first-child { padding-left: 10px; }
+.positions-table th {
+  font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--moss); white-space: nowrap;
+}
+.positions-table td { font-size: 14px; color: var(--ink); }
+.positions-table th.pt-asset, .positions-table td.pt-asset { text-align: left; }
+.positions-table th.pt-action { width: 1%; }
+.positions-table tbody tr:last-child td { border-bottom: none; }
+.positions-table tbody tr { transition: background .15s; }
+.positions-table tbody tr:hover { background: var(--paper); }
+.pos-side-row { display: flex; align-items: center; gap: 7px; margin-top: 2px; }
+.pos-side-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; line-height: 1.5;
+}
+.pos-side-badge.long { background: rgba(21,96,64,.1); color: var(--gain); }
+.pos-side-badge.short { background: rgba(150,54,38,.1); color: var(--loss); }
+.pos-leverage-chip {
+  display: inline-block; width: fit-content; font-size: 13px; font-weight: 600;
+  padding: 3px 10px; border-radius: 6px; background: var(--paper);
+  border: 1px solid var(--line); color: var(--ink);
+}
+.pos-pnl { font-weight: 600; }
+@media(max-width:600px) {
+  .positions-table th:nth-child(3), .positions-table td:nth-child(3),
+  .positions-table th:nth-child(6), .positions-table td:nth-child(6) { display: none; }
+}
 .trow {
   display: grid; grid-template-columns: 2fr 1fr 1fr 1fr .7fr; gap: 10px;
   padding: 14px 0; border-bottom: 1px solid var(--line); align-items: center;
   font-variant-numeric: tabular-nums;
 }
 .trow:last-child { border-bottom: none; }
+a.trow { color: inherit; text-decoration: none; }
 .thead { border-bottom: 1px solid var(--line); padding-bottom: 9px; }
 .asset { display: flex; flex-direction: column; gap: 2px; }
 .asset .serif { font-size: 15px; font-weight: 500; }
@@ -616,6 +671,13 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   animation: slideUp .18s ease;
 }
 @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ——— Trade execution/routing progress — now a popup over the dashboard
+   instead of navigating to a separate screen. .card + .exec-card each
+   carry their own padding (for their original full-page context) that
+   would otherwise stack with .modal-box's own — collapse to one clean
+   value here rather than let them compound. */
+.modal-box.exec-modal-box { max-width: 620px; padding: 28px 32px; }
 
 /* ——— Deposit modal ——— */
 .deposit-modal { max-width: 380px; text-align: center; }
@@ -721,6 +783,10 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .news-panel::-webkit-scrollbar { width: 4px; }
 .news-panel::-webkit-scrollbar-track { background: transparent; }
 .news-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
+
+.news-search-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.news-search-input { margin-bottom: 0; }
+.news-search-clear { flex-shrink: 0; padding: 8px 14px; font-size: 12px; }
 
 .news-feed { display: flex; flex-direction: column; }
 
@@ -946,21 +1012,29 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .alloc-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 20px; }
 .alloc-actions .btn { flex: 1; font-size: 13px; padding: 9px 0; }
 
-/* ——— Allocation card tabs (own + watched portfolios) ——— */
-.alloc-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.alloc-tab {
+/* ——— Watched-portfolio tabs, sit above the Brokerage Account card ——— */
+.watch-tabs-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.watch-tab {
   display: flex; align-items: center; gap: 6px;
   border: 1px solid var(--line); background: var(--card); border-radius: 999px;
   padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit; color: var(--moss);
   transition: all .15s;
 }
-.alloc-tab:hover { border-color: var(--pine); color: var(--pine); }
-.alloc-tab.active { background: var(--pine); border-color: var(--pine); color: #fff; }
+.watch-tab:hover { border-color: var(--pine); color: var(--pine); }
+.watch-tab.active { background: var(--pine); border-color: var(--pine); color: #fff; }
 .alloc-tab-x {
   font-size: 13px; line-height: 1; opacity: .7; padding: 0 1px;
 }
 .alloc-tab-x:hover { opacity: 1; }
-.alloc-tab-add { font-weight: 600; padding: 5px 11px; }
+.watch-tab-add { font-weight: 600; padding: 5px 11px; }
+.watch-tab-more { font-style: italic; }
+
+.watch-readonly-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: var(--moss);
+}
+.watch-readonly-banner .btn { font-size: 12px; padding: 6px 14px; white-space: nowrap; }
 
 /* ——— Dashboard product tabs (Brokerage / Perps / Borrow-Lend) ——— */
 .dash-product-tabs { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 16px; }
@@ -1059,6 +1133,19 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .asset-link { display: inline-block; margin-bottom: 12px; text-decoration: none; }
 .asset-row-clickable { cursor: pointer; transition: background .15s; }
 .asset-row-clickable:hover { background: var(--paper); }
+/* Equities Markets list — no hover fill/shadow, just the pointer cursor
+   already on .asset-row-clickable; the Brokerage Positions table keeps its
+   own hover highlight above, unaffected. */
+.equities-row:hover { background: none; box-shadow: none; }
+
+/* ——— Prediction Markets list ——— */
+.pm-row:hover { background: var(--paper); }
+.pm-outcome {
+  font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600;
+  width: fit-content; padding: 3px 10px; border-radius: 999px;
+}
+.pm-yes { color: var(--gain); background: rgba(21,96,64,.1); }
+.pm-no { color: var(--loss); background: rgba(150,54,38,.1); }
 
 /* ——— Header nav buttons (Perps / Borrow / My Profile) ——— */
 .head-left { display: flex; align-items: center; gap: 18px; }
@@ -1214,6 +1301,8 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .lvp-order-summary .lvp-row { font-size: 13px; }
 .lvp-order-summary .lvp-row > span:last-child { font-family: 'IBM Plex Mono', monospace; }
 .lvp-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.lvp-size-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lvp-size-pair .lvp-field { margin-bottom: 0; }
 .lvp-field span { color: var(--moss); font-size: 12px; }
 .lvp-input-wrap { position: relative; }
 .lvp-input-wrap input {
@@ -1228,16 +1317,6 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   color: var(--moss); padding: 4px 8px; font-size: 11px; cursor: pointer; font-family: inherit;
 }
 .lvp-max:hover { border-color: var(--pine); color: var(--pine); }
-.lvp-quotes { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
-.lvp-quote {
-  display: flex; flex-direction: column; gap: 3px; text-align: left;
-  background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
-  padding: 11px 14px; color: var(--ink); cursor: pointer; font-family: inherit;
-  transition: border-color .15s;
-}
-.lvp-quote.sel { border-color: var(--pine); }
-.lvp-quote-name { font-weight: 600; font-size: 14px; }
-.lvp-quote-out { font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
 .lvp-btn {
   width: 100%; border: 1px solid var(--line); background: var(--paper);
   color: var(--ink); border-radius: 10px; padding: 12px; font-weight: 600;
@@ -1253,6 +1332,7 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .lvp-error { color: var(--loss); font-size: 12px; margin: 4px 0; }
 .lvp-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .lvp-progress-label { font-size: 15px; font-weight: 500; }
+.lvp-step-count { font-weight: 600; color: var(--moss); }
 .lvp-dot {
   width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
   background: var(--pine); animation: lvp-pulse 1.2s ease-in-out infinite;
@@ -1379,7 +1459,11 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 
 /* ── Shared layout ── */
 .lp-center {
-  max-width: 760px;
+  /* Wide enough that the full headline ("Your perfect portfolio is one
+     prompt away") fits on one line at the headline's max font-size —
+     only used for the hero, so safe to size around that specific need
+     rather than a generic narrow-column width. */
+  max-width: 1360px;
   margin: 0 auto;
   padding: 0 24px;
   display: flex;
@@ -1417,11 +1501,28 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .lp-headline {
   font-family: 'Young Serif', Georgia, serif;
-  font-size: clamp(40px, 6vw, 72px);
+  /* Sized (with .lp-center's width above) so the FULL headline fits on
+     one line — the whole phrase is meaningfully longer than the old
+     two-line split, so both a wider container and a smaller max size
+     than before are needed for a safe one-line fit across widths. */
+  font-size: clamp(24px, 3.6vw, 46px);
   font-weight: 400;
-  line-height: 1.35;
+  line-height: 1.3;
   color: var(--ink);
   margin: 12px 0 44px;
+}
+/* Rotating word — synced to the demo card's own scene index (see
+   LandingPage.jsx's onSceneChange), remounted (via a React `key`) on each
+   change so this animation replays every time rather than needing a
+   from/to transition on the text itself. */
+.lp-headline-word {
+  display: inline-block;
+  color: var(--pine);
+  animation: lp-word-in 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes lp-word-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .lp-sub {
   font-size: 17px;
@@ -1448,278 +1549,11 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   border-radius: 12px;
 }
 
-/* ── How it works ── */
-.lp-how {
-  border-top: 1px solid var(--line);
-}
-.lp-steps {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 48px;
-  margin-top: 60px;
-}
-.lp-step {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.lp-step-num {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-  color: var(--pine);
-  letter-spacing: .12em;
-  font-weight: 600;
-}
-.lp-step-title {
-  font-family: 'Young Serif', Georgia, serif;
-  font-size: 22px;
-  font-weight: 400;
-  color: var(--ink);
-  margin: 0;
-}
-.lp-step-body {
-  font-size: 14px;
-  color: var(--moss);
-  line-height: 1.6;
-  margin: 0 0 16px;
-}
-
-/* ── Step illustrations ── */
-.lp-illust {
-  background: linear-gradient(150deg, #111f16 0%, #0b1610 100%);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 16px;
-  padding: 20px;
-  overflow: hidden;
-  margin-top: 4px;
-}
-
-/* Prompt illustration */
-.lp-illust-input {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(255,255,255,.05);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 9px;
-  padding: 9px 12px;
-  font-size: 12px;
-  color: rgba(255,255,255,.7);
-  margin-bottom: 10px;
-}
-.lp-illust-down-arrow {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 10px;
-}
-.lp-illust-chips {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 5px;
-}
-.lp-illust-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: rgba(255,255,255,.04);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 7px 8px;
-}
-.lp-illust-chip-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.lp-illust-chip-sym {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-  font-weight: 700;
-  flex: 1;
-}
-.lp-illust-chip-pct {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  color: rgba(255,255,255,.32);
-}
-
-/* Execution illustration */
-.lp-illust-exec-header {
-  text-align: center;
-  padding-bottom: 14px;
-  border-bottom: 1px solid rgba(255,255,255,.07);
-  margin-bottom: 14px;
-}
-.lp-illust-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .12em;
-  color: #34D399;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-}
-.lp-illust-live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #34D399;
-  animation: lp-illust-pulse 1.5s ease-in-out infinite;
-}
-@keyframes lp-illust-pulse { 50% { opacity: .25; } }
-.lp-illust-247 {
-  font-family: 'Young Serif', Georgia, serif;
-  font-size: 44px;
-  font-weight: 400;
-  color: #fff;
-  line-height: 1;
-  letter-spacing: -.01em;
-}
-.lp-illust-exec-sub {
-  font-size: 11px;
-  color: rgba(255,255,255,.32);
-  margin-top: 4px;
-  letter-spacing: .04em;
-}
-.lp-illust-exec-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin-bottom: 14px;
-}
-.lp-illust-exec-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.lp-illust-exec-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-.lp-illust-exec-row.done .lp-illust-exec-icon { background: rgba(52,211,153,.15); color: #34D399; }
-.lp-illust-exec-row.live .lp-illust-exec-icon { background: rgba(251,191,36,.12); color: #FBBF24; }
-.lp-illust-exec-sym {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(255,255,255,.75);
-  min-width: 36px;
-}
-.lp-illust-exec-track {
-  flex: 1;
-  height: 4px;
-  background: rgba(255,255,255,.07);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.lp-illust-exec-fill { height: 100%; border-radius: 2px; }
-.lp-illust-exec-fill.done { width: 100%; background: #34D399; }
-.lp-illust-exec-fill.live {
-  width: 60%; background: #FBBF24;
-  animation: lp-exec-bar 1.4s ease-in-out infinite alternate;
-}
-@keyframes lp-exec-bar { to { opacity: .45; } }
-.lp-illust-exec-time {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  color: rgba(255,255,255,.3);
-  min-width: 28px;
-  text-align: right;
-}
-.lp-illust-exec-footer {
-  font-size: 10px;
-  color: rgba(255,255,255,.22);
-  text-align: center;
-  letter-spacing: .06em;
-  font-weight: 500;
-  border-top: 1px solid rgba(255,255,255,.06);
-  padding-top: 10px;
-}
-
-/* Rebalance illustration */
-.lp-illust-rebal-cols {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-.lp-illust-rebal-col { flex: 1; min-width: 0; }
-.lp-illust-rebal-colhead {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,.28);
-  margin-bottom: 9px;
-}
-.lp-illust-rebal-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-.lp-illust-rebal-sym {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(255,255,255,.4);
-  min-width: 32px;
-  flex-shrink: 0;
-}
-.lp-illust-rebal-track {
-  flex: 1;
-  height: 6px;
-  background: rgba(255,255,255,.07);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.lp-illust-rebal-fill { height: 100%; border-radius: 3px; }
-.lp-illust-rebal-pct {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 9px;
-  min-width: 24px;
-  text-align: right;
-  flex-shrink: 0;
-}
-.lp-illust-rebal-mid {
-  font-size: 20px;
-  color: var(--pine);
-  flex-shrink: 0;
-  line-height: 1;
-  padding: 0 4px;
-  align-self: center;
-}
-.lp-illust-rebal-prompt {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  background: rgba(255,255,255,.04);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 11px;
-  color: rgba(255,255,255,.42);
-  font-style: italic;
-}
-
 /* ── Assets marquee section (dark) ── */
 .lp-assets-section {
   background: var(--ink);
   padding: 100px 0;
   overflow: hidden;
-}
-.lp-dark-eyebrow {
-  color: var(--pine) !important;
 }
 .lp-dark-title {
   color: var(--paper) !important;
@@ -1776,89 +1610,35 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   color: rgba(255,255,255,.45);
 }
 
-/* ── Features grid ── */
-.lp-features-section {
-  border-top: 1px solid var(--line);
+/* ── Bonzai Trading Products (tabbed) ── */
+.lp-products-tabbed { padding: 100px 0; }
+.lp-tab-row {
+  display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;
+  margin: 40px 0;
 }
-.lp-features {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-  margin-top: 60px;
+.lp-tab-btn {
+  border: 1.5px solid var(--line); background: var(--card);
+  color: var(--moss); font-family: inherit; font-size: 14px; font-weight: 500;
+  padding: 11px 22px; border-radius: 999px; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
 }
-.lp-feature {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 28px;
-  transition: box-shadow .2s ease, border-color .2s ease, transform .2s ease;
+.lp-tab-btn:hover { border-color: var(--pine); color: var(--pine); }
+.lp-tab-btn.active {
+  background: var(--pine); border-color: var(--pine); color: #fff;
 }
-.lp-feature:hover {
-  border-color: rgba(26,68,51,.2);
-  box-shadow: 0 2px 5px rgba(10,24,18,.06), 0 14px 32px rgba(10,24,18,.08);
-  transform: translateY(-2px);
+.lp-tab-panel {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center;
 }
-.lp-feature-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: rgba(21,96,64,.1);
-  border: 1px solid rgba(21,96,64,.14);
-  color: var(--pine);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.lp-feature-title {
-  font-family: 'Young Serif', Georgia, serif;
-  font-size: 19px;
-  font-weight: 400;
-  color: var(--ink);
-  margin: 0;
-}
-.lp-feature-body {
-  font-size: 13px;
-  color: var(--moss);
-  line-height: 1.6;
-  margin: 0;
-}
-
-/* ── Products: Perps & Borrow/Lend ── */
-.lp-products-section {
-  background: var(--ink);
-  padding: 100px 0;
-}
-.lp-products {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 28px;
-  margin-top: 60px;
-}
-.lp-product-card {
-  display: flex;
-  flex-direction: column;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  overflow: hidden;
-  transition: box-shadow .2s ease, border-color .2s ease;
-}
-.lp-product-card:hover {
-  border-color: rgba(255,255,255,.25);
-  box-shadow: 0 2px 5px rgba(0,0,0,.2), 0 16px 40px rgba(0,0,0,.35);
-}
-.lp-product-shot-wrap {
-  border-bottom: 1px solid var(--line);
-  background: var(--paper);
-}
-.lp-product-shot {
-  display: block;
-  width: 100%;
-  height: auto;
+.lp-tab-picture { display: flex; justify-content: center; }
+/* Reuses .demo-card almost as-is (see DemoAnimation's own styling) — just
+   a touch wider since it's the sole focus here, not a compact hero widget. */
+.lp-tab-card { width: 100%; max-width: 400px; animation: lp-tab-fade .35s ease; }
+@keyframes lp-tab-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.lp-tab-prompt-chip {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 14px; margin-bottom: 16px; width: fit-content;
+  font-size: 12px; color: var(--ink);
 }
 .lp-product-content {
   display: flex;
@@ -1952,15 +1732,16 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
+}
+.lp-infra-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 .lp-infra-name {
   font-size: 16px;
   color: var(--ink);
-}
-.lp-infra-desc {
-  text-transform: uppercase;
-  letter-spacing: .1em;
 }
 
 /* ── Final CTA (dark) ── */
@@ -2004,19 +1785,17 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 
 /* ── Landing page responsive ── */
 @media (max-width: 900px) {
-  .lp-steps  { grid-template-columns: 1fr; gap: 48px; }
-  .lp-features { grid-template-columns: repeat(2, 1fr); }
-  .lp-products { grid-template-columns: 1fr; }
+  .lp-tab-panel { grid-template-columns: 1fr; gap: 32px; }
+  .lp-tab-picture { order: -1; }
 }
 @media (max-width: 600px) {
   .lp-hero { padding: 36px 0 60px; }
   .lp-section { padding: 70px 0; }
   .lp-container { padding: 0 20px; }
   .lp-center { padding: 0 20px; }
-  .lp-features { grid-template-columns: 1fr; }
   .lp-infra { gap: 32px; }
-  .lp-product-card { padding: 24px; }
-  .lp-feature { padding: 22px; }
+  .lp-tab-row { gap: 8px; }
+  .lp-tab-btn { padding: 9px 16px; font-size: 13px; }
 }
 
 /* ——— Borrow (Kamino xStocks Market) ——— */
@@ -2034,6 +1813,18 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .borrow-tab:hover { color: var(--ink); }
 .borrow-tab.active { color: var(--pine); border-bottom-color: var(--pine); }
+
+/* ——— Admin tool — Customer Service / Ops split ——— */
+.admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 20px 0 22px; }
+.admin-tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 12px 4px; margin-right: 22px; font-family: 'Marcellus', 'Young Serif', Georgia, serif;
+  font-size: 16px; color: var(--moss); cursor: pointer; transition: all .15s;
+}
+.admin-tab:hover { color: var(--ink); }
+.admin-tab.active { color: var(--pine); border-bottom-color: var(--pine); }
+.admin-ops-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; align-items: start; }
+.admin-ops-grid .card { margin-bottom: 0; }
 
 .borrow-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 
@@ -2061,17 +1852,37 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .borrow-subtab.active { background: var(--pine); border-color: var(--pine); color: #fff; }
 .borrow-section-panel { display: flex; flex-direction: column; gap: 10px; }
 
-.borrow-asset-list { display: flex; flex-direction: column; gap: 6px; }
+.borrow-asset-list { display: flex; flex-direction: column; gap: 10px; }
 .borrow-asset-row {
-  display: flex; justify-content: space-between; align-items: center;
-  width: 100%; text-align: left; border: 1px solid var(--line); background: var(--paper);
-  border-radius: 10px; padding: 10px 14px; cursor: pointer; font-family: inherit;
+  display: flex; flex-direction: column; gap: 10px;
+  width: 100%; text-align: left; border: 1px solid var(--line); background: var(--card);
+  border-radius: 12px; padding: 14px 16px; cursor: pointer; font-family: inherit;
   color: var(--ink); transition: all .15s;
+  box-shadow: 0 1px 2px rgba(10,24,18,.03);
 }
-.borrow-asset-row:hover { border-color: var(--pine); }
-.borrow-asset-row.sel { background: rgba(26,68,51,.08); border-color: var(--pine); }
+.borrow-asset-row:hover { border-color: var(--pine); box-shadow: 0 2px 8px rgba(10,24,18,.06); }
+.borrow-asset-row.sel { background: rgba(26,68,51,.05); border-color: var(--pine); box-shadow: 0 2px 8px rgba(26,68,51,.1); }
 
-.borrow-withdraw-picker .borrow-asset-row { padding: 7px 12px; }
+.borrow-asset-row-top { display: flex; justify-content: space-between; align-items: center; }
+.borrow-asset-symbol { font-size: 15px; font-weight: 600; }
+
+.borrow-asset-rates { display: flex; gap: 8px; flex-wrap: wrap; }
+.borrow-rate-chip {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; min-width: 84px;
+}
+.borrow-rate-chip .tiny { text-transform: uppercase; letter-spacing: .05em; font-size: 10px; }
+.borrow-rate-chip .mono { font-size: 13px; font-weight: 600; }
+.borrow-rate-chip-borrow .mono { color: var(--loss); }
+.borrow-rate-chip-deposit .mono { color: var(--gain); }
+
+/* Simpler single-line variant reused by the Withdraw collateral picker
+   (PositionCard.jsx) — no rates, just symbol + amount, so it doesn't need
+   the fuller row's vertical stacking or padding. */
+.borrow-withdraw-picker .borrow-asset-row {
+  flex-direction: row; justify-content: space-between; align-items: center; padding: 7px 12px;
+}
 
 .borrow-input-wrap { display: flex; gap: 8px; align-items: center; }
 .borrow-input-wrap .field { flex: 1; }
