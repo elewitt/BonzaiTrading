@@ -523,7 +523,204 @@ function HyperliquidBuilderFeesSection({ password }) {
   );
 }
 
-function CustomerLookup({ password, onLogout }) {
+function KaminoFeesSection({ password }) {
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function refresh() {
+    try {
+      setStatus(await adminFetch("/api/admin/kamino-fees/status", password));
+      setError(null);
+    } catch (err) {
+      setError(err.message || "Failed to load Kamino fee status.");
+    }
+  }
+
+  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Section title="Kamino deposit fees — borrow/lend">
+      {error && <div className="tiny warn" style={{ marginBottom: 8 }}>{error}</div>}
+      {!status ? (
+        <p className="muted tiny">Loading…</p>
+      ) : !status.configured ? (
+        <p className="muted tiny">Sponsor wallet not configured — Kamino fees unavailable.</p>
+      ) : (
+        <>
+          <div className="trow"><span className="label">Fee rate</span><span className="mono">{(status.feeBps / 100).toFixed(2)}% on deposit</span></div>
+          <div className="trow"><span className="label">Fee wallet</span><span className="mono tiny">{status.sponsorAddress}</span></div>
+          <div className="trow"><span className="label">Total collected (lifetime)</span><span className="mono">{usd(status.totalUsd)}</span></div>
+          <div className="trow"><span className="label">Fee events</span><span className="mono">{status.count}</span></div>
+          <p className="tiny muted" style={{ marginTop: 6 }}>
+            No separate claim step — each fee lands directly in the wallet above as a plain transfer the moment it's charged.
+          </p>
+          {status.byAsset.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <p className="tiny label" style={{ marginBottom: 6 }}>By asset</p>
+              {status.byAsset.map((a) => (
+                <div className="trow" key={a.mint}>
+                  <span>{a.symbol || short(a.mint)}</span>
+                  <span className="mono">{usd(a.usd)} <span className="tiny muted">({a.count})</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// Live, not load-once like the other Ops sections — these wallets can run
+// dry between page loads with zero other warning signal (they just silently
+// stop sponsoring gas), so this polls rather than waiting for a manual
+// refresh.
+const SPONSOR_LOW_SOL = 0.01;
+const SPONSOR_LOW_ETH = 0.002;
+
+function GasSponsorSection({ password }) {
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function refresh() {
+    try {
+      setStatus(await adminFetch("/api/admin/sponsor-status", password));
+      setError(null);
+    } catch (err) {
+      setError(err.message || "Failed to load sponsor wallet status.");
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const h = setInterval(refresh, 20_000);
+    return () => clearInterval(h);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sol = status?.solana;
+  const arb = status?.arbitrum;
+
+  return (
+    <Section title="Gas sponsor wallets">
+      <p className="tiny muted" style={{ marginTop: -6, marginBottom: 10 }}>
+        Pay gas on customers' behalf (xStock sell top-ups + CCTP relays on Solana; Bridge2 deposit gas + CCTP relays on Arbitrum). Silently stop working once empty.
+      </p>
+      {error && <div className="tiny warn" style={{ marginBottom: 8 }}>{error}</div>}
+      {!status ? (
+        <p className="muted tiny">Loading…</p>
+      ) : (
+        <div className="admin-ops-grid">
+          <div>
+            <p className="label" style={{ marginBottom: 6 }}>Solana</p>
+            {!sol?.configured ? (
+              <p className="muted tiny">Not configured.</p>
+            ) : (
+              <>
+                <div className="trow"><span className="label">Address</span><span className="mono tiny">{sol.address}</span></div>
+                <div className="trow">
+                  <span className="label">Balance</span>
+                  <span className={`mono ${sol.balanceSol < SPONSOR_LOW_SOL ? "warn" : "gain"}`}>{sol.balanceSol.toFixed(5)} SOL</span>
+                </div>
+                <div className="trow"><span className="label">Spent today</span><span className="mono tiny">{sol.spentTodaySol.toFixed(5)} / {sol.dailyCapSol.toFixed(3)} SOL cap</span></div>
+              </>
+            )}
+          </div>
+          <div>
+            <p className="label" style={{ marginBottom: 6 }}>Arbitrum</p>
+            {!arb?.configured ? (
+              <p className="muted tiny">Not configured.</p>
+            ) : (
+              <>
+                <div className="trow"><span className="label">Address</span><span className="mono tiny">{arb.address}</span></div>
+                <div className="trow">
+                  <span className="label">Balance</span>
+                  <span className={`mono ${Number(arb.balanceEth) < SPONSOR_LOW_ETH ? "warn" : "gain"}`}>{Number(arb.balanceEth).toFixed(5)} ETH</span>
+                </div>
+                <div className="trow"><span className="label">Spent today</span><span className="mono tiny">{Number(arb.spentTodayEth).toFixed(5)} / {Number(arb.dailyCapEth).toFixed(3)} ETH cap</span></div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function FlaggedList({ items, renderMetric }) {
+  const flagged = items.filter((x) => x.flagged);
+  if (items.length === 0) return <p className="muted tiny">Not checked yet.</p>;
+  if (flagged.length === 0) return <p className="tiny gain">All clear — 0 of {items.length} flagged.</p>;
+  return (
+    <>
+      <p className="tiny warn" style={{ marginBottom: 8 }}>{flagged.length} of {items.length} flagged</p>
+      {flagged.map((x, i) => (
+        <div className="trow" key={`${x.symbol}-${x.dex ?? ""}-${i}`}>
+          <span>{x.symbol}{x.dex ? ` · ${x.dex}` : ""}</span>
+          <span className="mono tiny warn">{x.reason || renderMetric(x)}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function MarketLiquidityView({ password }) {
+  const [snapshot, setSnapshot] = useState(null);
+  const [error, setError] = useState(null);
+
+  async function refresh() {
+    try {
+      setSnapshot(await adminFetch("/api/admin/market-health", password));
+      setError(null);
+    } catch (err) {
+      setError(err.message || "Failed to load market health.");
+    }
+  }
+
+  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const all = snapshot ? [...snapshot.brokerage, ...snapshot.perps, ...snapshot.borrow] : [];
+  const flaggedCount = all.filter((x) => x.flagged).length;
+
+  return (
+    <div>
+      <p className="lede sm">Background liquidity checks across every product, refreshed every 15 minutes — flags thin markets before customers hit them.</p>
+      {error && <div className="tiny warn" style={{ marginBottom: 8 }}>{error}</div>}
+      {!snapshot ? (
+        <p className="muted tiny">Loading…</p>
+      ) : !snapshot.generatedAt ? (
+        <p className="muted tiny">Background check hasn't completed its first cycle yet — check back shortly.</p>
+      ) : (
+        <>
+          <div className="card" style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <span className="label">Last checked</span>
+              <p className="tiny muted" style={{ margin: "2px 0 0" }}>{new Date(snapshot.generatedAt).toLocaleString()}</p>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <span className={flaggedCount > 0 ? "warn" : "gain"} style={{ fontSize: 22, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>{flaggedCount}</span>
+              <p className="tiny muted" style={{ margin: "2px 0 0" }}>of {all.length} markets flagged</p>
+            </div>
+            <button className="btn ghost" onClick={refresh}>Refresh</button>
+          </div>
+
+          <div className="admin-ops-grid">
+            <Section title="Brokerage — swap impact at $1,000">
+              <FlaggedList items={snapshot.brokerage} renderMetric={(x) => `${x.impactPct?.toFixed(2)}% impact`} />
+            </Section>
+            <Section title="Perps — spread / depth near mid">
+              <FlaggedList items={snapshot.perps} renderMetric={(x) => `${x.spreadPct?.toFixed(2)}% spread · $${x.depthUsd?.toFixed(0)} depth`} />
+            </Section>
+            <Section title="Borrow — reserve utilization">
+              <FlaggedList items={snapshot.borrow} renderMetric={(x) => `${x.utilizationPct?.toFixed(1)}% utilized`} />
+            </Section>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CustomerServiceView({ password }) {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -547,15 +744,9 @@ function CustomerLookup({ password, onLogout }) {
   }
 
   return (
-    <div className="stage wide">
-      <div className="card-toprow">
-        <h2 className="card-title" style={{ margin: 0 }}>Bonzai Ops</h2>
-        <button className="btn ghost" onClick={onLogout}>Log out</button>
-      </div>
-      <PlatformFeesSection password={password} />
-      <HyperliquidBuilderFeesSection password={password} />
-      <h3 className="card-title" style={{ marginTop: 4 }}>Customer lookup</h3>
-      <form onSubmit={submit} style={{ display: "flex", gap: 10, margin: "18px 0 24px" }}>
+    <div>
+      <p className="lede sm">Search a customer by email or wallet address, see their full picture across every product, and take action on their account.</p>
+      <form onSubmit={submit} style={{ display: "flex", gap: 10, margin: "0 0 24px" }}>
         <input
           className="field"
           style={{ flex: 1 }}
@@ -589,6 +780,47 @@ function CustomerLookup({ password, onLogout }) {
   );
 }
 
+function OpsView({ password }) {
+  return (
+    <div>
+      <p className="lede sm">Platform-wide revenue — not tied to any one customer.</p>
+      <PlatformFeesSection password={password} />
+      <HyperliquidBuilderFeesSection password={password} />
+      <KaminoFeesSection password={password} />
+      <GasSponsorSection password={password} />
+    </div>
+  );
+}
+
+function AdminShell({ password, onLogout }) {
+  const [tab, setTab] = useState("customer"); // "customer" | "ops" | "liquidity"
+
+  return (
+    <div className="stage wide">
+      <div className="card-toprow">
+        <h2 className="card-title" style={{ margin: 0 }}>Bonzai Ops</h2>
+        <button className="btn ghost" onClick={onLogout}>Log out</button>
+      </div>
+
+      <div className="admin-tabs">
+        <button className={`admin-tab ${tab === "customer" ? "active" : ""}`} onClick={() => setTab("customer")}>
+          Customer Service
+        </button>
+        <button className={`admin-tab ${tab === "ops" ? "active" : ""}`} onClick={() => setTab("ops")}>
+          Ops
+        </button>
+        <button className={`admin-tab ${tab === "liquidity" ? "active" : ""}`} onClick={() => setTab("liquidity")}>
+          Market Liquidity
+        </button>
+      </div>
+
+      {tab === "customer" && <CustomerServiceView password={password} />}
+      {tab === "ops" && <OpsView password={password} />}
+      {tab === "liquidity" && <MarketLiquidityView password={password} />}
+    </div>
+  );
+}
+
 export default function AdminApp() {
   const [password, setPassword] = useState(() => sessionStorage.getItem(PASSWORD_KEY));
 
@@ -599,7 +831,7 @@ export default function AdminApp() {
 
   return (
     <div className="lv-root">
-      {password ? <CustomerLookup password={password} onLogout={logout} /> : <PasswordGate onAuthed={setPassword} />}
+      {password ? <AdminShell password={password} onLogout={logout} /> : <PasswordGate onAuthed={setPassword} />}
     </div>
   );
 }

@@ -75,13 +75,13 @@ export function useKaminoAction(wallet, signWithWallet) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
 
-  const run = useCallback(async (action, { reserve, amount }) => {
+  const run = useCallback(async (action, { reserve, amount, mint, decimals, usdValue }) => {
     if (!wallet || !signWithWallet) { setError("Wallet not ready"); return null; }
     setBusy(true); setError(null); setStatus(null);
     try {
       const result = await executeKaminoAction(action, {
         wallet, reserve, amount, signWithWallet,
-        onStatus: setStatus,
+        onStatus: setStatus, mint, decimals, usdValue,
       });
       return result;
     } catch (e) {

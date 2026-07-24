@@ -58,18 +58,43 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
   const primaryDebt = debtBorrows[0];
   const primaryCollateral = focusedDeposit ?? collateralDeposits[0];
 
-  // Kamino's own quoted outstanding balance — the authoritative "pay this
-  // much to fully close the loan" figure. A few atoms of interest accrue
-  // between quoting and the transaction landing, but Kamino has already
-  // been observed clamping a same-or-larger repay to the true remaining
-  // debt rather than reverting, and any leftover dust is filtered out of
-  // the positions list automatically once it's below a cent.
+  // Kamino's own quoted outstanding balance — used as a Number here only
+  // for display/enabled-state (e.g. disabled={repayMax<=0} below). The
+  // "Max" button itself must NOT send this snapshotted figure at all
+  // (whether as a Number or its exact original string) — debt accrues
+  // interest continuously, so by the time a signed transaction actually
+  // lands the true on-chain debt is already slightly higher than whatever
+  // was quoted here, leaving dust behind and tripping Kamino's own
+  // "NetValueRemainingTooSmall" guard (confirmed as a real production
+  // failure — twice, the second time even after fixing a separate,
+  // real-but-insufficient floating-point-precision bug in this exact
+  // spot). Verified directly against klend's on-chain source
+  // (Reserve::calculate_repay) that a repay request AT OR ABOVE the true
+  // debt is clamped down to the exact amount actually owed at execution
+  // time — the same mechanism its own u64::MAX "repay everything" sentinel
+  // relies on — and verified live against Kamino's real hosted API that it
+  // happily builds a repay tx for far more than the actual debt with no
+  // balance pre-check. So the Max button intentionally overshoots by a
+  // wide, safe margin (see onClick below) and lets the chain settle the
+  // exact amount, rather than trying to predict a moving target.
   const repayMax = Number(primaryDebt?.tokenAmount ?? 0);
 
   const [withdrawMint, setWithdrawMint] = useState(primaryCollateral?.tokenMint ?? null);
   const withdrawDeposit = focusedDeposit
     ?? collateralDeposits.find((d) => d.tokenMint === withdrawMint)
     ?? primaryCollateral;
+  // Number form for display only. The "Max" button overshoots the same way
+  // repayMax's does, but ONLY once debt is already fully paid off — once
+  // borrows are empty, klend's withdraw handler clamps an overshoot down
+  // to the true deposited amount the same permissive way repay does
+  // (confirmed in its source: `deposited_amount.min(requested)`), which
+  // covers the deposit's own share-to-underlying exchange rate drifting
+  // between this snapshot and execution too (confirmed as a real,
+  // continuously-moving value, not just the debt side). While debt is
+  // still outstanding, withdraws are LTV-constrained instead — that path
+  // isn't confirmed to clamp as permissively, so stick with Kamino's exact
+  // maxWithdrawableAmount string there rather than risk overshooting past
+  // what's actually allowed.
   const withdrawMax = Number(withdrawDeposit?.maxWithdrawableAmount ?? 0);
 
   const submitRepay = async () => {
@@ -137,7 +162,9 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
           <div className="borrow-input-wrap">
             <input className="field" inputMode="decimal" value={repayAmount}
               onChange={(e) => setRepayAmount(e.target.value)} placeholder="Repay USDC" />
-            <button className="btn ghost borrow-max" onClick={() => setRepayAmount(String(repayMax))} disabled={repayMax <= 0}>
+            <button className="btn ghost borrow-max"
+              onClick={() => setRepayAmount(repayMax > 0 ? String(repayMax * 1.1) : "0")}
+              disabled={repayMax <= 0}>
               Max
             </button>
             <button className="btn primary" disabled={!repayAmount || action.busy} onClick={() => void submitRepay()}>
@@ -173,7 +200,13 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
           <div className="borrow-input-wrap">
             <input className="field" inputMode="decimal" value={withdrawAmount}
               onChange={(e) => setWithdrawAmount(e.target.value)} placeholder={`Withdraw ${withdrawDeposit?.tokenName ?? "collateral"}`} />
-            <button className="btn ghost borrow-max" onClick={() => setWithdrawAmount(String(withdrawMax))} disabled={withdrawMax <= 0}>
+            <button className="btn ghost borrow-max"
+              onClick={() => setWithdrawAmount(
+                withdrawMax > 0
+                  ? (debtValue <= 0 ? String(withdrawMax * 1.1) : withdrawDeposit?.maxWithdrawableAmount ?? "0")
+                  : "0"
+              )}
+              disabled={withdrawMax <= 0}>
               Max
             </button>
             <button className="btn primary" disabled={!withdrawAmount || action.busy} onClick={() => void submitWithdraw()}>

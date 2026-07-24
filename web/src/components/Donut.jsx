@@ -31,7 +31,7 @@ export default function Donut({ rows, cash, total, cashUsdy = 0 }) {
   const segs = useMemo(() => {
     const items = rows.map((r, i) => ({
       key: r.symbol, label: r.name || r.symbol, sub: r.symbol,
-      value: r.value, price: r.price || 0,
+      value: r.value, price: r.price || 0, priceUnavailable: !!r.priceUnavailable,
       color: SEG_COLORS[i % SEG_COLORS.length],
       cat: category(r.symbol),
       collateralValue: r.collateralValue || 0,
@@ -157,13 +157,13 @@ export default function Donut({ rows, cash, total, cashUsdy = 0 }) {
                 )}
               </span>
             </span>
-            <span className="mono lg-price">{fmtPrice(s.price)}</span>
-            <span className="mono lg-val">${usd(s.value)}</span>
+            <span className="mono lg-price">{s.priceUnavailable ? "—" : fmtPrice(s.price)}</span>
+            <span className="mono lg-val">{s.priceUnavailable ? <span className="tiny muted">Price unavailable</span> : `$${usd(s.value)}`}</span>
             <span className="lg-alloc">
               <span className="alloc-bar-track">
                 <span className="alloc-bar-fill" style={{ width: `${Math.min(s.frac * 100, 100)}%`, background: s.color }} />
               </span>
-              <span className="mono tiny lg-pct">{(s.frac * 100).toFixed(1)}%</span>
+              <span className="mono tiny lg-pct">{s.priceUnavailable ? "—" : `${(s.frac * 100).toFixed(1)}%`}</span>
             </span>
           </button>
         ))}

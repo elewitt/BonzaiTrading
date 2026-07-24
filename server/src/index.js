@@ -12,12 +12,15 @@ import {
 import { getRegistry, USDC, USDY, JUP_BASE, jupHeaders } from "./tokens.js";
 import { generateLinkCode, mountTelegramRoutes } from "./telegram.js";
 import { getMarketInfo, getMarketChart } from "./marketdata.js";
-import { ensureArbitrumGas } from "./arbitrumSponsor.js";
+import { ensureArbitrumGas, depositToHyperliquid, getArbitrumSponsorStatus } from "./arbitrumSponsor.js";
+import { checkAndRelayCctpDeposit, checkAndRelayCctpWithdraw } from "./cctp.js";
 import { parseEther } from "viem";
 import { KaminoError, getXstocksReserves, getObligations, getLoanDetail, buildKlendTx } from "./kamino.js";
 import {
   initSchema, logActivity, getActivityForWallet,
   getCustomerStatus, getCustomerStatusDetail, setCustomerStatus,
+  getOrCreateReferralCode, findReferralCodeOwner, attributeReferral,
+  getReferralsFor, getEquitiesStatsForWallet, getKaminoFeeStatsForWallet, getKaminoFeeTotals,
 } from "./db.js";
 import { getPerpsPositions } from "./hyperliquid.js";
 import { sendEmail } from "./email.js";
@@ -25,7 +28,9 @@ import {
   ensureReferralAccount, ensureTokenAccount, claimAllFees,
   referralAccountPubkey, referralAccountExists, getPendingBalance,
 } from "./referral.js";
-import { getBuilderFeeStatus, claimBuilderRewards } from "./hlBuilder.js";
+import { getBuilderFeeStatus, claimBuilderRewards, withdrawFromSponsor, getUserPerpsStats } from "./hlBuilder.js";
+import { getMarketHealthSnapshot, startMarketHealthMonitor } from "./marketHealth.js";
+import { getPredictionMarketsSnapshot, startPredictionMarketsMonitor } from "./predictionMarkets.js";
 
 // A real stuck deposit had 0.00002 ETH and failed to cover the
 // approve+deposit gas needed for the Hyperliquid Bridge2 step — this
@@ -363,6 +368,78 @@ app.get("/api/prices", async (req, res) => {
   }
 });
 
+/* ————— Slippage preview — public, read-only, no side effects —————
+ * Deliberately NOT reusing buildOrder()/Jupiter Ultra: that path has a real
+ * side effect on sells (tops up the wallet's SOL for gas before it even
+ * returns a quote), which is wrong for a pure "would this trade be risky"
+ * preview a user might trigger just by opening a confirm screen. This is
+ * the same side-effect-free classic Jupiter quote marketHealth.js already
+ * uses for its benchmark check — no taker/wallet needed at all. */
+app.get("/api/quote-preview", async (req, res) => {
+  try {
+    const { inputMint, outputMint, amount } = req.query;
+    if (!inputMint || !outputMint || !amount) {
+      return res.status(400).json({ error: "inputMint, outputMint, amount required" });
+    }
+    const params = new URLSearchParams({ inputMint, outputMint, amount: String(amount), slippageBps: "150" });
+    const r = await fetch(`${JUP_BASE}/swap/v1/quote?${params}`, { headers: jupHeaders() });
+    // Jupiter can reply with a plain-text body (e.g. rate limiting) instead
+    // of JSON — .json() throwing on that shouldn't leak a raw parse-error
+    // string to the client, just "no quote available" like any other miss.
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data || data.error) return res.json({ error: data?.error || "no route available" });
+    res.json({ priceImpactPct: Number(data.priceImpactPct) * 100 });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Liquidity flags — public, trimmed view of the ops market-health
+ * snapshot (marketHealth.js). No new computation — the background job
+ * already runs this check every 15 minutes for /admin; this just exposes
+ * the customer-safe slice (symbol + flagged, nothing else) of the same
+ * data so the UI can show a "thin liquidity" indicator before someone
+ * even starts building a trade. ————— */
+app.get("/api/liquidity-flags", (req, res) => {
+  const { brokerage } = getMarketHealthSnapshot();
+  res.json(Object.fromEntries(brokerage.map((r) => [r.symbol, r.flagged])));
+});
+
+/* ————— Prediction markets (Kalshi via DFlow) — public, browse-only —————
+ * See predictionMarkets.js — background-crawled snapshot, fast in-memory
+ * read here. Browse-only for now: trading requires Kalshi's mandated
+ * identity verification (DFlow's "Proof" KYC partner), not yet wired up —
+ * no order/quote endpoints exist here until that's in place.
+ *
+ * The full snapshot is ~18,500 markets / ~10MB — confirmed via a real test
+ * crawl, nowhere near reasonable to ship on a page load. Filter/sort/cap
+ * server-side instead of handing the client the whole thing to slice
+ * itself, the way EquitiesMarketsApp.jsx can for its ~170 static assets. */
+const PREDICTIONS_DEFAULT_LIMIT = 60;
+const PREDICTIONS_MAX_LIMIT = 200;
+app.get("/api/predictions/markets", (req, res) => {
+  const { markets, generatedAt } = getPredictionMarketsSnapshot();
+  const category = req.query.category;
+  const q = (req.query.q || "").trim().toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || PREDICTIONS_DEFAULT_LIMIT, PREDICTIONS_MAX_LIMIT);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const categoryCounts = {};
+  for (const m of markets) categoryCounts[m.category] = (categoryCounts[m.category] || 0) + 1;
+
+  let filtered = markets;
+  if (category) filtered = filtered.filter((m) => m.category === category);
+  if (q) filtered = filtered.filter((m) => m.title?.toLowerCase().includes(q) || m.eventTitle?.toLowerCase().includes(q));
+  filtered = filtered.slice().sort((a, b) => (b.volume || 0) - (a.volume || 0));
+
+  res.json({
+    generatedAt,
+    total: filtered.length,
+    categoryCounts,
+    markets: filtered.slice(offset, offset + limit),
+  });
+});
+
 /* ————— holdings (RPC, both token programs — xStocks are Token-2022) ————— */
 /** Extracted so the Telegram bot can fetch holdings without an HTTP round-trip. */
 async function getHoldingsForAddress(address) {
@@ -494,6 +571,243 @@ app.post("/api/parse", requireAuth, parseLimiter, async (req, res) => {
   try {
     const { prompt, current, total } = req.body || {};
     const result = await parsePromptToAllocations({ prompt, current, total });
+    res.json(result);
+  } catch (e) {
+    res.status(422).json({ error: String(e.message || e) });
+  }
+});
+
+/**
+ * Prompt → structured perps-order intent (asset/side/leverage/size), for the
+ * dashboard's "buy SOL perp at 5x with all my cash"-style prompts. Kept
+ * completely separate from parsePromptToAllocations() above — perps orders
+ * are a single discrete action (asset + side + leverage + size), not a
+ * portfolio-weight target, so the allocation-sum schema doesn't fit.
+ *
+ * Deliberately does NOT compute any real dollar figures — Claude only
+ * extracts the linguistic intent (a ticker guess, long/short, a leverage
+ * number, and a size INTENT like "all"/a percent/a dollar amount/an asset
+ * quantity). The client resolves that intent against live account data
+ * (real markPrice, real withdrawable margin, the real tradable-asset list)
+ * before ever showing a number a user could sign against — same safety
+ * split as parsePromptToAllocations relying on planTrades() for real math.
+ */
+async function parsePerpPrompt({ prompt }) {
+  if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
+  if (!prompt) throw new Error("prompt required");
+
+  const system = `You extract structured perpetual-futures order intent from a plain-English trading command, for a Hyperliquid-powered leveraged trading product.
+
+Respond with ONLY a JSON object. No markdown, no backticks, no prose.
+Shape: {"action":"open","asset":"SOL","side":"long","leverage":5,"sizeType":"all","sizeValue":null,"summary":"one short plain sentence"}
+
+Fields:
+- "action": "close" if the user wants to close/exit an EXISTING position (e.g. "close my SOL position", "exit my BTC long", "get out of my AAPL perp"). Otherwise "open" (they want to open/increase a new position — buy/long/sell/short).
+- "asset": your best-guess TICKER SYMBOL for the crypto coin or company/ETF the user named (e.g. "Solana"→"SOL", "Bitcoin"→"BTC", "Apple"→"AAPL", "Tesla"→"TSLA"). Uppercase, no suffix. If you cannot identify a specific asset, use null.
+- "side": "long" or "short". Map "buy"/"go long"/"long" → "long". Map "sell"/"go short"/"short" → "short". If genuinely ambiguous, or action is "close" and no side was stated, use null — the close target's real side will be looked up separately.
+- "leverage": the leverage multiplier as a plain integer (e.g. "5x leverage" → 5). null if not mentioned. Not needed when action is "close".
+- "sizeType": one of "all" (user said something like "all my cash/margin/available balance"), "percent" (user gave a percentage of their account), "usd" (user gave a specific dollar amount they want exposed), "asset_amount" (user gave a specific quantity of the asset itself, e.g. "10 SOL"), or "unspecified" (no sizing info given at all). Not needed when action is "close" — use "unspecified".
+- "sizeValue": the number that goes with sizeType — the percent (0-100) for "percent", the dollar amount for "usd", the asset quantity for "asset_amount". null for "all" or "unspecified".
+- "summary": one short plain sentence restating what you understood, for the user to double check.
+
+Rules:
+- NEVER compute or guess a real dollar amount yourself — only extract what the user actually said.
+- If leverage isn't mentioned, "leverage" must be null — do not default to 1x or any other number.
+- If no asset is identifiable, "asset" must be null.`;
+
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 300,
+      system,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message);
+  const raw_text = (data.content || [])
+    .filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Claude returned no JSON");
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  const action = parsed.action === "close" ? "close" : "open";
+  if (!parsed.asset) throw new Error("Couldn't identify which asset you mean — try naming it directly, e.g. \"SOL\".");
+
+  if (action === "open") {
+    if (parsed.side !== "long" && parsed.side !== "short") throw new Error("Couldn't tell if that's a long or short — try saying \"buy\"/\"long\" or \"sell\"/\"short\".");
+    if (parsed.leverage != null && (!(parsed.leverage > 0) || parsed.leverage > 100))
+      throw new Error("That leverage amount doesn't look right.");
+    const validSizeTypes = ["all", "percent", "usd", "asset_amount", "unspecified"];
+    if (!validSizeTypes.includes(parsed.sizeType)) parsed.sizeType = "unspecified";
+    if (parsed.sizeType === "percent" && !(parsed.sizeValue > 0 && parsed.sizeValue <= 100))
+      throw new Error("That percentage doesn't look right.");
+    if ((parsed.sizeType === "usd" || parsed.sizeType === "asset_amount") && !(parsed.sizeValue > 0))
+      throw new Error("Couldn't find a valid amount in that.");
+  }
+
+  return {
+    action,
+    asset: String(parsed.asset).toUpperCase(),
+    side: parsed.side === "long" || parsed.side === "short" ? parsed.side : null,
+    leverage: parsed.leverage ?? null,
+    sizeType: parsed.sizeType || "unspecified",
+    sizeValue: parsed.sizeValue ?? null,
+    summary: parsed.summary || "",
+  };
+}
+
+app.post("/api/parse-perp", requireAuth, parseLimiter, async (req, res) => {
+  try {
+    const { prompt } = req.body || {};
+    const result = await parsePerpPrompt({ prompt });
+    res.json(result);
+  } catch (e) {
+    res.status(422).json({ error: String(e.message || e) });
+  }
+});
+
+/**
+ * Prompt → structured Kamino borrow/lend intent, for prompts like "deposit
+ * my AAPL as collateral and borrow $500 USDC against it". Same split as
+ * parsePerpPrompt above — Claude only extracts what was said (which xStock,
+ * a deposit size INTENT, a borrow size INTENT); the client resolves those
+ * against real held balances, real reserve maxLTVs, and real existing
+ * obligation room before ever building a signable transaction.
+ */
+async function parseBorrowPrompt({ prompt }) {
+  if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
+  if (!prompt) throw new Error("prompt required");
+
+  const system = `You extract structured Kamino borrow/lend intent from a plain-English command, for a product where a user deposits an already-held tokenized stock ("xStock") as collateral, borrows USDC against it, and can later repay that debt and/or withdraw the collateral back.
+
+Respond with ONLY a JSON object. No markdown, no backticks, no prose.
+Shape: {"action":"deposit_and_borrow","asset":"AAPL","depositSizeType":"all","depositSizeValue":null,"borrowSizeType":"usd","borrowSizeValue":500,"repaySizeType":"unspecified","repaySizeValue":null,"withdrawSizeType":"unspecified","withdrawSizeValue":null,"summary":"one short plain sentence"}
+
+Fields:
+- "action": one of
+  - "deposit" — only post collateral, don't borrow.
+  - "borrow" — only borrow, against collateral already deposited, no new deposit.
+  - "deposit_and_borrow" — post collateral AND borrow against it in the same command.
+  - "repay" — only pay down USDC debt, e.g. "pay back my loan", "repay $200".
+  - "withdraw" — only withdraw collateral back to the wallet, e.g. "withdraw my TSLA", "take out my AAPL collateral".
+  - "repay_and_withdraw" — pay down debt AND withdraw collateral in the same command, e.g. "pay back my loan and withdraw my TSLA".
+- "asset": the TICKER of the stock/ETF, WITHOUT any trailing "x" suffix (e.g. "Apple"→"AAPL"). Needed for deposit/deposit_and_borrow (what to post as collateral) and withdraw/repay_and_withdraw (what collateral to withdraw). null for borrow/repay (no specific asset needed — debt is always USDC).
+- "depositSizeType": one of "all", "percent", "units" (a specific share count), "usd" (a specific dollar value), or "unspecified". Only relevant for deposit/deposit_and_borrow.
+- "depositSizeValue": the number paired with depositSizeType. null for "all"/"unspecified".
+- "borrowSizeType": one of "all", "percent", "usd", or "unspecified". Only relevant for borrow/deposit_and_borrow.
+- "borrowSizeValue": the number paired with borrowSizeType. null for "all"/"unspecified".
+- "repaySizeType": one of "all" (pay off the full loan — map "pay back my loan"/"repay everything" here), "percent", "usd", or "unspecified". Only relevant for repay/repay_and_withdraw.
+- "repaySizeValue": the number paired with repaySizeType. null for "all"/"unspecified".
+- "withdrawSizeType": one of "all", "percent", "units", "usd", or "unspecified". Only relevant for withdraw/repay_and_withdraw. Map "withdraw my TSLA" (no amount given) to "all".
+- "withdrawSizeValue": the number paired with withdrawSizeType. null for "all"/"unspecified".
+- "summary": one short plain sentence restating what you understood.
+
+Rules:
+- NEVER compute or guess a real dollar amount yourself — only extract what the user actually said.
+- Only fill in the size fields relevant to the chosen action — leave the rest "unspecified"/null.
+- "Pay back my loan and withdraw my TSLA" → action "repay_and_withdraw", asset "TSLA", repaySizeType "all", withdrawSizeType "all".`;
+
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 300,
+      system,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message);
+  const raw_text = (data.content || [])
+    .filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Claude returned no JSON");
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  const validActions = ["deposit", "borrow", "deposit_and_borrow", "repay", "withdraw", "repay_and_withdraw"];
+  const action = validActions.includes(parsed.action) ? parsed.action : null;
+  if (!action) throw new Error("Couldn't tell what to do — try \"deposit\", \"borrow\", \"repay\", or \"withdraw\".");
+
+  const needsAsset = ["deposit", "deposit_and_borrow", "withdraw", "repay_and_withdraw"].includes(action);
+  const needsDepositSize = ["deposit", "deposit_and_borrow"].includes(action);
+  const needsBorrowSize = ["borrow", "deposit_and_borrow"].includes(action);
+  const needsRepaySize = ["repay", "repay_and_withdraw"].includes(action);
+  const needsWithdrawSize = ["withdraw", "repay_and_withdraw"].includes(action);
+
+  if (needsAsset && !parsed.asset)
+    throw new Error("Couldn't identify which stock you mean — try naming it directly, e.g. \"AAPL\".");
+
+  const validDepositSizeTypes = ["all", "percent", "units", "usd", "unspecified"];
+  if (!validDepositSizeTypes.includes(parsed.depositSizeType)) parsed.depositSizeType = "unspecified";
+  if (needsDepositSize) {
+    if (parsed.depositSizeType === "unspecified") throw new Error('Say how much to deposit, e.g. "all my AAPL" or "10 shares".');
+    if (parsed.depositSizeType === "percent" && !(parsed.depositSizeValue > 0 && parsed.depositSizeValue <= 100))
+      throw new Error("That percentage doesn't look right.");
+    if ((parsed.depositSizeType === "units" || parsed.depositSizeType === "usd") && !(parsed.depositSizeValue > 0))
+      throw new Error("Couldn't find a valid deposit amount in that.");
+  }
+
+  const validBorrowSizeTypes = ["all", "percent", "usd", "unspecified"];
+  if (!validBorrowSizeTypes.includes(parsed.borrowSizeType)) parsed.borrowSizeType = "unspecified";
+  if (needsBorrowSize) {
+    if (parsed.borrowSizeType === "unspecified") throw new Error('Say how much to borrow, e.g. "$500 USDC" or "all of it".');
+    if (parsed.borrowSizeType === "percent" && !(parsed.borrowSizeValue > 0 && parsed.borrowSizeValue <= 100))
+      throw new Error("That percentage doesn't look right.");
+    if (parsed.borrowSizeType === "usd" && !(parsed.borrowSizeValue > 0))
+      throw new Error("Couldn't find a valid borrow amount in that.");
+  }
+
+  const validRepaySizeTypes = ["all", "percent", "usd", "unspecified"];
+  if (!validRepaySizeTypes.includes(parsed.repaySizeType)) parsed.repaySizeType = "unspecified";
+  if (needsRepaySize) {
+    if (parsed.repaySizeType === "unspecified") throw new Error('Say how much to repay, e.g. "pay off my loan" or "$200".');
+    if (parsed.repaySizeType === "percent" && !(parsed.repaySizeValue > 0 && parsed.repaySizeValue <= 100))
+      throw new Error("That percentage doesn't look right.");
+    if (parsed.repaySizeType === "usd" && !(parsed.repaySizeValue > 0))
+      throw new Error("Couldn't find a valid repay amount in that.");
+  }
+
+  const validWithdrawSizeTypes = ["all", "percent", "units", "usd", "unspecified"];
+  if (!validWithdrawSizeTypes.includes(parsed.withdrawSizeType)) parsed.withdrawSizeType = "unspecified";
+  if (needsWithdrawSize) {
+    if (parsed.withdrawSizeType === "unspecified") throw new Error('Say how much to withdraw, e.g. "all my TSLA" or "5 shares".');
+    if (parsed.withdrawSizeType === "percent" && !(parsed.withdrawSizeValue > 0 && parsed.withdrawSizeValue <= 100))
+      throw new Error("That percentage doesn't look right.");
+    if ((parsed.withdrawSizeType === "units" || parsed.withdrawSizeType === "usd") && !(parsed.withdrawSizeValue > 0))
+      throw new Error("Couldn't find a valid withdraw amount in that.");
+  }
+
+  return {
+    action,
+    asset: parsed.asset ? String(parsed.asset).toUpperCase() : null,
+    depositSizeType: parsed.depositSizeType,
+    depositSizeValue: parsed.depositSizeValue ?? null,
+    borrowSizeType: parsed.borrowSizeType,
+    borrowSizeValue: parsed.borrowSizeValue ?? null,
+    repaySizeType: parsed.repaySizeType,
+    repaySizeValue: parsed.repaySizeValue ?? null,
+    withdrawSizeType: parsed.withdrawSizeType,
+    withdrawSizeValue: parsed.withdrawSizeValue ?? null,
+    summary: parsed.summary || "",
+  };
+}
+
+app.post("/api/parse-borrow", requireAuth, parseLimiter, async (req, res) => {
+  try {
+    const { prompt } = req.body || {};
+    const result = await parseBorrowPrompt({ prompt });
     res.json(result);
   } catch (e) {
     res.status(422).json({ error: String(e.message || e) });
@@ -691,14 +1005,35 @@ app.get("/api/order", requireAuth, requireAllowedGeo, requireActiveAccount, orde
 async function executeSignedOrder({ signedTransaction, requestId, sponsored, swapV1, isSell }) {
   if (!signedTransaction) throw new OrderError(400, "signedTransaction required");
 
-  // Legacy AMM sell path — submit directly to Solana RPC.
+  // Legacy AMM sell path — submit directly to Solana RPC. Also reused as a
+  // generic "broadcast this signed tx" path by Kamino deposit/borrow/repay/
+  // withdraw (see comment above /api/kamino/reserves) — isSell distinguishes
+  // the two below, since it's only ever set on the xStock AMM-fallback sell.
   if (swapV1) {
     const tx = VersionedTransaction.deserialize(Buffer.from(signedTransaction, "base64"));
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-    console.log(`[execute/sell-amm] confirmed: ${sig}`);
-    return { status: "Success", signature: sig };
+    try {
+      const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+      console.log(`[execute/sell-amm] confirmed: ${sig}`);
+      return { status: "Success", signature: sig };
+    } catch (e) {
+      // Solana's SendTransactionError dumps raw simulation logs and program
+      // error codes — confirmed as a real bug against a real customer-facing
+      // failure: this went straight to the UI unfiltered ("Simulation
+      // failed. Message: ... custom program error: 0x1"), no translation at
+      // all. For xStock AMM-fallback sells (isSell), the known cause is
+      // almost always the trade being too small for this pool's liquidity
+      // right now — the same reason Jupiter's RFQ already rejected it before
+      // this fallback ever ran — so surface that instead of the raw dump.
+      // Other swapV1 callers (Kamino) keep a less presumptive message, since
+      // this path is shared and the real cause there could be anything.
+      console.error(`[execute/swapV1] failed:`, e.message);
+      if (isSell) {
+        throw new OrderError(400, "Trade amount too small for available liquidity — try selling a larger quantity");
+      }
+      throw new OrderError(502, "Transaction failed on-chain — please try again.");
+    }
   }
 
   // Buy (and RFQ sell) path: Jupiter Ultra execute.
@@ -775,7 +1110,10 @@ app.post("/api/execute", requireAuth, requireAllowedGeo, requireActiveAccount, o
   }
 });
 
-/* ————— USDC withdrawal: build SPL transfer tx for client to sign ————— */
+/* ————— SPL transfer builder — shared by withdrawals and the Kamino ————— *
+ * deposit fee below. Token-2022 vs. plain-SPL detection, idempotent
+ * destination-ATA creation, TransferChecked vs. Transfer encoding — one
+ * tested implementation, not duplicated per caller. */
 const ATA_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 
 function deriveAta(owner, mint, tokenProgram) {
@@ -785,89 +1123,116 @@ function deriveAta(owner, mint, tokenProgram) {
   )[0];
 }
 
+async function buildTransferTx({ from, to, amount, mint: mintStr, decimals: decimalsNum }) {
+  if (!from || !to || !amount) throw new OrderError(400, "from, to, amount required");
+
+  const fromPubkey = new PublicKey(from);
+  const toPubkey   = new PublicKey(to);
+  const mintPubkey = new PublicKey(mintStr || USDC.mint);
+
+  // Determine which token program owns this mint by inspecting on-chain
+  const mintInfo = await connection.getAccountInfo(mintPubkey);
+  if (!mintInfo) throw new OrderError(400, "mint not found on-chain");
+  const tokenProgramId = mintInfo.owner;
+  const isToken2022 = tokenProgramId.equals(TOKEN_2022_PROGRAM);
+
+  const fromAta = deriveAta(fromPubkey, mintPubkey, tokenProgramId);
+  const toAta   = deriveAta(toPubkey,   mintPubkey, tokenProgramId);
+
+  const instructions = [];
+
+  // Create destination ATA if it doesn't exist (idempotent)
+  const toAtaInfo = await connection.getAccountInfo(toAta);
+  if (!toAtaInfo) {
+    instructions.push(new TransactionInstruction({
+      programId: ATA_PROGRAM,
+      keys: [
+        { pubkey: fromPubkey,              isSigner: true,  isWritable: true  },
+        { pubkey: toAta,                   isSigner: false, isWritable: true  },
+        { pubkey: toPubkey,                isSigner: false, isWritable: false },
+        { pubkey: mintPubkey,              isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: tokenProgramId,          isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from([1]), // 1 = CreateIdempotent
+    }));
+  }
+
+  let transferData;
+  let transferKeys;
+  if (isToken2022) {
+    // TransferChecked (instruction 12) — required for Token-2022 extensions
+    const decimals = decimalsNum ?? 8;
+    transferData = Buffer.alloc(10);
+    transferData[0] = 12;
+    transferData.writeBigUInt64LE(BigInt(amount), 1);
+    transferData[9] = decimals;
+    transferKeys = [
+      { pubkey: fromAta,    isSigner: false, isWritable: true  },
+      { pubkey: mintPubkey, isSigner: false, isWritable: false },
+      { pubkey: toAta,      isSigner: false, isWritable: true  },
+      { pubkey: fromPubkey, isSigner: true,  isWritable: false },
+    ];
+  } else {
+    // Transfer (instruction 3) — standard Token program
+    transferData = Buffer.alloc(9);
+    transferData[0] = 3;
+    transferData.writeBigUInt64LE(BigInt(amount), 1);
+    transferKeys = [
+      { pubkey: fromAta,    isSigner: false, isWritable: true  },
+      { pubkey: toAta,      isSigner: false, isWritable: true  },
+      { pubkey: fromPubkey, isSigner: true,  isWritable: false },
+    ];
+  }
+
+  instructions.push(new TransactionInstruction({
+    programId: tokenProgramId,
+    keys: transferKeys,
+    data: transferData,
+  }));
+
+  const { blockhash } = await connection.getLatestBlockhash();
+  const message = new TransactionMessage({
+    payerKey: fromPubkey,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message();
+
+  const tx = new VersionedTransaction(message);
+  const transaction = Buffer.from(tx.serialize()).toString("base64");
+  console.log(`[transfer] ${short(from)}→${short(to)} mint=${mintStr || USDC.mint} amount=${amount} token2022=${isToken2022}`);
+  return { transaction };
+}
+
 app.post("/api/withdraw", requireAuth, requireAllowedGeo, requireActiveAccount, orderLimiter, async (req, res) => {
   try {
-    const { from, to, amount, mint: mintStr, decimals: decimalsNum } = req.body || {};
-    if (!from || !to || !amount) return res.status(400).json({ error: "from, to, amount required" });
-
-    const fromPubkey = new PublicKey(from);
-    const toPubkey   = new PublicKey(to);
-    const mintPubkey = new PublicKey(mintStr || USDC.mint);
-
-    // Determine which token program owns this mint by inspecting on-chain
-    const mintInfo = await connection.getAccountInfo(mintPubkey);
-    if (!mintInfo) return res.status(400).json({ error: "mint not found on-chain" });
-    const tokenProgramId = mintInfo.owner;
-    const isToken2022 = tokenProgramId.equals(TOKEN_2022_PROGRAM);
-
-    const fromAta = deriveAta(fromPubkey, mintPubkey, tokenProgramId);
-    const toAta   = deriveAta(toPubkey,   mintPubkey, tokenProgramId);
-
-    const instructions = [];
-
-    // Create destination ATA if it doesn't exist (idempotent)
-    const toAtaInfo = await connection.getAccountInfo(toAta);
-    if (!toAtaInfo) {
-      instructions.push(new TransactionInstruction({
-        programId: ATA_PROGRAM,
-        keys: [
-          { pubkey: fromPubkey,              isSigner: true,  isWritable: true  },
-          { pubkey: toAta,                   isSigner: false, isWritable: true  },
-          { pubkey: toPubkey,                isSigner: false, isWritable: false },
-          { pubkey: mintPubkey,              isSigner: false, isWritable: false },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-          { pubkey: tokenProgramId,          isSigner: false, isWritable: false },
-        ],
-        data: Buffer.from([1]), // 1 = CreateIdempotent
-      }));
-    }
-
-    let transferData;
-    let transferKeys;
-    if (isToken2022) {
-      // TransferChecked (instruction 12) — required for Token-2022 extensions
-      const decimals = decimalsNum ?? 8;
-      transferData = Buffer.alloc(10);
-      transferData[0] = 12;
-      transferData.writeBigUInt64LE(BigInt(amount), 1);
-      transferData[9] = decimals;
-      transferKeys = [
-        { pubkey: fromAta,    isSigner: false, isWritable: true  },
-        { pubkey: mintPubkey, isSigner: false, isWritable: false },
-        { pubkey: toAta,      isSigner: false, isWritable: true  },
-        { pubkey: fromPubkey, isSigner: true,  isWritable: false },
-      ];
-    } else {
-      // Transfer (instruction 3) — standard Token program
-      transferData = Buffer.alloc(9);
-      transferData[0] = 3;
-      transferData.writeBigUInt64LE(BigInt(amount), 1);
-      transferKeys = [
-        { pubkey: fromAta,    isSigner: false, isWritable: true  },
-        { pubkey: toAta,      isSigner: false, isWritable: true  },
-        { pubkey: fromPubkey, isSigner: true,  isWritable: false },
-      ];
-    }
-
-    instructions.push(new TransactionInstruction({
-      programId: tokenProgramId,
-      keys: transferKeys,
-      data: transferData,
-    }));
-
-    const { blockhash } = await connection.getLatestBlockhash();
-    const message = new TransactionMessage({
-      payerKey: fromPubkey,
-      recentBlockhash: blockhash,
-      instructions,
-    }).compileToV0Message();
-
-    const tx = new VersionedTransaction(message);
-    const transaction = Buffer.from(tx.serialize()).toString("base64");
-    console.log(`[withdraw] ${short(from)}→${short(to)} mint=${mintStr || USDC.mint} amount=${amount} token2022=${isToken2022}`);
+    const { transaction } = await buildTransferTx(req.body || {});
     res.json({ transaction });
   } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
+    const status = e instanceof OrderError ? e.status : 400;
+    res.status(status).json({ error: String(e.message || e) });
+  }
+});
+
+/**
+ * Kamino collateral deposit fee (0.10%) — builds a transfer of the fee
+ * amount straight to our own wallet, entirely separate from Kamino's own
+ * protocol/referrer mechanics (their hosted transaction-building API has
+ * no fee-passthrough param — confirmed against its live OpenAPI spec).
+ * `to` is hardcoded to our own sponsor wallet here, never taken from the
+ * client, same reasoning as buildOrder() always hardcoding
+ * referralAccountPubkey() rather than trusting a client-supplied fee
+ * destination.
+ */
+app.post("/api/kamino/deposit-fee", requireAuth, requireAllowedGeo, requireActiveAccount, orderLimiter, async (req, res) => {
+  try {
+    if (!sponsor) return res.status(503).json({ error: "fee collection not configured" });
+    const { from, mint, decimals, amount } = req.body || {};
+    const { transaction } = await buildTransferTx({ from, to: sponsor.publicKey.toBase58(), amount, mint, decimals });
+    res.json({ transaction });
+  } catch (e) {
+    const status = e instanceof OrderError ? e.status : 400;
+    res.status(status).json({ error: String(e.message || e) });
   }
 });
 
@@ -1287,6 +1652,35 @@ app.get("/api/perps/bridge/status/:orderId", async (req, res) => {
   }
 });
 
+/* ————— Perps: CCTP deposit relay (Solana burn → Circle attestation → —————
+ * sponsor-relayed Arbitrum mint). No request body needed beyond the burn
+ * tx's own signature — receiveMessage() is permissionless and the mint
+ * recipient is embedded in the attested message itself, not supplied here. */
+app.get("/api/perps/cctp/deposit-status/:solanaTxHash", async (req, res) => {
+  try {
+    const result = await checkAndRelayCctpDeposit(req.params.solanaTxHash);
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Perps: CCTP withdraw relay (Arbitrum burn → Circle attestation → —————
+ * sponsor-relayed Solana mint). solanaRecipient is required — unlike the
+ * deposit direction, the mint destination here is the user's own USDC
+ * associated token account, derived from their wallet address rather than
+ * parsed out of the attested message. */
+app.get("/api/perps/cctp/withdraw-status/:arbTxHash", async (req, res) => {
+  try {
+    const { solanaRecipient } = req.query;
+    if (!solanaRecipient) return res.status(400).json({ error: "solanaRecipient required" });
+    const result = await checkAndRelayCctpWithdraw(req.params.arbTxHash, solanaRecipient);
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 /* ————— Perps: withdraw bridge (Arbitrum USDC → Solana USDC) —————
  * Reverse direction of the deposit bridge above — same deBridge DLN API,
  * source/destination chains swapped. Used after a Hyperliquid withdraw3
@@ -1428,6 +1822,61 @@ app.post("/api/perps/arbitrum-gas", arbGasLimiter, async (req, res) => {
   }
 });
 
+// Solana-side mirror of the Arbitrum-gas endpoint above — the CCTP deposit
+// burn creates a new "message sent event" account, which (like any Solana
+// account creation) needs a small amount of native SOL for rent + the tx
+// fee, separate from the USDC amount being deposited. Confirmed as a real
+// customer-facing block: a wallet holding real USDC to deposit was refused
+// with "you need at least 0.003 SOL", with nothing in the flow to fix that
+// for them — same class of gap ensureArbitrumGas already closed on the
+// Arbitrum side. Same anti-abuse posture: only tops up addresses that
+// already hold real USDC on Solana (the actual "about to deposit" signal),
+// reuses the existing Solana sponsor + its daily budget, same rate limit.
+// 0.005 SOL — matches DepositWizard.jsx's SOL_RESERVE. Real requirement
+// confirmed via a failed deposit at the old 0.003 threshold: CCTP's
+// SendMessage account creation needed exactly 3,869,760 lamports.
+const MIN_SOL_DEPOSIT_LAMPORTS = 5_000_000;
+const MAX_SOL_GAS_TOPUP_LAMPORTS = 10_000_000; // 0.01 SOL cap, defense in depth
+const MIN_USDC_TO_QUALIFY_FOR_SOL_GAS = 1_000_000n; // $1
+app.post("/api/perps/solana-gas", arbGasLimiter, async (req, res) => {
+  try {
+    const { address, minLamports } = req.body || {};
+    if (!address) return res.status(400).json({ error: "address required" });
+    if (!sponsor) return res.json({ topped: false, reason: "sponsor not configured" });
+
+    const held = await getTokenBalance(address, USDC.mint);
+    if (held < MIN_USDC_TO_QUALIFY_FOR_SOL_GAS) {
+      return res.json({ topped: false, reason: "no qualifying USDC balance on Solana for this address" });
+    }
+
+    let target = MIN_SOL_DEPOSIT_LAMPORTS;
+    const requested = Number(minLamports);
+    if (requested > target) target = Math.min(requested, MAX_SOL_GAS_TOPUP_LAMPORTS);
+
+    const balance = await connection.getBalance(new PublicKey(address));
+    if (balance >= target) return res.json({ topped: false, balance });
+
+    const topup = target - balance;
+    if (!sponsorBudgetOk(topup)) {
+      return res.json({ topped: false, reason: "sponsor daily budget exhausted", balance });
+    }
+
+    console.log(`[solana-gas] topping up ${address.slice(0, 8)} with ${topup} lamports`);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const fundTx = new Transaction({ recentBlockhash: blockhash, feePayer: sponsor.publicKey });
+    fundTx.add(SystemProgram.transfer({ fromPubkey: sponsor.publicKey, toPubkey: new PublicKey(address), lamports: topup }));
+    fundTx.sign(sponsor);
+    const sig = await connection.sendRawTransaction(fundTx.serialize());
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    trackSponsorSpend(topup);
+    console.log(`[solana-gas] top-up confirmed: ${sig}`);
+    res.json({ topped: true, hash: sig, balance: balance + topup });
+  } catch (e) {
+    console.error("[solana-gas] error:", e.message);
+    res.status(502).json({ error: "couldn't check/top up Solana gas" });
+  }
+});
+
 // Used by the perps client flow to check signed QA-bypass credentials before
 // showing the UI at all. xStocks routes check the same credentials directly
 // via requireAllowedGeo (see above) since those are plain API calls, not a
@@ -1479,6 +1928,88 @@ app.get("/api/users/lookup", requireAuth, async (req, res) => {
     res.json({ found: true, address: solanaWallet.address, label: email.split("@")[0] });
   } catch (e) {
     res.json({ found: false });
+  }
+});
+
+/* ————— Referral system — 50% fee-share flywheel —————
+ * Accrual/stats only for v1 — this computes and displays what each
+ * referrer has earned; it never moves money automatically. See
+ * server/src/db.js for the schema/query helpers and hlBuilder.js's
+ * getUserPerpsStats for the perps-side data source. */
+
+app.get("/api/referrals/me", requireAuth, async (req, res) => {
+  try {
+    const code = await getOrCreateReferralCode(req.privyUserId);
+    res.json({ code });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/referrals/attribute", requireAuth, async (req, res) => {
+  try {
+    const { code, walletAddress, evmAddress } = req.body || {};
+    if (!code || !walletAddress) return res.status(400).json({ error: "code and walletAddress required" });
+    const result = await attributeReferral({
+      referredPrivyUserId: req.privyUserId,
+      referredWalletAddress: walletAddress,
+      referredEvmAddress: evmAddress || null,
+      code: String(code).toUpperCase(),
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Kept in sync with KAMINO_DEPOSIT_FEE_BPS in web/src/lib/api.js — used
+// here only to back out an approximate "deposit volume" figure from the
+// realized fee total for display; the fee itself is computed and charged
+// client-side, this constant isn't used for any money movement here.
+const KAMINO_DEPOSIT_FEE_BPS = 10;
+
+app.get("/api/referrals/dashboard", requireAuth, async (req, res) => {
+  try {
+    const code = await getOrCreateReferralCode(req.privyUserId);
+    const referred = await getReferralsFor(req.privyUserId);
+
+    const rows = await Promise.all(referred.map(async (r) => {
+      const sinceIso = r.created_at;
+      const sinceMs = new Date(r.created_at).getTime();
+      const [equities, perps, kamino] = await Promise.all([
+        getEquitiesStatsForWallet(r.referred_wallet_address, sinceIso),
+        r.referred_evm_address
+          ? getUserPerpsStats(r.referred_evm_address, sinceMs).catch(() => ({ volume: 0, fees: 0 }))
+          : Promise.resolve({ volume: 0, fees: 0 }),
+        getKaminoFeeStatsForWallet(r.referred_wallet_address, sinceIso, KAMINO_DEPOSIT_FEE_BPS),
+      ]);
+      return {
+        walletAddress: r.referred_wallet_address,
+        joinedAt: r.created_at,
+        equitiesVolume: equities.volume,
+        equitiesFees: equities.fees,
+        perpsVolume: perps.volume,
+        perpsFees: perps.fees,
+        kaminoVolume: kamino.volume,
+        kaminoFees: kamino.fees,
+      };
+    }));
+
+    const totals = rows.reduce((acc, r) => ({
+      volume: acc.volume + r.equitiesVolume + r.perpsVolume + r.kaminoVolume,
+      equitiesFees: acc.equitiesFees + r.equitiesFees,
+      perpsFees: acc.perpsFees + r.perpsFees,
+      kaminoFees: acc.kaminoFees + r.kaminoFees,
+    }), { volume: 0, equitiesFees: 0, perpsFees: 0, kaminoFees: 0 });
+
+    res.json({
+      code,
+      signupCount: rows.length,
+      totals: { ...totals, totalEarned: 0.5 * (totals.equitiesFees + totals.perpsFees + totals.kaminoFees) },
+      referrals: rows,
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
   }
 });
 
@@ -1661,6 +2192,31 @@ app.post("/api/admin/jupiter-fees/claim", requireAdmin, async (req, res) => {
   }
 });
 
+/* ————— Admin / ops: gas sponsor wallet balances (SOL + Arbitrum ETH) —————
+ * Read-only — live balances for the two wallets that pay gas on customers'
+ * behalf (xStock sell top-ups + CCTP relays on Solana, Bridge2 deposit gas +
+ * CCTP relays on Arbitrum). Both silently stop sponsoring once they run dry,
+ * with no other signal that's happened — this exists so ops can see it
+ * coming instead of finding out from a stuck customer flow. */
+app.get("/api/admin/sponsor-status", requireAdmin, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const solana = sponsor
+      ? {
+          configured: true,
+          address: sponsor.publicKey.toBase58(),
+          balanceSol: (await connection.getBalance(sponsor.publicKey)) / 1e9,
+          dailyCapSol: SPONSOR_DAILY_CAP_LAMPORTS / 1e9,
+          spentTodaySol: (sponsorSpendDay === today ? sponsorSpendLamports : 0) / 1e9,
+        }
+      : { configured: false };
+    const arbitrum = await getArbitrumSponsorStatus();
+    res.json({ solana, arbitrum });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 /* ————— Admin / ops: Hyperliquid builder-fee codes (perps) —————
  * See server/src/hlBuilder.js — reuses the Arbitrum sponsor wallet as the
  * builder address. No "setup" route: eligibility (>=100 USDC perps account
@@ -1674,6 +2230,21 @@ app.get("/api/admin/hl-builder/status", requireAdmin, async (req, res) => {
   }
 });
 
+// One-time (or occasional) funding step: moves the sponsor wallet's own
+// USDC on Arbitrum into its own Hyperliquid account, to clear the >=100
+// USDC builder-fee eligibility bar. Self-transfer only — see
+// arbitrumSponsor.js's depositToHyperliquid for the actual mechanism.
+app.post("/api/admin/hl-builder/bridge-deposit", requireAdmin, async (req, res) => {
+  try {
+    const amountUsdc = Number(req.body?.amountUsdc);
+    if (!amountUsdc || amountUsdc <= 0) return res.status(400).json({ error: "amountUsdc required" });
+    const result = await depositToHyperliquid(amountUsdc);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
 app.post("/api/admin/hl-builder/claim", requireAdmin, async (req, res) => {
   try {
     const result = await claimBuilderRewards();
@@ -1681,6 +2252,59 @@ app.post("/api/admin/hl-builder/claim", requireAdmin, async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
+});
+
+// Manual correction tool — withdraws USDC from the sponsor's own Hyperliquid
+// account directly to an arbitrary Arbitrum address. See hlBuilder.js's
+// withdrawFromSponsor() for why this is safe to send to a non-sponsor
+// destination. No default destination/amount — both must be supplied
+// explicitly every time, deliberately, so this can't be misfired.
+app.post("/api/admin/hl-builder/withdraw", requireAdmin, async (req, res) => {
+  try {
+    const { destination, amountUsdc } = req.body || {};
+    if (!destination || !amountUsdc) return res.status(400).json({ error: "destination and amountUsdc required" });
+    const result = await withdrawFromSponsor(destination, amountUsdc);
+    res.json({ ok: true, result });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Admin / ops: Kamino deposit fee (borrow/lend) —————
+ * Unlike the Jupiter/Hyperliquid fee mechanisms, there's no separate
+ * "claim" step here — the fee is a plain transfer straight to the sponsor
+ * wallet's own token account the moment it's charged (see
+ * executeKaminoAction() in web/src/lib/api.js), so it's already fully
+ * liquid the instant it lands. Collected in whatever collateral token was
+ * deposited (AAPLx, TSLAx, ...), not a single pooled currency, so this
+ * breaks totals down per mint and resolves each to a symbol via the
+ * token registry for readability. */
+app.get("/api/admin/kamino-fees/status", requireAdmin, async (req, res) => {
+  try {
+    const totals = await getKaminoFeeTotals();
+    const { byMint } = await getRegistry();
+    const byAsset = totals.byMint.map((m) => ({
+      ...m,
+      symbol: byMint[m.mint]?.symbol ?? null,
+    }));
+    res.json({
+      configured: !!sponsor,
+      sponsorAddress: sponsor?.publicKey.toBase58() ?? null,
+      feeBps: 10,
+      totalUsd: totals.totalUsd,
+      count: totals.count,
+      byAsset,
+    });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Admin / ops: market liquidity monitoring —————
+ * See server/src/marketHealth.js — a background job, not computed on
+ * request, so this just returns whatever the latest cycle produced. */
+app.get("/api/admin/market-health", requireAdmin, (req, res) => {
+  res.json(getMarketHealthSnapshot());
 });
 
 /* ————— asset info popup: quote/profile + price chart ————— */
@@ -1737,4 +2361,6 @@ app.listen(PORT, () => {
   console.log(`Gas sponsorship: ${sponsor ? "ON — " + sponsor.publicKey.toBase58() : "off (users pay SOL fees)"}`);
   getRegistry().catch((e) => console.warn("[tokens] preload failed:", e.message));
   initSchema().catch((e) => console.error("[db] schema init failed:", e.message));
+  startMarketHealthMonitor();
+  startPredictionMarketsMonitor();
 });

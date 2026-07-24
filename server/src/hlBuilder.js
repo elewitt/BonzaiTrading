@@ -57,3 +57,39 @@ export async function claimBuilderRewards() {
   if (!exchange) throw new Error("Arbitrum sponsor wallet not configured");
   return exchange.claimRewards();
 }
+
+/**
+ * One user's real perps trading volume + builder-fee revenue generated
+ * since a given time — powers the referral dashboard's per-user perps
+ * stats. `userFillsByTime` has no `dex` filter and returns fills across
+ * every perp dex (main crypto + the "xyz" equities dex) in one combined
+ * list already (confirmed via the SDK's request schema — no dex param
+ * exists), matching how this app already treats Perps as a single
+ * product spanning both dexs everywhere else (e.g. App.jsx's
+ * perpsAccountValue). `info` here is a plain read-only client — not tied
+ * to the builder/sponsor account — so it's safe to query any user's
+ * address, not just our own.
+ */
+export async function getUserPerpsStats(evmAddress, sinceMs) {
+  const fills = await info.userFillsByTime({ user: evmAddress, startTime: sinceMs });
+  let volume = 0, fees = 0;
+  for (const f of fills) {
+    volume += Math.abs(Number(f.px) * Number(f.sz));
+    fees += Number(f.builderFee || 0);
+  }
+  return { volume, fees };
+}
+
+/**
+ * Withdraws USDC from the sponsor's OWN Hyperliquid account to an arbitrary
+ * Arbitrum address — withdraw3's `destination` field isn't restricted to
+ * the signer's own address, so this can land directly on a customer's
+ * wallet in one step. Hyperliquid takes its standard flat $1 fee off the
+ * requested amount automatically. Manual/admin-triggered only — used once
+ * to correct a deposit that landed on the sponsor's account instead of a
+ * customer's by mistake, not exposed to any customer-facing route.
+ */
+export async function withdrawFromSponsor(destination, amountUsdc) {
+  if (!exchange) throw new Error("Arbitrum sponsor wallet not configured");
+  return exchange.withdraw3({ destination, amount: String(amountUsdc) });
+}

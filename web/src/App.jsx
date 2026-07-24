@@ -3,7 +3,9 @@ import { usePrivy, useSessionSigners, useWallets, useSignTypedData } from "@priv
 import { useSolanaWallets, useSignTransaction, useSignMessage, useFundWallet } from "@privy-io/react-auth/solana";
 import { QRCodeSVG } from "qrcode.react";
 import Donut from "./components/Donut.jsx";
-import { useLongviewHl, usePositions } from "./perps/useHyperliquid.js";
+import { useLongviewHl, usePositions, useAssets } from "./perps/useHyperliquid.js";
+import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
+import { liquidationPrice } from "./perps/hl/margin.js";
 import { DEFAULT_CONFIG, EQUITY_DEX } from "./perps/config.js";
 import PerformanceChart from "./components/PerformanceChart.jsx";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
@@ -13,13 +15,29 @@ import ShareModal from "./components/ShareCard.jsx";
 import DemoAnimation from "./components/DemoAnimation.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PerpsApp from "./perps/PerpsApp.jsx";
+import EquitiesMarketsApp from "./EquitiesMarketsApp.jsx";
+import PredictionMarketsApp from "./PredictionMarketsApp.jsx";
+import ReferralsApp from "./ReferralsApp.jsx";
 import BorrowApp from "./borrow/BorrowApp.jsx";
 import PositionCard from "./borrow/PositionCard.jsx";
-import { useKaminoReserves } from "./borrow/useKamino.js";
-import { api, executeSwap, executeWithdraw, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, setAuthTokenProvider } from "./lib/api.js";
+import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
+import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_DEPOSIT_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, setAuthTokenProvider } from "./lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials, hasQaBypassCredentials } from "./lib/qaBypass.js";
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+// Client-owned presentation tiers for a trade's estimated price impact —
+// the server (/api/quote-preview) just returns the raw percentage. Red
+// threshold matches MAX_PRICE_IMPACT_PCT server-side (server/src/index.js)
+// — at that point the real trade would actually be rejected, not just risky.
+function impactBadge(impact) {
+  if (!impact) return null;
+  if (impact.error) return { label: "no quote available", className: "warn" };
+  const pct = impact.priceImpactPct;
+  if (pct >= 5) return { label: `${pct.toFixed(1)}% impact — likely to fail`, className: "warn" };
+  if (pct >= 2) return { label: `${pct.toFixed(1)}% impact`, className: "gold" };
+  return null; // normal — no badge needed
+}
 // USDT isn't a supported holding here — any that arrives gets auto-offered
 // a one-click convert to USDC instead.
 const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
@@ -70,6 +88,181 @@ function PerpsCloseCell({ p, hl, user, tradingWallet, onClosed }) {
   );
 }
 
+// Single-position sell popup for the main dashboard's brokerage Positions
+// table — mirrors EquitiesMarketsApp.jsx's BuyPopup exactly (same $/units
+// toggle + preset-percentage + custom-amount pattern), sized against this
+// position's own value/holding rather than available cash. Presets are
+// always exact percentages of `row.value`, so 100%/"Max" and the modal's
+// own overHolding cap agree by construction — no separate "sell everything"
+// special case needed here; quickSell (App body) is what caps the
+// resulting trade to the exact on-chain balance regardless of which mode
+// (USD or units) produced the requested usdAmount.
+function SellModal({ row, onClose, onConfirm }) {
+  const [mode, setMode] = useState("usd"); // "usd" | "units"
+  const [input, setInput] = useState("");
+
+  const inputNum = Number(input) || 0;
+  const usdAmount = mode === "usd" ? inputNum : inputNum * (row.price || 0);
+  const overHolding = usdAmount > row.value + 0.005;
+  const valid = usdAmount > 0 && !overHolding;
+
+  const setPct = (pct) => {
+    const usdVal = row.value * (pct / 100);
+    setInput(mode === "usd" ? usdVal.toFixed(2) : row.price ? (usdVal / row.price).toFixed(6) : "");
+  };
+
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal-box card" style={{ maxWidth: 380 }}>
+        <div className="card-toprow">
+          <p className="card-title">Sell {row.symbol}</p>
+          <button className="x" onClick={onClose}>×</button>
+        </div>
+        <p className="tiny muted" style={{ margin: "0 0 4px" }}>{row.name} · ${usd(row.price)} current price</p>
+        <p className="tiny muted" style={{ margin: "0 0 10px" }}>
+          You hold {Number(row.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {row.symbol} (${usd(row.value)})
+        </p>
+
+        <div className="lvp-pct-presets" style={{ marginBottom: 10 }}>
+          <button type="button" className={`lvp-pct-btn ${mode === "usd" ? "sel" : ""}`}
+            onClick={() => { setMode("usd"); setInput(""); }} style={{ flex: 1 }}>$</button>
+          <button type="button" className={`lvp-pct-btn ${mode === "units" ? "sel" : ""}`} disabled={!row.price}
+            onClick={() => { setMode("units"); setInput(""); }} style={{ flex: 1 }}>{row.symbol}</button>
+        </div>
+
+        <div className="borrow-field">
+          <span className="tiny muted">{mode === "usd" ? "Amount (USD)" : `Amount (${row.symbol})`}</span>
+          <input className="field" inputMode="decimal" autoFocus placeholder={mode === "usd" ? "100" : "1.5"}
+            value={input} onChange={(e) => setInput(e.target.value)} />
+        </div>
+        {mode === "units" && row.price && inputNum > 0 && (
+          <p className="tiny muted" style={{ margin: "-8px 0 12px" }}>≈ ${usd(usdAmount)}</p>
+        )}
+
+        <div className="lvp-pct-presets">
+          {[25, 50, 75, 100].map((pct) => (
+            <button key={pct} type="button" className="lvp-pct-btn" onClick={() => setPct(pct)}>
+              {pct === 100 ? "Max" : `${pct}%`}
+            </button>
+          ))}
+        </div>
+
+        <button className="btn primary" style={{ width: "100%", marginTop: 4 }} disabled={!valid}
+          onClick={() => onConfirm(usdAmount)}>
+          Review sell →
+        </button>
+        {overHolding && <p className="tiny warn" style={{ marginTop: 8 }}>Exceeds your position value (${usd(row.value)}).</p>}
+      </div>
+    </div>
+  );
+}
+
+// Same on-chain requirement BorrowTicket.jsx documents (~0.0336 SOL for
+// InitObligation + collateral token account on a wallet's first Kamino
+// deposit) — kept in sync with KAMINO_SOL_RESERVE there.
+const KAMINO_SOL_RESERVE = 0.042;
+
+/**
+ * Deposit-only Kamino lend action, launched directly from a brokerage
+ * position row rather than the full Borrow/Lend page — same underlying
+ * deposit call as BorrowTicket.jsx's "deposit" step (useKaminoAction +
+ * executeKaminoAction), just scoped to the one row/reserve already known
+ * from the click instead of rendering its own asset picker.
+ */
+function LendModal({ row, reserve, wallet, signWithWallet, solBalance = 0, onClose, onDone }) {
+  const action = useKaminoAction(wallet, signWithWallet);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [done, setDone] = useState(false);
+
+  const hasGasReserve = solBalance >= KAMINO_SOL_RESERVE;
+  const depositAmt = Number(depositAmount);
+  const validDeposit = depositAmt > 0 && depositAmt <= row.uiAmount;
+
+  // Same Token-2022 ScaledUiAmount correction as BorrowTicket.jsx — send the
+  // true unscaled ratio, not the display uiAmount, so a full "Max" deposit
+  // never asks Kamino to pull more raw atoms than the wallet actually holds.
+  const trueUnscaledMax = row.amount != null ? Number(row.amount) / 10 ** (row.decimals ?? 8) : row.uiAmount;
+  const kaminoDepositAmount = row.uiAmount > 0
+    ? (depositAmt >= row.uiAmount ? trueUnscaledMax : (depositAmt / row.uiAmount) * trueUnscaledMax)
+    : depositAmt;
+
+  const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
+  const supplyApyPct = reserve ? Number(reserve.supplyApy) * 100 : 0;
+  const depositValueUsd = depositAmt * (row.price || 0);
+  const depositFeeUsd = depositValueUsd * (KAMINO_DEPOSIT_FEE_BPS / 10000);
+  const netDepositValueUsd = depositValueUsd - depositFeeUsd;
+  const maxBorrowUsd = netDepositValueUsd * maxLtv;
+
+  const submitDeposit = async () => {
+    if (!validDeposit || !reserve) return;
+    const result = await action.run("deposit", {
+      reserve: reserve.reserve, amount: String(kaminoDepositAmount),
+      mint: row.mint, decimals: row.decimals, usdValue: depositValueUsd,
+    });
+    if (result) { setDone(true); onDone?.(); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal-box card" style={{ maxWidth: 380 }}>
+        <div className="card-toprow">
+          <p className="card-title">Lend {row.symbol}</p>
+          <button className="x" onClick={onClose}>×</button>
+        </div>
+
+        {done ? (
+          <>
+            <p className="muted">
+              Deposited {depositAmount} {row.symbol} as collateral on Kamino's xStocks Market — up to
+              ${maxBorrowUsd.toFixed(2)} USDC now borrowable against it. Check the Borrow / Lend tab to
+              monitor your position or borrow against it.
+            </p>
+            <button className="btn ghost" style={{ marginTop: 12, width: "100%" }} onClick={onClose}>Done</button>
+          </>
+        ) : (
+          <>
+            <p className="tiny muted" style={{ margin: "0 0 10px" }}>
+              You hold {Number(row.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {row.symbol} (${usd(row.value)}) ·
+              {" "}{supplyApyPct > 0 ? `${supplyApyPct.toFixed(2)}% supply APY · ` : ""}max LTV {(maxLtv * 100).toFixed(0)}%
+            </p>
+
+            <div className="borrow-field">
+              <span className="tiny muted">Deposit amount ({row.symbol})</span>
+              <div className="borrow-input-wrap">
+                <input className="field" inputMode="decimal" autoFocus value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)} placeholder="0" />
+                <button className="btn ghost borrow-max" onClick={() => setDepositAmount(String(row.uiAmount))}>
+                  Max {row.uiAmount}
+                </button>
+              </div>
+            </div>
+
+            {depositAmt > 0 && (
+              <p className="tiny muted">
+                ${depositValueUsd.toFixed(2)} in collateral value — {(KAMINO_DEPOSIT_FEE_BPS / 100).toFixed(2)}%
+                fee (${depositFeeUsd.toFixed(2)}) · ${netDepositValueUsd.toFixed(2)} net deposited —
+                up to ${maxBorrowUsd.toFixed(2)} borrowable
+              </p>
+            )}
+            {!hasGasReserve && (
+              <p className="tiny muted">
+                Opening your first position here needs ~{KAMINO_SOL_RESERVE} SOL (you have {solBalance.toFixed(4)}) —
+                we'll try to cover the difference automatically when you deposit.
+              </p>
+            )}
+
+            <button className="btn primary" style={{ marginTop: 12, width: "100%" }} disabled={!validDeposit || action.busy}
+              onClick={() => void submitDeposit()}>
+              {action.busy ? "Waiting for signature…" : "Deposit collateral"}
+            </button>
+            {action.error && <p className="err tiny" style={{ marginTop: 10 }}>{action.error}</p>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { ready, authenticated, login, logout, user, getAccessToken } = usePrivy();
   const { wallets } = useSolanaWallets();
@@ -94,17 +287,24 @@ export default function App() {
   const hl = useLongviewHl(DEFAULT_CONFIG);
   const cryptoPerps = usePositions(hl, evmAddress, undefined, 20_000);
   const equityPerps = usePositions(hl, evmAddress, EQUITY_DEX, 20_000);
+  // Full tradable-asset list (both dexs) + live mark prices — needed to
+  // resolve a spoken asset name ("Solana") from the prompt bar into a real
+  // assetIndex/markPrice/szDecimals/maxLeverage, same source PerpsApp.jsx's
+  // own order ticket uses.
+  const { assets: perpAssets, markPrices: perpMarkPrices } = useAssets(hl);
 
   // EVM signing for closing a Perps position directly from this dashboard —
   // identical minimal "viem local account" shape PerpsApp.jsx builds
-  // (Hyperliquid's SDK only needs { address, signTypedData }).
+  // (Hyperliquid's SDK only needs { address, signTypedData }). Only ever
+  // used to close positions (a "trade" action), so it skips Privy's own
+  // signing modal unconditionally — same scope as PerpsApp.jsx's tradingWallet.
   const { signTypedData } = useSignTypedData();
   const perpsWallet = useMemo(() => {
     if (!evmAddress) return null;
     return {
       address: evmAddress,
       signTypedData: async (params) => {
-        const { signature } = await signTypedData(params, { address: evmAddress });
+        const { signature } = await signTypedData(params, { address: evmAddress, uiOptions: { showWalletUIs: false } });
         return signature;
       },
     };
@@ -137,6 +337,26 @@ export default function App() {
     }
   }, [address, signMessage]);
 
+  // Referral attribution — same "capture from URL, persist across the login
+  // redirect, consume once" shape as qa_bypass above. The code is stashed
+  // the moment it's seen (even pre-login, since a Privy auth redirect can
+  // drop the original query string) and submitted exactly once per wallet.
+  // The server also enforces "one referrer, ever" itself
+  // (referrals.referred_privy_user_id is a PRIMARY KEY) — this local guard
+  // is just to avoid a pointless repeat network call, not the real safety net.
+  useEffect(() => {
+    const refCode = new URLSearchParams(window.location.search).get("ref");
+    if (refCode) localStorage.setItem("lv_ref_code", refCode.toUpperCase());
+  }, []);
+  useEffect(() => {
+    if (!authenticated || !address) return;
+    const code = localStorage.getItem("lv_ref_code");
+    if (!code || localStorage.getItem("lv_ref_attributed") === "1") return;
+    api.attributeReferral({ code, walletAddress: address, evmAddress })
+      .then(() => localStorage.setItem("lv_ref_attributed", "1"))
+      .catch(() => {}); // leave unmarked on a real network/server error — retry next load
+  }, [authenticated, address, evmAddress]);
+
   const [registry, setRegistry] = useState(null);
   const [sponsored, setSponsored] = useState(false);
   const [prices, setPrices] = useState({});
@@ -145,12 +365,44 @@ export default function App() {
 
   // build / rebalance flow
   const [view, setView] = useState("auto"); // auto | build | weights | execute
+  // Trade execution/routing progress shows as a popup over whatever screen
+  // is already showing (almost always dash) instead of navigating to a
+  // separate full screen — decoupled from `view` entirely so the screen
+  // underneath stays mounted the whole time.
+  const [executeOpen, setExecuteOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [rebalPrompt, setRebalPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
   const [plan, setPlan] = useState(null);
   const [proposal, setProposal] = useState(null);
+  const [proposalImpacts, setProposalImpacts] = useState({}); // symbol -> { priceImpactPct } | { error }
   const [withdrawalProposal, setWithdrawalProposal] = useState(null); // {to, usd, amount}
+  const [perpProposal, setPerpProposal] = useState(null); // resolved, ready-to-sign perps order intent
+  const [perpOrderBusy, setPerpOrderBusy] = useState(false);
+  const [borrowProposal, setBorrowProposal] = useState(null); // resolved Kamino deposit/borrow intent
+  const [borrowActionBusy, setBorrowActionBusy] = useState(false);
+
+  // Fires once per new proposal (rebalance or build) — not on every weight/
+  // slider change, since a proposal is only (re)computed on a real user
+  // action. Side-effect-free preview (see api.quotePreview — deliberately
+  // NOT api.order, which tops up SOL for gas on sells as a side effect
+  // even just to return a quote).
+  useEffect(() => {
+    if (!proposal?.trades?.length) { setProposalImpacts({}); return; }
+    let cancelled = false;
+    setProposalImpacts({});
+    Promise.all(proposal.trades.map(async (t) => {
+      try {
+        const data = await api.quotePreview({ inputMint: t.inputMint, outputMint: t.outputMint, amount: t.amount });
+        return [t.symbol, data];
+      } catch {
+        return [t.symbol, { error: "preview unavailable" }];
+      }
+    })).then((entries) => {
+      if (!cancelled) setProposalImpacts(Object.fromEntries(entries));
+    });
+    return () => { cancelled = true; };
+  }, [proposal]);
   const [legs, setLegs] = useState([]);
   const [error, setError] = useState("");
   const [investPct, setInvestPct] = useState(100);
@@ -190,6 +442,7 @@ export default function App() {
   const [botTradingErr, setBotTradingErr] = useState(null);
   const [watchedPortfolios, setWatchedPortfolios] = useState([]); // [{ label, address }]
   const [activeAllocTab, setActiveAllocTab] = useState("mine"); // "mine" | watched address
+  const [showAllWatchTabs, setShowAllWatchTabs] = useState(false);
   const [viewedHoldings, setViewedHoldings] = useState(null);
   const [addPortfolioOpen, setAddPortfolioOpen] = useState(false);
   const [newPortfolioEmail, setNewPortfolioEmail] = useState("");
@@ -199,6 +452,8 @@ export default function App() {
   const [discoverableBusy, setDiscoverableBusy] = useState(false);
   const [discoverableErr, setDiscoverableErr] = useState(null);
   const [assetInfoSymbol, setAssetInfoSymbol] = useState(null);
+  const [sellTarget, setSellTarget] = useState(null);
+  const [lendTarget, setLendTarget] = useState(null);
   const busy = useRef(false);
   const profileRef = useRef(null);
 
@@ -254,11 +509,15 @@ export default function App() {
   // USDT that lands in the wallet (e.g. sent to the deposit address by
   // mistake, or from an exchange that doesn't support USDC withdrawals)
   // gets flagged for an explicit, user-confirmed auto-convert to USDC
-  // rather than silently sitting there or silently being swapped. ———
+  // rather than silently sitting there or silently being swapped. Dust
+  // under $0.01 (USDT trades close enough to its $1 peg that uiAmount is a
+  // fine stand-in for USD value here) is ignored — not worth interrupting
+  // someone over, and not worth the gas to convert. ———
+  const USDT_NOTIFY_MIN = 0.01;
   useEffect(() => {
     const usdt = holdings?.tokens?.find((t) => t.mint === USDT_MINT);
     const uiAmount = usdt?.uiAmount || 0;
-    if (uiAmount > 0 && uiAmount > usdtHandledAmount) {
+    if (uiAmount >= USDT_NOTIFY_MIN && uiAmount > usdtHandledAmount) {
       setUsdtToken(usdt);
       setUsdtModalOpen(true);
     }
@@ -343,6 +602,13 @@ export default function App() {
   // Borrow tab — same signWithWallet one-liner BorrowApp.jsx uses, built
   // from this file's own existing Solana wallet/signTransaction.
   const { reserves: kaminoReserves } = useKaminoReserves();
+  // Which held mints Kamino's xStocks Market actually accepts as collateral —
+  // powers the dashboard's per-row "Lend" button (only shown when eligible),
+  // same eligibility check BorrowApp.jsx uses for its own asset picker.
+  const kaminoReserveByMint = useMemo(
+    () => new Map(kaminoReserves.map((r) => [r.liquidityTokenMint, r])),
+    [kaminoReserves]
+  );
   const signKaminoTx = async (tx) => {
     if (wallet?.signTransaction) return wallet.signTransaction(tx);
     return signTransaction({ transaction: tx, wallet });
@@ -361,14 +627,6 @@ export default function App() {
     () => mergePortfolioCollateral(viewedPortfolio, kaminoCollateralDeposits),
     [viewedPortfolio, kaminoCollateralDeposits]
   );
-
-  // The logged-in user's own total, Kamino collateral included — used
-  // anywhere on the dashboard that isn't the Brokerage tab's watched-
-  // portfolio viewer (which can be showing someone else's wallet). Falls
-  // back to the raw wallet-only total on the rare tick where the "mine" tab
-  // isn't active, since kaminoCollateralDeposits is scoped to whichever
-  // address is currently being viewed there.
-  const myPortfolioTotal = activeAllocTab === "mine" ? (displayPortfolio?.total ?? 0) : (portfolio?.total ?? 0);
 
   /* ——— Perpetual Futures dashboard tab: notional exposure per coin, across
      both the crypto and equities (xyz) dexs. Read-only — no signing. ——— */
@@ -399,6 +657,38 @@ export default function App() {
   const borrowCollateralTotal = borrowRows.reduce((s, r) => s + r.value, 0);
   const borrowDebtTotal = kaminoDebtBorrows.reduce((s, d) => s + (Number(d.tokenValue) || 0), 0);
   const borrowBlendedLtv = borrowCollateralTotal > 0 ? (borrowDebtTotal / borrowCollateralTotal) * 100 : 0;
+
+  // Unused borrowing room on whatever's already deposited in the Kamino
+  // xStocks market — same calc BorrowTicket.jsx uses for its "quick borrow,
+  // no new deposit needed" path, needed here too so a prompt like "borrow
+  // $500 more" (no asset named) resolves against real existing room instead
+  // of requiring a fresh deposit every time.
+  const existingBorrowRoom = useMemo(() => {
+    let loan = null, collateralValue = 0, debtValue = 0, maxLtv = 0;
+    for (const l of kaminoLoans) {
+      const info = l.loanInfo ?? l;
+      const cv = (info.collateral?.deposits ?? []).reduce((s, d) => s + Number(d.tokenValue ?? 0), 0);
+      const dv = (info.debt?.borrows ?? []).reduce((s, d) => s + Number(d.tokenValue ?? 0), 0);
+      const ltv = Number(info.maxLtv ?? 0);
+      const room = Math.max(0, cv * ltv - dv);
+      if (room > 0.01 && !loan) { loan = l; collateralValue = cv; debtValue = dv; maxLtv = ltv; }
+    }
+    return { loan, collateralValue, debtValue, maxLtv, roomUsd: Math.max(0, collateralValue * maxLtv - debtValue) };
+  }, [kaminoLoans]);
+
+  // The logged-in user's own net worth across every product — Brokerage
+  // (incl. Kamino collateral, already merged into displayPortfolio above),
+  // Perps equity (accountValue already nets in unrealized PnL — the actual
+  // "your money" figure, not perpsNotionalTotal's leveraged exposure), minus
+  // Kamino debt (a real liability that reduces net worth; collateral was
+  // added by mergePortfolioCollateral but never had its offsetting debt
+  // subtracted anywhere, confirmed via mergePortfolioCollateral's own
+  // implementation). Falls back to the raw wallet-only total on the rare
+  // tick where the "mine" tab isn't active — perps/Kamino aren't fetchable
+  // for an arbitrary watched address, only the logged-in user's own.
+  const myPortfolioTotal = activeAllocTab === "mine"
+    ? (displayPortfolio?.total ?? 0) + perpsAccountValue - borrowDebtTotal
+    : (portfolio?.total ?? 0);
 
   useEffect(() => { if (dashProduct !== "brokerage") setStatsFlipped(false); }, [dashProduct]);
 
@@ -513,6 +803,7 @@ export default function App() {
         taker: address,
         signWithWallet,
         onStatus: (s) => setUsdtSwap((p) => ({ ...p, status: s })),
+        usdValue: usdtToken.uiAmount || 0,
       });
       if (result.status && result.status !== "Success") throw new Error(result.error || `swap failed (${result.status})`);
       setUsdtHandledAmount(usdtToken.uiAmount || 0);
@@ -543,10 +834,10 @@ export default function App() {
       if (amount <= 0) return;
       busy.current = true;
       setLegs([{ symbol: "USDY", side: "buy", usd: usdcBal, inputMint: registry.USDC.mint, outputMint: registry.USDY.mint, amount, status: "queued", sig: null }]);
-      setView("execute");
+      setExecuteOpen(true);
       const setLeg = (patch) => setLegs((L) => [{ ...L[0], ...patch }]);
       try {
-        const result = await executeSwap({ inputMint: registry.USDC.mint, outputMint: registry.USDY.mint, amount, taker: address, signWithWallet, onStatus: (s) => setLeg({ status: s }) });
+        const result = await executeSwap({ inputMint: registry.USDC.mint, outputMint: registry.USDY.mint, amount, taker: address, signWithWallet, onStatus: (s) => setLeg({ status: s }), usdValue: usdcBal });
         setLeg({ status: "confirmed", sig: result.signature });
       } catch (e) {
         setLeg({ status: "failed", err: e.message });
@@ -561,10 +852,10 @@ export default function App() {
       const usdyUsd = (usdyToken?.uiAmount || 0) * (prices[registry.USDY.mint] || 1);
       busy.current = true;
       setLegs([{ symbol: "USDY", side: "sell", usd: usdyUsd, inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, status: "queued", sig: null }]);
-      setView("execute");
+      setExecuteOpen(true);
       const setLeg = (patch) => setLegs((L) => [{ ...L[0], ...patch }]);
       try {
-        const result = await executeSwap({ inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, taker: address, signWithWallet, onStatus: (s) => setLeg({ status: s }) });
+        const result = await executeSwap({ inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, taker: address, signWithWallet, onStatus: (s) => setLeg({ status: s }), usdValue: usdyUsd });
         setLeg({ status: "confirmed", sig: result.signature });
       } catch (e) {
         setLeg({ status: "failed", err: e.message });
@@ -581,7 +872,7 @@ export default function App() {
     busy.current = true;
     const leg = { side: "send", symbol, usd: usdAmt, to, status: "queued", sig: null };
     setLegs([leg]);
-    setView("execute");
+    setExecuteOpen(true);
     setError("");
     const setLeg = (patch) => setLegs((L) => [{ ...L[0], ...patch }]);
     try {
@@ -617,12 +908,26 @@ export default function App() {
   // people use to describe building/changing a portfolio, not just
   // liquidating one.
   const TRADE_RE = /\b(sell|buy|rebalance|liquidate|invest|trim|remove|swap|for cash|go to cash|make|build|create|compose|allocate|diversify|combine|combination|convert|construct|split|distribute|put (me|it|my \w+) (in|into)|switch (me|it|my \w+) to|shift (me|it|my \w+) to|turn (it|my \w+) into|set (my|the) portfolio|change my portfolio|hold only)\b/i;
+  // Distinct, narrower signal than TRADE_RE's "buy"/"sell" (which also match
+  // ordinary brokerage prompts) — requires an unambiguous leverage/perps
+  // word so a normal "buy Tesla" doesn't get misrouted here.
+  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\b\d+(\.\d+)?x\b/i;
+  // Kamino borrow/lend signal — "borrow" alone is unambiguous (no other
+  // flow in this app uses that verb); "collateral"/"kamino"/"ltv" cover
+  // deposit-only phrasing that doesn't happen to say "borrow"; "loan"/
+  // "repay"/"pay back" cover repay/withdraw phrasing like "pay back my
+  // loan and withdraw my TSLA" (confirmed as a real gap — that exact
+  // phrase matched none of the original words and fell through to the
+  // brokerage allocation parser instead).
+  const BORROW_RE = /\bborrow(ing)?\b|\bcollateral\b|\bkamino\b|\bltv\b|\bloans?\b|\brepay(ing|ment)?\b|\bpay(ing)?\s+back\b/i;
   const runPrompt = async (text, isRebalance) => {
     const addrMatch = text.match(SOLANA_ADDR_RE);
     const isSend = SEND_RE.test(text) && addrMatch;
     const hasTradeIntent = TRADE_RE.test(text);
+    const isPerp = PERP_RE.test(text);
+    const isBorrow = BORROW_RE.test(text);
     const QUESTION_START_RE = /^(what|how|why|when|who|which|tell me|explain|is |are |does |should |can |will |show me|analyze|compare|what's|how's)/i;
-    const isQuestion = !hasTradeIntent && (text.includes("?") || QUESTION_START_RE.test(text.trim()));
+    const isQuestion = !hasTradeIntent && !isPerp && !isBorrow && (text.includes("?") || QUESTION_START_RE.test(text.trim()));
 
     if (isQuestion) {
       setThinking(true); setError(""); setAnswer(null);
@@ -634,6 +939,16 @@ export default function App() {
       } finally {
         setThinking(false);
       }
+      return;
+    }
+
+    if (isPerp) {
+      await runPerpPrompt(text);
+      return;
+    }
+
+    if (isBorrow) {
+      await runBorrowPrompt(text);
       return;
     }
 
@@ -742,12 +1057,402 @@ export default function App() {
     }
   };
 
+  /* ——— perps-via-prompt: "buy SOL perp at 5x with all my cash" ———
+   * parsePerpPrompt() (server) only extracts linguistic intent — never a
+   * real dollar figure. Everything below resolves that intent against live
+   * data (real asset list, real mark price, real withdrawable margin) and
+   * stops at a fully-computed confirm screen (setPerpProposal) rather than
+   * ever signing directly off the parsed text — same discipline the
+   * rebalance/build paths use via the "Proposed change" modal, doubly
+   * important here since a misparse on a leveraged order amplifies loss. */
+  const runPerpPrompt = async (text) => {
+    setThinking(true); setError("");
+    try {
+      const intent = await api.parsePerp(text);
+      const wantedAsset = String(intent.asset || "").toUpperCase();
+      const asset = perpAssets.find(
+        (a) => a.name.toUpperCase() === wantedAsset || a.displayName.toUpperCase() === wantedAsset
+      );
+      if (!asset) throw new Error(`"${intent.asset}" isn't tradable as a perp here.`);
+
+      const isEquity = asset.category === "equity";
+      const markPrice = perpMarkPrices[asset.name];
+
+      if (intent.action === "close") {
+        const positions = (isEquity ? equityPerps : cryptoPerps)?.positions || [];
+        const pos = positions.find((p) => p.coin === asset.name);
+        if (!pos) throw new Error(`No open ${asset.displayName} position to close.`);
+        setPerpProposal({
+          action: "close", asset, side: pos.side,
+          markPrice: pos.markPx, notionalUsd: pos.size * pos.markPx,
+          closeSize: pos.size, closeAssetIndex: pos.assetIndex, closeSzDecimals: pos.szDecimals,
+          summary: intent.summary,
+        });
+        return;
+      }
+
+      if (intent.leverage == null) throw new Error('Say how much leverage to use, e.g. "at 5x leverage".');
+      if (intent.sizeType === "unspecified") throw new Error('Say how much to trade, e.g. "with all my cash" or "$500".');
+
+      const leverage = Math.max(1, Math.min(Math.round(intent.leverage), asset.maxLeverage || 20));
+      if (!markPrice) throw new Error("No live price available for that asset right now — try again in a moment.");
+
+      const withdrawable = (isEquity ? equityPerps : cryptoPerps)?.withdrawable ?? 0;
+
+      let marginUsd, notionalUsd, size;
+      if (intent.sizeType === "all") {
+        marginUsd = withdrawable;
+        size = (marginUsd * leverage) / markPrice;
+      } else if (intent.sizeType === "percent") {
+        marginUsd = (intent.sizeValue / 100) * withdrawable;
+        size = (marginUsd * leverage) / markPrice;
+      } else if (intent.sizeType === "asset_amount") {
+        size = intent.sizeValue;
+        marginUsd = (size * markPrice) / leverage;
+      } else {
+        // "usd" — a spoken dollar amount ("$500 of SOL") reads as the
+        // position's notional value, not the margin behind it (unlike the
+        // manual order ticket's own $ field, which pairs live with an
+        // asset-amount field a user is actively watching update).
+        marginUsd = intent.sizeValue / leverage;
+        size = intent.sizeValue / markPrice;
+      }
+      notionalUsd = size * markPrice;
+
+      if (!(marginUsd > 0) || !(size > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
+      if (marginUsd > withdrawable + 0.01)
+        throw new Error(`That needs $${marginUsd.toFixed(2)} margin but only $${withdrawable.toFixed(2)} is available to trade.`);
+
+      let formattedSize;
+      try { formattedSize = formatSize(String(size), asset.szDecimals ?? 0); }
+      catch { throw new Error("That size is too small to place at this asset's precision."); }
+      if (!(Number(formattedSize) > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
+
+      let liqPrice = null;
+      try {
+        liqPrice = liquidationPrice({
+          side: intent.side === "long" ? 1 : -1,
+          size: Number(formattedSize),
+          markPrice,
+          marginAvailable: marginUsd,
+          tiers: [{ lowerBound: 0, maxLeverage: asset.maxLeverage || leverage }],
+        });
+      } catch { liqPrice = null; }
+
+      setPerpProposal({
+        action: "open", asset, leverage, isBuy: intent.side === "long", side: intent.side,
+        markPrice, marginUsd, notionalUsd, formattedSize, liqPrice, summary: intent.summary,
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  const executePerpOrder = async () => {
+    if (!perpProposal || !perpsWallet || !evmAddress) return;
+    setPerpOrderBusy(true); setError("");
+    try {
+      if (perpProposal.action === "close") {
+        // Mirrors PerpsCloseCell's close() exactly — same call, just
+        // triggered from a parsed prompt instead of the Positions table.
+        await hl.closePosition(perpsWallet, evmAddress, {
+          assetIndex: perpProposal.closeAssetIndex,
+          isLong: perpProposal.side === "long",
+          size: perpProposal.closeSize,
+          markPrice: perpProposal.markPrice,
+          szDecimals: perpProposal.closeSzDecimals,
+        });
+      } else {
+        await hl.setLeverage(perpsWallet, perpProposal.asset.index, perpProposal.leverage);
+        const rawPrice = perpProposal.isBuy ? perpProposal.markPrice * 1.02 : perpProposal.markPrice * 0.98;
+        const price = formatPrice(rawPrice, perpProposal.asset.szDecimals ?? 0);
+        await hl.placeOrder(perpsWallet, evmAddress, {
+          assetIndex: perpProposal.asset.index,
+          isBuy: perpProposal.isBuy,
+          size: perpProposal.formattedSize,
+          price,
+          tif: "Ioc",
+        });
+      }
+      setPerpProposal(null);
+      setRebalPrompt("");
+      await refreshHoldings();
+    } catch (e) {
+      setError(
+        e?.name === "BuilderApprovalRequiredError"
+          ? "Approve perps trading first from the Perps tab, then try again."
+          : (e instanceof Error ? e.message : "Order failed")
+      );
+    } finally {
+      setPerpOrderBusy(false);
+    }
+  };
+
+  /* ——— borrow/lend-via-prompt: "deposit my AAPL and borrow $500 USDC" ———
+   * Same split as perps: parseBorrowPrompt() (server) only extracts what
+   * was said (which xStock, a deposit size intent, a borrow size intent).
+   * Resolution against real held balances, real reserve maxLTVs, and real
+   * existing obligation room happens here, stopping at a confirm screen —
+   * never signing straight off the parsed text. */
+  const runBorrowPrompt = async (text) => {
+    setThinking(true); setError("");
+    try {
+      const intent = await api.parseBorrow(text);
+      const usdcReserve = kaminoReserves.find((r) => r.liquidityToken === "USDC");
+      if (!usdcReserve) throw new Error("Borrow market data isn't available right now — try again in a moment.");
+
+      if (["repay", "withdraw", "repay_and_withdraw"].includes(intent.action)) {
+        // Repay uses Kamino's own quoted outstanding balance (tokenAmount) —
+        // the authoritative "pay this much to fully close the loan" figure,
+        // same source PositionCard.jsx's manual Repay tab already reads.
+        const primaryDebt = kaminoDebtBorrows[0] || null;
+        const repayMax = Number(primaryDebt?.tokenAmount ?? 0);
+        const needsRepay = intent.action !== "withdraw";
+        let repayReserve = null, repayAmt = 0, repayAmtStr = "0", isFullRepay = false;
+        if (needsRepay) {
+          if (repayMax <= 0) throw new Error("You don't have an outstanding Kamino loan to repay.");
+          repayReserve = kaminoReserves.find((r) => r.liquidityTokenMint === primaryDebt.tokenMint);
+          if (!repayReserve) throw new Error("Couldn't find the debt reserve for your loan.");
+          if (intent.repaySizeType === "all") repayAmt = repayMax;
+          else if (intent.repaySizeType === "percent") repayAmt = (intent.repaySizeValue / 100) * repayMax;
+          else if (intent.repaySizeType === "usd") repayAmt = intent.repaySizeValue;
+          if (!(repayAmt > 0)) throw new Error("That works out to a zero-size repay — try a larger amount.");
+          isFullRepay = repayAmt >= repayMax;
+          if (isFullRepay) {
+            repayAmt = repayMax;
+            // A full repay can't just send Kamino's own snapshotted debt
+            // figure, even byte-exact — debt accrues interest continuously,
+            // so by the time this transaction actually lands (after the
+            // user reviews the confirm screen and signs) the true on-chain
+            // debt is already slightly higher than what was quoted here,
+            // leaving dust behind and tripping Kamino's own
+            // "NetValueRemainingTooSmall" guard — confirmed as the real
+            // cause of a production failure, even after fixing a separate,
+            // real (but insufficient on its own) floating-point-precision
+            // bug in this exact spot. Verified directly against klend's
+            // real on-chain source (Reserve::calculate_repay) that a repay
+            // request AT OR ABOVE the true debt is clamped down to the
+            // exact amount actually owed at execution time — the same
+            // mechanism its own u64::MAX "repay everything" sentinel relies
+            // on — and verified live against Kamino's real hosted API that
+            // it happily builds a repay tx for far more than the actual
+            // debt with no balance pre-check. So: overshoot on purpose by a
+            // wide, safe margin and let the chain settle the exact amount,
+            // rather than trying to predict a moving target.
+            repayAmtStr = String(repayMax * 1.1);
+          } else {
+            repayAmtStr = String(repayAmt);
+          }
+        }
+
+        const needsWithdraw = intent.action !== "repay";
+        let withdrawDeposit = null, withdrawReserve = null, withdrawAmt = 0, withdrawAmtStr = "0", withdrawMax = 0;
+        if (needsWithdraw) {
+          const wanted = intent.asset.toUpperCase();
+          withdrawDeposit = kaminoCollateralDeposits.find((d) => d.tokenName?.toUpperCase().replace(/X$/, "") === wanted);
+          if (!withdrawDeposit) throw new Error(`You don't have ${intent.asset} deposited as collateral.`);
+          withdrawReserve = kaminoReserves.find((r) => r.liquidityTokenMint === withdrawDeposit.tokenMint);
+          if (!withdrawReserve) throw new Error(`Couldn't find the reserve for ${intent.asset}.`);
+
+          // Once the full loan is paid off (by this same command, or
+          // already zero), the whole deposit unlocks — not just Kamino's
+          // current maxWithdrawableAmount, which still reflects the
+          // pre-repay LTV constraint. For a partial repay (or no repay at
+          // all with debt still outstanding), stick with Kamino's own
+          // authoritative LTV-aware figure rather than re-deriving it.
+          const willFullyRepay = needsRepay ? isFullRepay : repayMax <= 0.01;
+          const fullWithdrawStr = willFullyRepay ? withdrawDeposit.tokenAmount : withdrawDeposit.maxWithdrawableAmount;
+          withdrawMax = Number(fullWithdrawStr ?? 0);
+
+          if (intent.withdrawSizeType === "all") withdrawAmt = withdrawMax;
+          else if (intent.withdrawSizeType === "percent") withdrawAmt = (intent.withdrawSizeValue / 100) * withdrawMax;
+          else if (intent.withdrawSizeType === "units") withdrawAmt = intent.withdrawSizeValue;
+          else if (intent.withdrawSizeType === "usd") {
+            const impliedPrice = Number(withdrawDeposit.tokenAmount) > 0 ? Number(withdrawDeposit.tokenValue) / Number(withdrawDeposit.tokenAmount) : 0;
+            withdrawAmt = impliedPrice ? intent.withdrawSizeValue / impliedPrice : 0;
+          }
+          if (!(withdrawAmt > 0)) throw new Error("That works out to a zero-size withdrawal — try a larger amount.");
+          if (withdrawAmt > withdrawMax + 1e-6)
+            throw new Error(`Only ${withdrawMax.toFixed(6)} ${withdrawDeposit.tokenName} is withdrawable right now${needsRepay ? " after that repay" : ""}.`);
+
+          const isFullWithdraw = withdrawAmt >= withdrawMax - 1e-9;
+          if (isFullWithdraw && willFullyRepay) {
+            // Same overshoot-and-clamp reasoning as the full-repay case
+            // above — verified in klend's withdraw handler too: once
+            // borrows are empty, a withdraw request at or above the true
+            // deposited amount clamps down to exactly what's deposited
+            // (`deposited_amount.min(requested)`), so this is safe against
+            // the deposit's own share-to-underlying exchange rate drifting
+            // between this snapshot and execution (confirmed as a real,
+            // continuously-moving value, not just the debt side).
+            withdrawAmtStr = String(withdrawMax * 1.1);
+          } else if (isFullWithdraw) {
+            // Debt is still outstanding here, so the LTV-constrained
+            // max-withdraw path applies instead — that clamping behavior
+            // isn't confirmed to be as permissive, so stick with Kamino's
+            // exact authoritative string rather than risk overshooting
+            // past what's actually allowed.
+            withdrawAmtStr = fullWithdrawStr;
+          } else {
+            withdrawAmtStr = String(withdrawAmt);
+          }
+        }
+
+        setBorrowProposal({
+          action: intent.action, repayReserve, repayAmt, repayAmtStr, repayMax,
+          withdrawDeposit, withdrawReserve, withdrawAmt, withdrawAmtStr, withdrawMax,
+          summary: intent.summary,
+        });
+        return;
+      }
+
+      let row = null, reserve = null, depositAmt = 0, depositValueUsd = 0, kaminoDepositAmount = 0;
+      if (intent.action !== "borrow") {
+        const wanted = intent.asset.toUpperCase();
+        row = (portfolio?.rows || []).find((r) => r.symbol.toUpperCase().replace(/X$/, "") === wanted);
+        if (!row) throw new Error(`You don't hold ${intent.asset} — nothing to deposit.`);
+        reserve = kaminoReserves.find((r) => r.liquidityTokenMint === row.mint);
+        if (!reserve) throw new Error(`${row.symbol} isn't accepted as collateral on Kamino's xStocks market.`);
+
+        if (intent.depositSizeType === "all") depositAmt = row.uiAmount;
+        else if (intent.depositSizeType === "percent") depositAmt = (intent.depositSizeValue / 100) * row.uiAmount;
+        else if (intent.depositSizeType === "units") depositAmt = intent.depositSizeValue;
+        else if (intent.depositSizeType === "usd") depositAmt = row.price ? intent.depositSizeValue / row.price : 0;
+        if (!(depositAmt > 0)) throw new Error("That works out to a zero-size deposit — try a larger amount.");
+        if (depositAmt > row.uiAmount + 1e-9) throw new Error(`You only hold ${row.uiAmount} ${row.symbol}.`);
+        depositValueUsd = depositAmt * row.price;
+
+        // Same Token-2022 ScaledUiAmount correction BorrowTicket.jsx uses —
+        // row.uiAmount is a display value; Kamino needs the true unscaled
+        // atoms-derived amount so it never asks to pull more than is held.
+        const trueUnscaledMax = row.amount != null ? Number(row.amount) / 10 ** (row.decimals ?? 8) : row.uiAmount;
+        kaminoDepositAmount = depositAmt >= row.uiAmount ? trueUnscaledMax : (depositAmt / row.uiAmount) * trueUnscaledMax;
+      }
+
+      // Platform fee taken on deposit, before it's posted as collateral —
+      // Kamino's own hosted API has no fee-passthrough, so this happens as
+      // a separate transfer inside executeKaminoAction() (lib/api.js).
+      const depositFeeUsd = depositValueUsd * (KAMINO_DEPOSIT_FEE_BPS / 10000);
+      const netDepositValueUsd = depositValueUsd - depositFeeUsd;
+
+      // Matches BorrowTicket.jsx's own scoping exactly: a fresh deposit's
+      // borrow ceiling is that deposit's NET (post-fee) value × its own
+      // max LTV, not combined with unrelated existing room — Kamino's
+      // cross-margin behavior across multiple different collateral assets
+      // in one obligation isn't confirmed safe/simple enough to blend here yet.
+      const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
+      const maxBorrowUsd = intent.action === "borrow" ? existingBorrowRoom.roomUsd : netDepositValueUsd * maxLtv;
+
+      let borrowUsd = 0;
+      if (intent.action !== "deposit") {
+        if (intent.borrowSizeType === "all") borrowUsd = maxBorrowUsd;
+        else if (intent.borrowSizeType === "percent") borrowUsd = (intent.borrowSizeValue / 100) * maxBorrowUsd;
+        else if (intent.borrowSizeType === "usd") borrowUsd = intent.borrowSizeValue;
+        if (!(borrowUsd > 0)) throw new Error("That works out to a zero-size borrow — try a larger amount.");
+        if (borrowUsd > maxBorrowUsd + 0.01)
+          throw new Error(`That needs $${borrowUsd.toFixed(2)} of borrowing room but only $${maxBorrowUsd.toFixed(2)} is available.`);
+      }
+
+      setBorrowProposal({
+        action: intent.action, row, reserve, usdcReserveKey: usdcReserve.reserve,
+        depositAmt, depositValueUsd, depositFeeUsd, netDepositValueUsd, kaminoDepositAmount, maxLtv,
+        borrowUsd, maxBorrowUsd, summary: intent.summary,
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  const executeBorrowProposal = async () => {
+    if (!borrowProposal || !address) return;
+    setBorrowActionBusy(true); setError("");
+
+    if (["repay", "withdraw", "repay_and_withdraw"].includes(borrowProposal.action)) {
+      try {
+        if (borrowProposal.action !== "withdraw") {
+          await executeKaminoAction("repay", {
+            wallet: address, reserve: borrowProposal.repayReserve.reserve,
+            amount: borrowProposal.repayAmtStr,
+            signWithWallet: signKaminoTx,
+          });
+        }
+      } catch (e) {
+        setBorrowActionBusy(false);
+        setError(e instanceof Error ? e.message : "Repay failed");
+        return;
+      }
+      try {
+        if (borrowProposal.action !== "repay") {
+          await executeKaminoAction("withdraw", {
+            wallet: address, reserve: borrowProposal.withdrawReserve.reserve,
+            amount: borrowProposal.withdrawAmtStr,
+            signWithWallet: signKaminoTx,
+          });
+        }
+        setBorrowProposal(null);
+        setRebalPrompt("");
+      } catch (e) {
+        setError(
+          borrowProposal.action === "repay_and_withdraw"
+            ? `Repaid, but withdraw failed: ${e instanceof Error ? e.message : "unknown error"}. Check My Positions — you can withdraw from there.`
+            : (e instanceof Error ? e.message : "Withdraw failed")
+        );
+      } finally {
+        setBorrowActionBusy(false);
+        await refreshKaminoLoans();
+        await refreshHoldings();
+      }
+      return;
+    }
+
+    try {
+      if (borrowProposal.action !== "borrow") {
+        await executeKaminoAction("deposit", {
+          wallet: address, reserve: borrowProposal.reserve.reserve,
+          amount: String(borrowProposal.kaminoDepositAmount),
+          signWithWallet: signKaminoTx,
+          mint: borrowProposal.row.mint, decimals: borrowProposal.row.decimals,
+          usdValue: borrowProposal.depositValueUsd,
+        });
+      }
+    } catch (e) {
+      setBorrowActionBusy(false);
+      setError(e instanceof Error ? e.message : "Deposit failed");
+      return;
+    }
+    try {
+      if (borrowProposal.action !== "deposit") {
+        await executeKaminoAction("borrow", {
+          wallet: address, reserve: borrowProposal.usdcReserveKey,
+          amount: String(borrowProposal.borrowUsd),
+          signWithWallet: signKaminoTx,
+        });
+      }
+      setBorrowProposal(null);
+      setRebalPrompt("");
+    } catch (e) {
+      setError(
+        borrowProposal.action === "deposit_and_borrow"
+          ? `Deposited, but borrow failed: ${e instanceof Error ? e.message : "unknown error"}. Check My Positions — you can borrow from there.`
+          : (e instanceof Error ? e.message : "Borrow failed")
+      );
+    } finally {
+      setBorrowActionBusy(false);
+      await refreshKaminoLoans();
+      await refreshHoldings();
+    }
+  };
+
   /* ——— execute a list of trades sequentially, for real ——— */
   const runTrades = async (trades, { afterWithdrawTo = null, groupLabel = "Rebalance" } = {}) => {
     if (busy.current) return;
     busy.current = true;
     setLegs(trades.map((t) => ({ ...t, status: "queued", sig: null })));
-    setView("execute");
+    setExecuteOpen(true);
     setError("");
     const groupId = `grp_${Date.now()}`;
     let totalLegs = trades.length;
@@ -765,6 +1470,7 @@ export default function App() {
             inputMint: t.inputMint, outputMint: t.outputMint,
             amount: t.amount, taker: address, signWithWallet,
             onStatus: (s) => setLeg({ status: s }),
+            usdValue: t.usd,
           });
           setLeg({ status: "confirmed", sig: result.signature });
           appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: t.side, symbol: t.symbol, usd: t.usd, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
@@ -799,6 +1505,7 @@ export default function App() {
                 inputMint: registry.USDY.mint, outputMint: registry.USDC.mint,
                 amount: usdyAtoms, taker: address, signWithWallet,
                 onStatus: (s) => setPre({ status: s }),
+                usdValue: usdyUsd,
               });
               setPre({ status: "confirmed", sig: result.signature });
               appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: "sell", symbol: "USDY", usd: usdyUsd, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
@@ -823,6 +1530,7 @@ export default function App() {
               inputMint: t.inputMint, outputMint: t.outputMint,
               amount, taker: address, signWithWallet,
               onStatus: (s) => setLeg({ status: s }),
+              usdValue: t.usd,
             });
             setLeg({ status: "confirmed", sig: result.signature });
             appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: t.side, symbol: t.symbol, usd: t.usd, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
@@ -853,6 +1561,7 @@ export default function App() {
                 inputMint: registry.USDC.mint, outputMint: registry.USDY.mint,
                 amount: sweepAmount, taker: address, signWithWallet,
                 onStatus: (s) => setSweep({ status: s }),
+                usdValue: usdcBal,
               });
               setSweep({ status: "confirmed", sig: result.signature });
               appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: "buy", symbol: "USDY", usd: usdcBal, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
@@ -877,7 +1586,7 @@ export default function App() {
             setLegs((prev) => [...prev, { symbol: "USDY", side: "sell", usd: usdyUsd, inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, status: "queued", sig: null }]);
             const setConv = (patch) => setLegs((L) => L.map((l, j) => j === convIdx ? { ...l, ...patch } : l));
             try {
-              const result = await executeSwap({ inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, taker: address, signWithWallet, onStatus: (s) => setConv({ status: s }) });
+              const result = await executeSwap({ inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, taker: address, signWithWallet, onStatus: (s) => setConv({ status: s }), usdValue: usdyUsd });
               setConv({ status: "confirmed", sig: result.signature });
             } catch (e) {
               setConv({ status: "failed", err: e.message });
@@ -938,7 +1647,57 @@ export default function App() {
       trades.push({ symbol: "USDY", side: "sell", usd: usdyUsd, inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms });
     }
     trades.push(...buyTrades);
-    runTrades(trades, { afterWithdrawTo: plan.pendingWithdrawal?.to || null });
+    // Review-before-execute, same as the rebalance path already has — reuses
+    // the "Proposed change" modal (and its impact-preview effect) rather than
+    // calling runTrades directly, which used to skip straight to execution
+    // with no confirm step and no slippage visibility at all.
+    setProposal({ trades, pendingWithdrawal: plan.pendingWithdrawal ?? null });
+  };
+
+  // Single-asset quick buy, triggered from the Equities Markets page — same
+  // review-before-execute pipeline as executeBuild/rebalance above (one
+  // trade instead of many), not a separate execution path. The proposal
+  // modal only renders as part of the "dash" screen, so this also switches
+  // back to it — otherwise setting proposal alone would be invisible while
+  // still on the Equities Markets screen.
+  const quickBuy = (row, usdAmount) => {
+    setProposal({
+      trades: [{
+        symbol: row.symbol, side: "buy", usd: usdAmount,
+        inputMint: registry.USDC.mint, outputMint: row.mint,
+        amount: Math.floor(usdAmount * 10 ** registry.USDC.decimals),
+      }],
+      pendingWithdrawal: null,
+    });
+    setView("auto");
+  };
+
+  // Single-asset quick sell, triggered from the main dashboard's Positions
+  // table (SellModal) — same review-before-execute pipeline as quickBuy
+  // above, source/destination mints swapped. Caps the trade to the exact
+  // on-chain balance (row.amount, raw atoms) rather than a price-derived
+  // figure, same reasoning planTrades already uses: a requested amount
+  // right at (or nominally over, via the modal's own rounding) the full
+  // position's dollar value must still resolve to selling the exact
+  // holding, not slightly over/under it from a $ -> shares roundtrip.
+  const quickSell = (row, usdAmount) => {
+    const isFullSell = usdAmount >= row.value - 0.01;
+    const decimals = registry[row.symbol]?.decimals ?? 6;
+    const atoms = isFullSell
+      ? Number(row.amount || 0)
+      : Math.min(
+          Math.floor(Math.min(usdAmount / (row.price || 1), row.uiAmount || 0) * 10 ** decimals),
+          Number(row.amount || 0),
+        );
+    setProposal({
+      trades: [{
+        symbol: row.symbol, side: "sell", usd: usdAmount,
+        inputMint: row.mint, outputMint: registry.USDC.mint,
+        amount: atoms,
+      }],
+      pendingWithdrawal: null,
+    });
+    setView("auto");
   };
 
   /* ——— weights editing ——— */
@@ -1017,25 +1776,38 @@ export default function App() {
     !ready || !registry ? "loading"
     : !authenticated ? "auth"
     : !address ? "wallet-pending"
-    : view === "execute" ? "execute"
     : view === "weights" && plan ? "weights"
     : view === "build" ? "build"
     : view === "history" ? "history"
+    : view === "equities" ? "equities"
+    : view === "predictions" ? "predictions"
     : view === "perps" ? "perps"
     : view === "borrow" ? "borrow"
+    : view === "referrals" ? "referrals"
     : "dash";
 
   return (
     <div className="lv-root">
       <header className="lv-head">
         <div className="head-left">
-          <div className="wordmark">
+          <button className="wordmark wordmark-btn" onClick={() => setView("auto")}>
             <img className="wordmark-logo" src="/bonsai-icon.png" alt="" />
             Bonzai Trading
-          </div>
+          </button>
         </div>
+        {screen === "auth" && (
+          <div className="head-right">
+            <button className="head-nav-btn" onClick={login}>Log in</button>
+          </div>
+        )}
         {address && (
           <div className="head-right">
+            {screen !== "equities" && (
+              <button className="head-nav-btn" onClick={() => setView("equities")}>Equities Markets</button>
+            )}
+            {screen !== "predictions" && (
+              <button className="head-nav-btn" onClick={() => setView("predictions")}>Prediction Markets</button>
+            )}
             {screen !== "perps" && (
               <button className="head-nav-btn" onClick={() => setView("perps")}>Perpetual Futures Markets</button>
             )}
@@ -1054,6 +1826,7 @@ export default function App() {
                   <button className="profile-menu-item" onClick={() => { setProfileModal("account"); setProfileOpen(false); }}>My Account</button>
                   <button className="profile-menu-item" onClick={() => { setProfileModal("settings"); setProfileOpen(false); }}>Settings</button>
                   <button className="profile-menu-item" onClick={() => { setView("history"); setProfileOpen(false); }}>Transaction History</button>
+                  <button className="profile-menu-item" onClick={() => { setView("referrals"); setProfileOpen(false); }}>Refer & Earn</button>
                   <div className="profile-menu-divider" />
                   <button className="profile-menu-item danger" onClick={logout}>Sign Out</button>
                 </div>
@@ -1345,62 +2118,17 @@ export default function App() {
         </main>
       )}
 
-      {screen === "execute" && (
-        <main className="stage narrow">
-          <p className="eyebrow">Executing</p>
-          <h2 className="display sm">Routing your swaps</h2>
-          <div className="card card-pop exec-card">
-            <div className="card-toprow">
-              <p className="table-card-title">Transaction Progress</p>
-              <span className="tiny muted mono">
-                {legs.filter((l) => l.status === "confirmed").length} / {legs.length} confirmed
-              </span>
-            </div>
-            {legs.map((l, i) => (
-              <div className={`leg ${l.status}`} key={i}>
-                <span className={`leg-icon-badge ${l.status}`}>
-                  {l.status === "queued"    && "○"}
-                  {l.status === "routing"   && "↻"}
-                  {l.status === "signing"   && "◎"}
-                  {l.status === "executing" && "↑"}
-                  {l.status === "confirmed" && "✓"}
-                  {l.status === "failed"    && "×"}
-                </span>
-                <span className="leg-route mono">
-                  {l.side === "send" ? `${l.symbol || "USDC"} → ${short(l.to)}`
-                    : l.side === "buy" ? `USDC → ${l.symbol}`
-                    : `${l.symbol} → USDC`}
-                </span>
-                <span className="mono tiny muted">${usd(l.usd)}</span>
-                <span className={`leg-status-badge ${l.status}`}>
-                  {l.status === "queued"    && "Pending"}
-                  {l.status === "routing"   && "Routing…"}
-                  {l.status === "signing"   && "Sign in wallet…"}
-                  {l.status === "executing" && "Broadcasting…"}
-                  {l.status === "confirmed" && (
-                    <a href={`https://solscan.io/tx/${l.sig}`} target="_blank" rel="noreferrer" className="leg-confirmed-link">
-                      Confirmed ↗
-                    </a>
-                  )}
-                  {l.status === "failed" && (l.err || "Failed")}
-                </span>
-              </div>
-            ))}
-          </div>
-          {!busy.current && (
-            <button className="btn primary" style={{ marginTop: 20, width: "100%" }}
-              onClick={() => setView("auto")}>
-              Back to dashboard →
-            </button>
-          )}
-          <p className="tiny muted center" style={{ marginTop: 12 }}>
-            {sponsored ? "Gas fees sponsored — no SOL required." : "Network fees paid in SOL from your wallet."}
-          </p>
-        </main>
-      )}
-
       {screen === "history" && (
         <HistoryScreen txHistory={txHistory} onBack={() => setView("auto")} />
+      )}
+
+      {screen === "equities" && (
+        <EquitiesMarketsApp onBack={() => setView("auto")} onQuickBuy={quickBuy}
+          availableCash={portfolio?.cashUsdc ?? portfolio?.cash ?? 0} />
+      )}
+
+      {screen === "predictions" && (
+        <PredictionMarketsApp onBack={() => setView("auto")} />
       )}
 
       {screen === "perps" && (
@@ -1409,6 +2137,10 @@ export default function App() {
 
       {screen === "borrow" && (
         <BorrowApp solanaAddress={address} solBalance={holdings?.sol ?? 0} portfolioRows={portfolio?.rows ?? []} onBack={() => setView("auto")} />
+      )}
+
+      {screen === "referrals" && (
+        <ReferralsApp onBack={() => setView("auto")} />
       )}
 
       {screen === "dash" && portfolio && (
@@ -1444,7 +2176,7 @@ export default function App() {
               </div>
               <div className="prompt-wrap row">
                 <input className="prompt-box oneline"
-                  placeholder={'"Go 50% SPY, trim Tesla" · "What are Apple\'s latest earnings?"'}
+                  placeholder={'"Buy SPY and QQQ" · "Go long BTC at 5x leverage" · "Lend my TSLA and borrow cash"'}
                   value={rebalPrompt} onChange={(e) => setRebalPrompt(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && rebalPrompt.trim() && !thinking && runPrompt(rebalPrompt, true)} />
                 <button className="btn primary" disabled={!rebalPrompt.trim() || thinking}
@@ -1487,6 +2219,28 @@ export default function App() {
           <div className="dash-main">
 
           {dashProduct === "brokerage" && (
+          <>
+          <div className="watch-tabs-row">
+            {(showAllWatchTabs ? watchedPortfolios : watchedPortfolios.slice(0, 4)).map((w) => (
+              <button key={w.address} className={`watch-tab ${activeAllocTab === w.address ? "active" : ""}`}
+                onClick={() => setActiveAllocTab(activeAllocTab === w.address ? "mine" : w.address)}>
+                {w.label}
+                <span className="alloc-tab-x" onClick={(e) => { e.stopPropagation(); removeWatchedPortfolio(w.address); }}>×</span>
+              </button>
+            ))}
+            {!showAllWatchTabs && watchedPortfolios.length > 4 && (
+              <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(true)}>
+                +{watchedPortfolios.length - 4} more
+              </button>
+            )}
+            {showAllWatchTabs && watchedPortfolios.length > 4 && (
+              <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(false)}>
+                Show less
+              </button>
+            )}
+            <button className="watch-tab watch-tab-add" title="Watch another portfolio"
+              onClick={() => setAddPortfolioOpen(true)}>+</button>
+          </div>
           <div className="flip-scene">
             <div className={`flip-inner ${statsFlipped ? "flipped" : ""}`}>
               <div className="flip-face flip-front card card-pop">
@@ -1506,32 +2260,18 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="alloc-tabs">
-                  <button className={`alloc-tab ${activeAllocTab === "mine" ? "active" : ""}`}
-                    onClick={() => setActiveAllocTab("mine")}>
-                    Mine
-                  </button>
-                  {watchedPortfolios.map((w) => (
-                    <button key={w.address} className={`alloc-tab ${activeAllocTab === w.address ? "active" : ""}`}
-                      onClick={() => setActiveAllocTab(w.address)}>
-                      {w.label}
-                      <span className="alloc-tab-x" onClick={(e) => { e.stopPropagation(); removeWatchedPortfolio(w.address); }}>×</span>
-                    </button>
-                  ))}
-                  <button className="alloc-tab alloc-tab-add" title="Watch another portfolio"
-                    onClick={() => setAddPortfolioOpen(true)}>+</button>
-                </div>
+                {activeAllocTab !== "mine" && (
+                  <div className="watch-readonly-banner">
+                    <span>Viewing {watchedPortfolios.find((w) => w.address === activeAllocTab)?.label} — read only</span>
+                    <button className="btn ghost" onClick={() => setActiveAllocTab("mine")}>← Back to my dashboard</button>
+                  </div>
+                )}
 
                 {!viewedPortfolio ? (
                   <div className="loading-dots" style={{ margin: "24px 0" }}><span /><span /><span /></div>
                 ) : (
                 <>
                 <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} />
-                {activeAllocTab !== "mine" && (
-                  <p className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>
-                    Viewing {watchedPortfolios.find((w) => w.address === activeAllocTab)?.label} — read only
-                  </p>
-                )}
                 {activeAllocTab === "mine" && portfolio.total > 0 && (
                   <div className="alloc-actions">
                     {portfolio.rows.length >= 1 && (
@@ -1578,12 +2318,14 @@ export default function App() {
               </div>
             </div>
           </div>
+          </>
           )}
 
           {dashProduct === "perps" && (
           <div className="card" style={{ marginBottom: 26 }}>
             <div className="card-toprow">
               <p className="table-card-title">Perpetual Futures Account</p>
+              <button className="stats-toggle-btn" onClick={() => setView("perps")}>Trade Perps →</button>
             </div>
             {perpsRows.length === 0 ? (
               <p className="muted" style={{ margin: "24px 0" }}>No open perpetual futures positions.</p>
@@ -1600,6 +2342,7 @@ export default function App() {
           <div className="card" style={{ marginBottom: 26 }}>
             <div className="card-toprow">
               <p className="table-card-title">Borrow / Lend Account</p>
+              <button className="stats-toggle-btn" onClick={() => setView("borrow")}>Borrow / Lend →</button>
             </div>
             {borrowRows.length === 0 ? (
               <p className="muted" style={{ margin: "24px 0" }}>No collateral posted to Kamino yet.</p>
@@ -1653,32 +2396,48 @@ export default function App() {
                 </span>
               </label>
             </div>
-            <div className="trow thead tiny label">
+            <div className="trow thead tiny label" style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}>
               <span>Asset</span>
               <span>Price / token</span>
               <span>Quantity</span>
               <span>Market value</span>
               <span>Allocation</span>
+              <span></span>
             </div>
             {visibleRows.map((r) => {
               const category = assetCategory(r.symbol);
               const clickable = category === "Stock" || category === "ETF" || category === "Crypto";
               return (
                 <div className={`trow ${clickable ? "asset-row-clickable" : ""}`} key={r.symbol}
+                  style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}
                   onClick={clickable ? () => setAssetInfoSymbol(r.symbol) : undefined}>
                   <span className="asset">
                     <span className="serif">{r.name}</span>
                     <span className="mono tiny muted">{r.symbol} · {category}</span>
                   </span>
-                  <span className="mono">${usd(r.price)}</span>
+                  <span className="mono">{r.priceUnavailable ? "—" : `$${usd(r.price)}`}</span>
                   <span className="mono">{fmtQty(r.uiAmount)}<span className="muted tiny"> {r.symbol}</span></span>
-                  <span className="mono">${usd(r.value)}</span>
-                  <span className="mono">{r.weight.toFixed(1)}<span className="muted tiny">%</span></span>
+                  <span className="mono">{r.priceUnavailable ? <span className="tiny muted">Price unavailable</span> : `$${usd(r.value)}`}</span>
+                  <span className="mono">{r.priceUnavailable ? "—" : <>{r.weight.toFixed(1)}<span className="muted tiny">%</span></>}</span>
+                  <span onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 6 }}>
+                    {kaminoReserveByMint.has(r.mint) && (
+                      <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
+                        disabled={r.priceUnavailable}
+                        onClick={(e) => { e.stopPropagation(); setLendTarget(r); }}>
+                        Lend
+                      </button>
+                    )}
+                    <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
+                      disabled={r.priceUnavailable}
+                      onClick={(e) => { e.stopPropagation(); setSellTarget(r); }}>
+                      Sell
+                    </button>
+                  </span>
                 </div>
               );
             })}
             {yieldMode && portfolio.usdyAmount > 0.5 && (
-              <div className="trow cashrow yield-cash-row">
+              <div className="trow cashrow yield-cash-row" style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}>
                 <span className="asset">
                   <span className="serif">Yield Cash</span>
                   <span className="mono tiny muted">USDY · Yield · ~5% APY</span>
@@ -1689,10 +2448,11 @@ export default function App() {
                 <span className="mono">
                   {portfolio.total > 0 ? ((portfolio.cashUsdy / portfolio.total) * 100).toFixed(1) : "—"}<span className="muted tiny">%</span>
                 </span>
+                <span></span>
               </div>
             )}
             {(!yieldMode || portfolio.cashUsdc > 0.01) && (
-              <div className="trow cashrow">
+              <div className="trow cashrow" style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}>
                 <span className="asset">
                   <span className="serif">Cash</span>
                   <span className="mono tiny muted">USDC · Stablecoin</span>
@@ -1703,6 +2463,7 @@ export default function App() {
                 <span className="mono">
                   {portfolio.total > 0 ? (((portfolio.cashUsdc ?? portfolio.cash) / portfolio.total) * 100).toFixed(1) : "—"}<span className="muted tiny">%</span>
                 </span>
+                <span></span>
               </div>
             )}
             {portfolio.dustRows?.length > 0 && (
@@ -1729,31 +2490,46 @@ export default function App() {
             <div className="card-toprow">
               <p className="table-card-title">Positions</p>
             </div>
-            <div className="trow thead tiny label" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr" }}>
-              <span>Asset</span>
-              <span>Entry price</span>
-              <span>Size</span>
-              <span>Mark price</span>
-              <span>Unrealized PnL</span>
-              <span>Leverage</span>
-              <span></span>
-            </div>
             {perpsPositions.length === 0 ? (
               <p className="muted" style={{ padding: "16px 0" }}>No open positions.</p>
-            ) : perpsPositions.map((p) => (
-              <div className="trow" key={`${p.dex}-${p.coin}`} style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr" }}>
-                <span className="asset">
-                  <span className="serif">{p.coin}</span>
-                  <span className="mono tiny muted">{p.side === "long" ? "Long" : "Short"} · {p.dex === "equity" ? "Equities" : "Crypto"}</span>
-                </span>
-                <span className="mono">${usd(p.entryPx)}</span>
-                <span className="mono">{p.size}</span>
-                <span className="mono">${usd(p.markPx)}</span>
-                <span className={`mono ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>{p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}</span>
-                <span className="mono">{p.leverage}x</span>
-                <PerpsCloseCell p={p} hl={hl} user={evmAddress} tradingWallet={perpsWallet} />
+            ) : (
+              <div className="positions-table-wrap">
+                <table className="positions-table">
+                  <thead>
+                    <tr>
+                      <th className="pt-asset">Asset</th>
+                      <th>Entry price</th>
+                      <th>Size</th>
+                      <th>Mark price</th>
+                      <th>Unrealized PnL</th>
+                      <th>Leverage</th>
+                      <th className="pt-action"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perpsPositions.map((p) => (
+                      <tr key={`${p.dex}-${p.coin}`}>
+                        <td className="pt-asset">
+                          <span className="asset">
+                            <span className="serif">{p.coin}</span>
+                            <span className="pos-side-row">
+                              <span className={`pos-side-badge ${p.side}`}>{p.side === "long" ? "Long" : "Short"}</span>
+                              <span className="tiny muted">{p.dex === "equity" ? "Equities" : "Crypto"}</span>
+                            </span>
+                          </span>
+                        </td>
+                        <td>${usd(p.entryPx)}</td>
+                        <td>{p.size}</td>
+                        <td>${usd(p.markPx)}</td>
+                        <td className={`pos-pnl ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>{p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}</td>
+                        <td><span className="pos-leverage-chip">{p.leverage}x</span></td>
+                        <td className="pt-action"><PerpsCloseCell p={p} hl={hl} user={evmAddress} tradingWallet={perpsWallet} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
+            )}
           </section>
           )}
 
@@ -1762,36 +2538,48 @@ export default function App() {
             <div className="card-toprow">
               <p className="table-card-title">Positions</p>
             </div>
-            <div className="trow thead tiny label" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr" }}>
-              <span>Asset</span>
-              <span>Collateral</span>
-              <span>Borrowed</span>
-              <span>Current LTV</span>
-              <span>Liquidation LTV</span>
-            </div>
             {kaminoLoans.length === 0 ? (
               <p className="muted" style={{ padding: "16px 0" }}>No open borrow positions.</p>
-            ) : kaminoLoans.map((loan) => {
-              const info = loan.loanInfo ?? {};
-              const deposits = info.collateral?.deposits ?? [];
-              const borrows = info.debt?.borrows ?? [];
-              const collateralVal = deposits.reduce((s, d) => s + (Number(d.tokenValue) || 0), 0);
-              const debtVal = borrows.reduce((s, d) => s + (Number(d.tokenValue) || 0), 0);
-              const assetName = deposits.map((d) => d.tokenName).join(" + ") || "—";
-              const debtName = borrows.map((d) => d.tokenName).join(" + ") || "—";
-              return (
-                <div className="trow" key={loan.loanId} style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr" }}>
-                  <span className="asset">
-                    <span className="serif">{assetName}</span>
-                    <span className="mono tiny muted">Borrowed {debtName}</span>
-                  </span>
-                  <span className="mono">${usd(collateralVal)}</span>
-                  <span className="mono">${usd(debtVal)}</span>
-                  <span className="mono">{((Number(info.currentLtv) || 0) * 100).toFixed(1)}%</span>
-                  <span className="mono">{((Number(info.liquidationLtv) || 0) * 100).toFixed(1)}%</span>
-                </div>
-              );
-            })}
+            ) : (
+              <div className="positions-table-wrap">
+                <table className="positions-table">
+                  <thead>
+                    <tr>
+                      <th className="pt-asset">Asset</th>
+                      <th>Collateral</th>
+                      <th>Borrowed</th>
+                      <th>Current LTV</th>
+                      <th>Liquidation LTV</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kaminoLoans.map((loan) => {
+                      const info = loan.loanInfo ?? {};
+                      const deposits = info.collateral?.deposits ?? [];
+                      const borrows = info.debt?.borrows ?? [];
+                      const collateralVal = deposits.reduce((s, d) => s + (Number(d.tokenValue) || 0), 0);
+                      const debtVal = borrows.reduce((s, d) => s + (Number(d.tokenValue) || 0), 0);
+                      const assetName = deposits.map((d) => d.tokenName).join(" + ") || "—";
+                      const debtName = borrows.map((d) => d.tokenName).join(" + ") || "—";
+                      return (
+                        <tr key={loan.loanId}>
+                          <td className="pt-asset">
+                            <span className="asset">
+                              <span className="serif">{assetName}</span>
+                              <span className="tiny muted">Borrowed {debtName}</span>
+                            </span>
+                          </td>
+                          <td>${usd(collateralVal)}</td>
+                          <td>${usd(debtVal)}</td>
+                          <td>{((Number(info.currentLtv) || 0) * 100).toFixed(1)}%</td>
+                          <td>{((Number(info.liquidationLtv) || 0) * 100).toFixed(1)}%</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
           )}
 
@@ -1806,6 +2594,125 @@ export default function App() {
               />
             );
           })()}
+
+          {sellTarget && (
+            <SellModal
+              row={sellTarget}
+              onClose={() => setSellTarget(null)}
+              onConfirm={(usdAmount) => {
+                quickSell(sellTarget, usdAmount);
+                setSellTarget(null);
+              }}
+            />
+          )}
+
+          {lendTarget && (
+            <LendModal
+              row={lendTarget}
+              reserve={kaminoReserveByMint.get(lendTarget.mint)}
+              wallet={address}
+              signWithWallet={signKaminoTx}
+              solBalance={holdings?.sol ?? 0}
+              onClose={() => setLendTarget(null)}
+              onDone={refreshKaminoLoans}
+            />
+          )}
+
+          {perpProposal && (
+            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !perpOrderBusy && setPerpProposal(null)}>
+              <div className="modal-box card" style={{ maxWidth: 380 }}>
+                <p className="tiny label">
+                  {perpProposal.action === "close"
+                    ? `Close ${perpProposal.side} ${perpProposal.asset.displayName}`
+                    : `${perpProposal.side === "long" ? "Long" : "Short"} ${perpProposal.asset.displayName} ${perpProposal.leverage}x`}
+                </p>
+                {perpProposal.summary && <p className="lede sm">{perpProposal.summary}</p>}
+                <div className="borrow-field" style={{ marginTop: 10 }}>
+                  <span className="tiny muted">Position size</span>
+                  <span className="mono">
+                    {perpProposal.action === "close" ? perpProposal.closeSize : perpProposal.formattedSize} {perpProposal.asset.displayName} (${usd(perpProposal.notionalUsd)})
+                  </span>
+                </div>
+                {perpProposal.action !== "close" && (
+                  <div className="borrow-field">
+                    <span className="tiny muted">Margin required</span>
+                    <span className="mono">${usd(perpProposal.marginUsd)}</span>
+                  </div>
+                )}
+                <div className="borrow-field">
+                  <span className="tiny muted">Mark price</span>
+                  <span className="mono">${usd(perpProposal.markPrice)}</span>
+                </div>
+                {perpProposal.liqPrice != null && (
+                  <div className="borrow-field">
+                    <span className="tiny muted">Est. liquidation price</span>
+                    <span className="mono">${usd(perpProposal.liqPrice)}</span>
+                  </div>
+                )}
+                <div className="wfoot" style={{ marginTop: 12 }}>
+                  <button className="btn ghost" disabled={perpOrderBusy} onClick={() => setPerpProposal(null)}>Discard</button>
+                  <button className="btn primary" disabled={perpOrderBusy} onClick={executePerpOrder}>
+                    {perpOrderBusy
+                      ? (perpProposal.action === "close" ? "Closing…" : "Placing…")
+                      : (perpProposal.action === "close" ? "Close position →" : `${perpProposal.side === "long" ? "Long" : "Short"} ${perpProposal.asset.displayName} →`)}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {borrowProposal && (
+            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !borrowActionBusy && setBorrowProposal(null)}>
+              <div className="modal-box card" style={{ maxWidth: 380 }}>
+                <p className="tiny label">
+                  {borrowProposal.action === "deposit" && `Deposit ${borrowProposal.row.symbol} as collateral`}
+                  {borrowProposal.action === "borrow" && "Borrow USDC"}
+                  {borrowProposal.action === "deposit_and_borrow" && `Deposit ${borrowProposal.row.symbol} & borrow USDC`}
+                  {borrowProposal.action === "repay" && "Repay loan"}
+                  {borrowProposal.action === "withdraw" && `Withdraw ${borrowProposal.withdrawDeposit.tokenName}`}
+                  {borrowProposal.action === "repay_and_withdraw" && `Repay loan & withdraw ${borrowProposal.withdrawDeposit.tokenName}`}
+                </p>
+                {borrowProposal.summary && <p className="lede sm">{borrowProposal.summary}</p>}
+
+                {(borrowProposal.action === "deposit" || borrowProposal.action === "deposit_and_borrow") && (<>
+                  <div className="borrow-field" style={{ marginTop: 10 }}>
+                    <span className="tiny muted">Deposit</span>
+                    <span className="mono">
+                      {borrowProposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {borrowProposal.row.symbol} (${usd(borrowProposal.depositValueUsd)}) · max LTV {(borrowProposal.maxLtv * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="borrow-field">
+                    <span className="tiny muted">Platform fee ({(KAMINO_DEPOSIT_FEE_BPS / 100).toFixed(2)}%)</span>
+                    <span className="mono">${usd(borrowProposal.depositFeeUsd)} · ${usd(borrowProposal.netDepositValueUsd)} net deposited</span>
+                  </div>
+                </>)}
+                {(borrowProposal.action === "borrow" || borrowProposal.action === "deposit_and_borrow") && (
+                  <div className="borrow-field">
+                    <span className="tiny muted">Borrow</span>
+                    <span className="mono">${usd(borrowProposal.borrowUsd)} USDC (of ${usd(borrowProposal.maxBorrowUsd)} available)</span>
+                  </div>
+                )}
+                {(borrowProposal.action === "repay" || borrowProposal.action === "repay_and_withdraw") && (
+                  <div className="borrow-field" style={{ marginTop: 10 }}>
+                    <span className="tiny muted">Repay</span>
+                    <span className="mono">{borrowProposal.repayAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC (of {borrowProposal.repayMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} owed)</span>
+                  </div>
+                )}
+                {(borrowProposal.action === "withdraw" || borrowProposal.action === "repay_and_withdraw") && (
+                  <div className="borrow-field">
+                    <span className="tiny muted">Withdraw</span>
+                    <span className="mono">{borrowProposal.withdrawAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {borrowProposal.withdrawDeposit.tokenName} (of {borrowProposal.withdrawMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} available)</span>
+                  </div>
+                )}
+                <div className="wfoot" style={{ marginTop: 12 }}>
+                  <button className="btn ghost" disabled={borrowActionBusy} onClick={() => setBorrowProposal(null)}>Discard</button>
+                  <button className="btn primary" disabled={borrowActionBusy} onClick={executeBorrowProposal}>
+                    {borrowActionBusy ? "Waiting for signature…" : "Confirm →"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           </div>{/* dash-main */}
 
@@ -1888,11 +2795,15 @@ export default function App() {
                   <p className="tiny label">Proposed change</p>
                   {proposal.summary && <p className="lede sm">{proposal.summary}</p>}
                   <div className="trades">
-                    {proposal.trades.map((t, i) => (
-                      <span key={i} className={`trade-chip mono tiny ${t.side}`}>
-                        {t.side === "buy" ? "Buy" : "Sell"} ${usd(t.usd)} {t.symbol}
-                      </span>
-                    ))}
+                    {proposal.trades.map((t, i) => {
+                      const badge = impactBadge(proposalImpacts[t.symbol]);
+                      return (
+                        <span key={i} className={`trade-chip mono tiny ${t.side}`}>
+                          {t.side === "buy" ? "Buy" : "Sell"} ${usd(t.usd)} {t.symbol}
+                          {badge && <span className={`tiny ${badge.className}`} style={{ marginLeft: 6 }}>· {badge.label}</span>}
+                        </span>
+                      );
+                    })}
                     {!proposal.trades.length && (
                       <span className="tiny muted">
                         {proposal.maxSkippedDelta > 0
@@ -1945,7 +2856,6 @@ export default function App() {
                   return;
                 }
                 addWatchedPortfolio(result.label, result.address);
-                setActiveAllocTab(result.address);
                 close();
               } catch (e) {
                 setAddPortfolioErr(e instanceof Error ? e.message : String(e));
@@ -2312,6 +3222,64 @@ export default function App() {
                   : "Convert to USDC"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {executeOpen && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !busy.current && setExecuteOpen(false)}>
+          <div className="modal-box card card-pop exec-card exec-modal-box">
+            <div className="card-toprow">
+              <div>
+                <p className="eyebrow" style={{ margin: 0 }}>Executing</p>
+                <p className="table-card-title" style={{ marginTop: 4 }}>Routing your swaps</p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span className="tiny muted mono">
+                  {legs.filter((l) => l.status === "confirmed").length} / {legs.length} confirmed
+                </span>
+                {!busy.current && <button className="x" onClick={() => setExecuteOpen(false)}>×</button>}
+              </div>
+            </div>
+            {legs.map((l, i) => (
+              <div className={`leg ${l.status}`} key={i}>
+                <span className={`leg-icon-badge ${l.status}`}>
+                  {l.status === "queued"    && "○"}
+                  {l.status === "routing"   && "↻"}
+                  {l.status === "signing"   && "◎"}
+                  {l.status === "executing" && "↑"}
+                  {l.status === "confirmed" && "✓"}
+                  {l.status === "failed"    && "×"}
+                </span>
+                <span className="leg-route mono">
+                  {l.side === "send" ? `${l.symbol || "USDC"} → ${short(l.to)}`
+                    : l.side === "buy" ? `USDC → ${l.symbol}`
+                    : `${l.symbol} → USDC`}
+                </span>
+                <span className="mono tiny muted">${usd(l.usd)}</span>
+                <span className={`leg-status-badge ${l.status}`}>
+                  {l.status === "queued"    && "Pending"}
+                  {l.status === "routing"   && "Routing…"}
+                  {l.status === "signing"   && "Sign in wallet…"}
+                  {l.status === "executing" && "Broadcasting…"}
+                  {l.status === "confirmed" && (
+                    <a href={`https://solscan.io/tx/${l.sig}`} target="_blank" rel="noreferrer" className="leg-confirmed-link">
+                      Confirmed ↗
+                    </a>
+                  )}
+                  {l.status === "failed" && (l.err || "Failed")}
+                </span>
+              </div>
+            ))}
+            {!busy.current && (
+              <button className="btn primary" style={{ marginTop: 20, width: "100%" }}
+                onClick={() => setExecuteOpen(false)}>
+                Done
+              </button>
+            )}
+            <p className="tiny muted center" style={{ marginTop: 12 }}>
+              {sponsored ? "Gas fees sponsored — no SOL required." : "Network fees paid in SOL from your wallet."}
+            </p>
           </div>
         </div>
       )}

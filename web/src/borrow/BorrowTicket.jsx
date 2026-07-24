@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useKaminoAction } from "./useKamino.js";
+import { KAMINO_DEPOSIT_FEE_BPS } from "../lib/api.js";
 
 // Kamino creates a new on-chain "Obligation" account the first time a wallet
 // deposits into this market, PLUS a token account for the collateral mint —
@@ -94,7 +95,13 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
   // AAPLx 40%), not a guessed constant.
   const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
   const depositValueUsd = row ? depositAmt * row.price : 0;
-  const maxBorrowUsd = depositValueUsd * maxLtv;
+  // Platform fee taken on deposit, before it's posted as collateral —
+  // Kamino's own hosted API has no fee-passthrough, so this happens as a
+  // separate transfer inside executeKaminoAction() (web/src/lib/api.js).
+  // maxBorrowUsd is against the NET (post-fee) value actually deposited.
+  const depositFeeUsd = depositValueUsd * (KAMINO_DEPOSIT_FEE_BPS / 10000);
+  const netDepositValueUsd = depositValueUsd - depositFeeUsd;
+  const maxBorrowUsd = netDepositValueUsd * maxLtv;
   const borrowAmt = Number(borrowAmount);
   const validBorrow = borrowAmt > 0 && borrowAmt <= maxBorrowUsd;
 
@@ -103,7 +110,10 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
 
   const submitDeposit = async () => {
     if (!validDeposit || !reserve) return;
-    const result = await action.run("deposit", { reserve: reserve.reserve, amount: String(kaminoDepositAmount) });
+    const result = await action.run("deposit", {
+      reserve: reserve.reserve, amount: String(kaminoDepositAmount),
+      mint: row.mint, decimals: row.decimals, usdValue: depositValueUsd,
+    });
     if (result) setStep("borrow");
   };
 
@@ -156,8 +166,12 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
   }
 
   return (
-    <div className="card">
+    <div className="card card-pop">
       <p className="card-title">Borrow against your holdings</p>
+      <p className="lede sm">
+        Post an xStock you already hold as collateral and borrow USDC against it — rates and limits are
+        set per asset by Kamino's live market data.
+      </p>
 
       {step === "quick-borrow" && (
         <>
@@ -200,13 +214,38 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
           <div className="borrow-field">
             <span className="tiny muted">Collateral</span>
             <div className="borrow-asset-list">
-              {eligibleRows.map((r) => (
-                <button key={r.mint} className={`borrow-asset-row ${r.mint === selectedMint ? "sel" : ""}`}
-                  onClick={() => { setSelectedMint(r.mint); setDepositAmount(""); }}>
-                  <span className="mono">{r.symbol}</span>
-                  <span className="tiny muted">{r.uiAmount} held · ${r.value.toFixed(2)}</span>
-                </button>
-              ))}
+              {eligibleRows.map((r) => {
+                const res = reserves.find((x) => x.liquidityTokenMint === r.mint);
+                const borrowApyPct = res ? Number(res.borrowApy) * 100 : null;
+                const supplyApyPct = res ? Number(res.supplyApy) * 100 : null;
+                return (
+                  <button key={r.mint} className={`borrow-asset-row ${r.mint === selectedMint ? "sel" : ""}`}
+                    onClick={() => { setSelectedMint(r.mint); setDepositAmount(""); }}>
+                    <div className="borrow-asset-row-top">
+                      <span className="borrow-asset-symbol mono">{r.symbol}</span>
+                      <span className="tiny muted">{r.uiAmount} held · ${r.value.toFixed(2)}</span>
+                    </div>
+                    {res && (
+                      <div className="borrow-asset-rates">
+                        <span className="borrow-rate-chip borrow-rate-chip-borrow">
+                          <span className="tiny muted">Borrow APY</span>
+                          <span className="mono">{borrowApyPct.toFixed(2)}%</span>
+                        </span>
+                        {supplyApyPct > 0 && (
+                          <span className="borrow-rate-chip borrow-rate-chip-deposit">
+                            <span className="tiny muted">Deposit APY</span>
+                            <span className="mono">{supplyApyPct.toFixed(2)}%</span>
+                          </span>
+                        )}
+                        <span className="borrow-rate-chip borrow-rate-chip-ltv">
+                          <span className="tiny muted">Max LTV</span>
+                          <span className="mono">{(Number(res.maxLtv) * 100).toFixed(0)}%</span>
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -224,7 +263,9 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
               </div>
               {depositAmt > 0 && (
                 <p className="tiny muted">
-                  ${depositValueUsd.toFixed(2)} in collateral value — up to ${maxBorrowUsd.toFixed(2)} borrowable
+                  ${depositValueUsd.toFixed(2)} in collateral value — {(KAMINO_DEPOSIT_FEE_BPS / 100).toFixed(2)}%
+                  fee (${depositFeeUsd.toFixed(2)}) · ${netDepositValueUsd.toFixed(2)} net deposited —
+                  up to ${maxBorrowUsd.toFixed(2)} borrowable
                 </p>
               )}
               {!hasGasReserve && (

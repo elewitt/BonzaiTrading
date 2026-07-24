@@ -39,7 +39,14 @@ export const api = {
   prices:   (mints)              => get(`/api/prices?ids=${encodeURIComponent(mints.join(","))}`),
   holdings: (address)            => get(`/api/holdings/${address}`),
   parse:    (prompt, current, total) => post("/api/parse", { prompt, current, total }),
+  parsePerp: (prompt)             => post("/api/parse-perp", { prompt }),
+  parseBorrow: (prompt)           => post("/api/parse-borrow", { prompt }),
+  myReferralCode: ()              => get("/api/referrals/me"),
+  attributeReferral: (body)       => post("/api/referrals/attribute", body),
+  referralsDashboard: ()          => get("/api/referrals/dashboard"),
   order:    (q)                  => get(`/api/order?${new URLSearchParams(q)}`),
+  quotePreview: (q)              => get(`/api/quote-preview?${new URLSearchParams(q)}`),
+  liquidityFlags: ()             => get("/api/liquidity-flags"),
   execute:  (body)               => post("/api/execute", body),
   withdraw: (body)               => post("/api/withdraw", body),
   ask:      (prompt)             => post("/api/ask", { prompt }),
@@ -55,6 +62,7 @@ export const api = {
   kaminoBorrow:      (body)            => post("/api/kamino/borrow", body),
   kaminoRepay:       (body)            => post("/api/kamino/repay", body),
   kaminoWithdraw:    (body)            => post("/api/kamino/withdraw", body),
+  kaminoDepositFee:  (body)            => post("/api/kamino/deposit-fee", body),
 };
 
 /** Send any SPL token directly to a Solana address (no swap involved). */
@@ -90,6 +98,21 @@ const KAMINO_BUILDERS = {
   repay: api.kaminoRepay, withdraw: api.kaminoWithdraw,
 };
 
+// Platform fee on Kamino collateral deposits — Kamino's own hosted
+// transaction-building API has no fee-passthrough param (confirmed
+// directly against its live OpenAPI spec: deposit/borrow/repay/withdraw
+// accept only {wallet,market,reserve,amount}), so this is taken as a
+// separate transfer to our own wallet, deposit-only per product decision.
+export const KAMINO_DEPOSIT_FEE_BPS = 10; // 0.10%
+
+async function signAndSubmit(transaction, signWithWallet) {
+  const tx = VersionedTransaction.deserialize(
+    Uint8Array.from(atob(transaction), (c) => c.charCodeAt(0))
+  );
+  const signed = await signWithWallet(tx);
+  return btoa(String.fromCharCode(...signed.serialize()));
+}
+
 /**
  * One Kamino xStocks-market action (deposit collateral / borrow / repay /
  * withdraw collateral) — identical shape to executeWithdraw above: the
@@ -97,26 +120,54 @@ const KAMINO_BUILDERS = {
  * submit via the SAME /api/execute (swapV1:true) path everything else in
  * this app already uses to broadcast a signed transaction. No Kamino-
  * specific submit endpoint needed.
+ *
+ * For deposits, `mint`/`decimals` (of the collateral being deposited) let
+ * this take the 0.10% platform fee FIRST, as its own signed transfer, then
+ * deposit the reduced (net) amount as collateral — one shared place so
+ * both callers (the manual Borrow ticket and the borrow-via-prompt flow)
+ * stay consistent automatically, same reasoning as applyReferralFee()
+ * being one shared function on the Jupiter side (server/src/index.js).
+ * Fails closed: if the fee transfer doesn't go through, the deposit never
+ * happens either — never silently skip taking the fee.
  */
-export async function executeKaminoAction(action, { wallet, reserve, amount, signWithWallet, onStatus }) {
+export async function executeKaminoAction(action, { wallet, reserve, amount, signWithWallet, onStatus, mint, decimals, usdValue }) {
   const build = KAMINO_BUILDERS[action];
   if (!build) throw new Error(`unknown kamino action: ${action}`);
 
+  let depositAmount = amount;
+  if (action === "deposit" && mint) {
+    const feeAmount = (Number(amount) * KAMINO_DEPOSIT_FEE_BPS) / 10000;
+    const feeAtoms = Math.floor(feeAmount * 10 ** (decimals ?? 8));
+    if (feeAtoms > 0) {
+      onStatus?.("fee");
+      const { transaction: feeTx } = await api.kaminoDepositFee({ from: wallet, mint, decimals, amount: feeAtoms });
+      if (!feeTx) throw new Error("could not build deposit fee transaction");
+      const signedFeeB64 = await signAndSubmit(feeTx, signWithWallet);
+      const feeResult = await api.execute({
+        signedTransaction: signedFeeB64, swapV1: true,
+        logMeta: {
+          walletAddress: wallet, kind: "kamino_deposit_fee",
+          usdValue: usdValue != null ? (usdValue * KAMINO_DEPOSIT_FEE_BPS) / 10000 : null,
+          details: { mint, feeAtoms },
+        },
+      });
+      if (feeResult.status && feeResult.status !== "Success")
+        throw new Error(feeResult.error || `deposit fee transfer failed (${feeResult.status})`);
+      depositAmount = String(Number(amount) - feeAmount);
+    }
+  }
+
   onStatus?.("building");
-  const { transaction } = await build({ wallet, reserve, amount });
+  const { transaction } = await build({ wallet, reserve, amount: depositAmount });
   if (!transaction) throw new Error(`could not build ${action} transaction`);
 
   onStatus?.("signing");
-  const tx = VersionedTransaction.deserialize(
-    Uint8Array.from(atob(transaction), (c) => c.charCodeAt(0))
-  );
-  const signed = await signWithWallet(tx);
-  const signedB64 = btoa(String.fromCharCode(...signed.serialize()));
+  const signedB64 = await signAndSubmit(transaction, signWithWallet);
 
   onStatus?.("executing");
   const result = await api.execute({
     signedTransaction: signedB64, swapV1: true,
-    logMeta: { walletAddress: wallet, kind: `kamino_${action}`, details: { reserve, amount } },
+    logMeta: { walletAddress: wallet, kind: `kamino_${action}`, usdValue: usdValue ?? null, details: { reserve, amount: depositAmount } },
   });
   if (result.status && result.status !== "Success")
     throw new Error(result.error || `${action} failed (${result.status})`);
@@ -129,7 +180,7 @@ export async function executeKaminoAction(action, { wallet, reserve, amount, sig
  * Ultra order → sign with the Privy embedded wallet → Ultra execute.
  * `signWithWallet` receives a VersionedTransaction and must return it signed.
  */
-export async function executeSwap({ inputMint, outputMint, amount, taker, signWithWallet, onStatus }) {
+export async function executeSwap({ inputMint, outputMint, amount, taker, signWithWallet, onStatus, usdValue }) {
   onStatus?.("routing");
   const order = await api.order({ inputMint, outputMint, amount: String(amount), taker });
   if (!order.transaction) throw new Error("no route available for this pair right now");
@@ -150,7 +201,13 @@ export async function executeSwap({ inputMint, outputMint, amount, taker, signWi
     isSell: order._isSell,
     logMeta: {
       walletAddress: taker, kind: "swap", side: order._isSell ? "sell" : "buy",
-      details: { inputMint, outputMint, amount },
+      usdValue: usdValue ?? null,
+      // feeBps is present on order (Jupiter's raw Ultra response, passed
+      // through as-is by the server) only when a referral fee was actually
+      // charged — absent on the no-fee AMM sell-fallback path. Recording it
+      // per-trade is what lets the referral dashboard compute real fee
+      // revenue instead of assuming every swap paid the nominal rate.
+      details: { inputMint, outputMint, amount, feeBps: order.feeBps ?? null },
     },
   });
   if (result.status && result.status !== "Success")
@@ -176,17 +233,28 @@ export function derivePortfolio(holdings, prices, registry, { yieldMode = false 
       continue;
     }
     if (!t.symbol) continue;
-    const price = prices[t.mint] || 0;
+    // A missing price (mint absent from the prices map entirely, not just
+    // priced at $0) means the upstream feed couldn't quote this mint just
+    // now — a real, transient gap, confirmed against a real case: Jupiter's
+    // price API silently omits a mint it can't currently price, no error,
+    // just absence. Treating that as "worth $0" indistinguishably from
+    // genuine dust made real holdings disappear from the dashboard on any
+    // reload that raced a gap like this. Keep it in `rows` (not `dustRows`)
+    // with priceUnavailable set instead, so the UI can show it honestly
+    // rather than hiding a real position.
+    const priceUnavailable = prices[t.mint] == null;
+    if (priceUnavailable) { rows.push({ ...t, price: null, value: null, priceUnavailable: true }); continue; }
+    const price = prices[t.mint];
     const value = (t.uiAmount || 0) * price;
     if (value < DUST_USD) { dustRows.push({ ...t, price, value }); continue; }
     rows.push({ ...t, price, value });
   }
-  rows.sort((a, b) => b.value - a.value);
-  const invested = rows.reduce((a, r) => a + r.value, 0);
+  rows.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
+  const invested = rows.reduce((a, r) => a + (r.value || 0), 0);
   const cash = cashUsdc + cashUsdy;
   const total = invested + cash;
   // weight = share of TOTAL portfolio (incl. cash) — consistent with the donut chart
-  rows.forEach((r) => (r.weight = total ? (r.value / total) * 100 : 0));
+  rows.forEach((r) => (r.weight = total && r.value != null ? (r.value / total) * 100 : 0));
   return { rows, dustRows, cash, cashUsdc, cashUsdy, usdyAmount, invested, total };
 }
 
