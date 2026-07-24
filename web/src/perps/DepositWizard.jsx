@@ -1,35 +1,75 @@
 import { useEffect, useRef, useState } from "react";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { getArbUsdcBalanceAtoms } from "./funding/arbitrumHlDeposit.js";
+import { API_BASE } from "../lib/api.js";
 
-const railLabel = { debridge_usdc: "Fast route" };
+// The deposit burn transaction needs a small amount of SOL beyond the
+// deposit amount for account-creation rent + the tx fee — this applies even
+// though the deposit itself is priced in Cash (USDC), since Solana fees are
+// always paid in SOL. The exact requirement is rail-specific (each creates
+// a differently-sized account): deBridge's was confirmed at ≈0.00204 SOL
+// ("Transfer: insufficient lamports 1866920, need 2039280"); CCTP's
+// SendMessage account is bigger and needs more — confirmed via a real
+// failed deposit at exactly this 0.003 threshold: "Transfer: insufficient
+// lamports 2990000, need 3869760" (≈0.00387 SOL). 0.005 gives real margin
+// above CCTP's actual number, the rail this always uses now.
+const SOL_RESERVE = 0.005;
 
-// deBridge's bridge transaction itself needs a small amount of SOL beyond
-// the deposit amount — confirmed via a real failed transaction: "Transfer:
-// insufficient lamports 1866920, need 2039280" (≈0.00204 SOL), almost
-// certainly rent for an account the bridge tx creates. This applies even
-// though the deposit itself is priced in Cash (USDC) — the transaction fee
-// + that rent are always paid in SOL. 0.003 gives a small safety margin
-// over the observed exact requirement.
-const SOL_RESERVE = 0.003;
+// CCTP only — Circle's native burn-and-mint has no solver margin the way
+// deBridge's DLN does, so it's always equal-or-cheaper. deBridge's
+// DeBridgeProvider/RealDeBridgeIo are still registered in PerpsApp.jsx's
+// orchestrator (not deleted — a working, tested fallback worth keeping
+// available), just no longer offered as a user-facing choice here.
+const RAIL = "cctp_usdc";
 
 const stepCopy = {
-  QUOTING: "Pricing your deposit",
-  BRIDGING: "Moving funds to your trading account",
-  AWAITING_HL_CREDIT: "Waiting for confirmation",
+  QUOTING: "Moving your funds",
+  BRIDGING: "Moving your funds",
+  AWAITING_HL_CREDIT: "Moving your funds",
   DONE: "Funds ready to trade",
   FAILED: "Deposit didn't complete",
 };
 
-export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdcBalance = 0, onFunded }) {
+export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdcBalance = 0, rpcUrl, onFunded }) {
   const [amount, setAmount] = useState("");
-  const [quotes, setQuotes] = useState(null);
-  const [selected, setSelected] = useState(0);
+  const [quote, setQuote] = useState(null);
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
 
-  const rail = "debridge_usdc";
   const amt = Number(amount);
-  const hasGasReserve = walletSolBalance >= SOL_RESERVE;
+  // Prefer a freshly-fetched balance over the walletSolBalance prop once
+  // available — that prop comes from the parent's own balance polling,
+  // which can be several seconds behind a sponsor top-up just triggered
+  // below and would otherwise show "not enough SOL" for a while after it's
+  // no longer true. Falls back to the prop before the first check resolves.
+  const [freshSolBalance, setFreshSolBalance] = useState(null);
+  const effectiveSolBalance = freshSolBalance ?? walletSolBalance;
+  const hasGasReserve = effectiveSolBalance >= SOL_RESERVE;
   const valid = amt > 0 && amt <= walletUsdcBalance && hasGasReserve;
+
+  // Proactively top up the small amount of SOL the CCTP burn tx's account
+  // creation needs — confirmed as a real customer-facing block: a wallet
+  // holding real USDC to deposit was refused with "you need at least 0.003
+  // SOL" with no way to fix it from inside the flow. Mirrors checkHlReady's
+  // pattern for the Arbitrum side (ask the sponsor first, then check the
+  // real balance) rather than just surfacing the raw shortfall.
+  useEffect(() => {
+    if (!user?.solana || !rpcUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await fetch(`${API_BASE}/api/perps/solana-gas`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ address: user.solana }),
+        }).catch(() => {});
+        const connection = new Connection(rpcUrl, "confirmed");
+        const lamports = await connection.getBalance(new PublicKey(user.solana));
+        if (!cancelled) setFreshSolBalance(lamports / 1e9);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [user?.solana, rpcUrl]);
 
   // Restore any pending (not DONE/FAILED) deposit for this user from
   // localStorage on mount — without this, a page reload during
@@ -67,15 +107,59 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
     if (latest) setState(latest);
   }, [user, state]);
 
+  // Separate from the restore effect above — that one only recovers a
+  // deposit the WIZARD itself has a localStorage record of. Real USDC can
+  // land on a wallet's Arbitrum address through a path this wizard never
+  // tracked at all (confirmed against a real case: an admin-triggered
+  // Hyperliquid withdrawal delivered funds straight to a customer's
+  // Arbitrum address with no bridge state ever created for it) — those
+  // funds are stuck invisibly with no prompt to finish moving them into
+  // the trading account, since completeHlDeposit() only ever gets called
+  // from a click inside an active wizard state. Checking the real on-chain
+  // balance directly here, independent of any tracked state, catches that.
+  const [orphanedUsd, setOrphanedUsd] = useState(null);
   useEffect(() => {
-    if (!valid) { setQuotes(null); return; }
+    if (!user?.evm || state) return;
+    let cancelled = false;
+    getArbUsdcBalanceAtoms(user.evm)
+      .then((atoms) => {
+        if (cancelled) return;
+        const usd = Number(atoms) / 1e6;
+        setOrphanedUsd(usd >= 1 ? usd : null); // ignore dust below $1
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user, state]);
+
+  const [sweeping, setSweeping] = useState(false);
+  const handleSweep = async () => {
+    setSweeping(true);
+    try {
+      const synthetic = {
+        id: `sweep_${user.evm.slice(2, 10)}_${Date.now()}`,
+        rail: RAIL, user, legs: { readyForHlDeposit: true }, step: "AWAITING_HL_CREDIT", updatedAt: Date.now(),
+      };
+      const next = await orchestrator.completeDeposit(synthetic);
+      if (next.step === "DONE") {
+        setOrphanedUsd(null);
+        onFunded?.();
+      } else {
+        setState(next); // surfaces any hlDepositError (e.g. needs gas) via the normal in-progress view
+      }
+    } finally {
+      setSweeping(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!valid) { setQuote(null); return; }
     const t = setTimeout(async () => {
       try {
-        setQuotes(await orchestrator.quote(amt, user, rail));
-        setSelected(0);
+        const quotes = await orchestrator.quote(amt, user, RAIL);
+        setQuote(quotes[0]);
         setError(null);
       } catch (e) {
-        setQuotes(null);
+        setQuote(null);
         setError(e instanceof Error ? e.message : "Couldn't price this deposit");
       }
     }, 350);
@@ -108,9 +192,9 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
   const [completing, setCompleting] = useState(false);
 
   const begin = async () => {
-    if (!quotes) return;
+    if (!quote) return;
     const id = `dep_${user.evm.slice(2, 10)}_${Date.now()}`;
-    const s = await orchestrator.start(id, rail, amt, user);
+    const s = await orchestrator.start(id, RAIL, amt, user);
     setState(s);
     if (s.step === "DONE") onFunded?.();
   };
@@ -134,11 +218,18 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
     const done = state.step === "DONE";
     const failed = state.step === "FAILED";
     const readyForHlDeposit = !done && !failed && state.legs?.readyForHlDeposit;
+    // Two real signatures total: this bridge tx, then the final HL credit.
+    // Framed as a fixed, finite count rather than an open-ended status line
+    // so a wait reads as "almost done", not "how much longer is this".
+    const stepNum = readyForHlDeposit || done ? 2 : 1;
     return (
       <div className="lvp-card" role="status" aria-live="polite">
         <div className={`lvp-progress ${done ? "done" : failed ? "failed" : ""}`}>
           <span className="lvp-dot" aria-hidden="true" />
-          <span className="lvp-progress-label">{readyForHlDeposit ? "Ready to finish — one more signature" : stepCopy[state.step]}</span>
+          <span className="lvp-progress-label">
+            {!failed && <span className="lvp-step-count">Step {stepNum} of 2 · </span>}
+            {readyForHlDeposit ? "Ready to finish" : stepCopy[state.step]}
+          </span>
         </div>
         {failed && (
           <>
@@ -154,10 +245,10 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
         {readyForHlDeposit && (
           <>
             <p className="lvp-muted" style={{ marginTop: 10 }}>
-              Your funds have arrived and gas is ready. This last step needs your signature — it won't happen automatically.
+              Your funds have arrived. This last step needs your confirmation.
             </p>
             <button className="lvp-btn primary" disabled={completing} onClick={handleComplete}>
-              {completing ? "Waiting for your signature…" : "Complete Deposit"}
+              {completing ? "Confirming…" : "Complete Deposit"}
             </button>
           </>
         )}
@@ -172,6 +263,16 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
 
   return (
     <div className="lvp-card">
+      {orphanedUsd != null && (
+        <div className="lvp-order-summary" style={{ marginBottom: 14 }}>
+          <p className="lvp-muted" style={{ marginTop: 0 }}>
+            ${orphanedUsd.toFixed(2)} is sitting on Arbitrum but hasn't been moved into your trading account yet.
+          </p>
+          <button className="lvp-btn primary" disabled={sweeping} onClick={handleSweep}>
+            {sweeping ? "Confirming…" : `Finish depositing $${orphanedUsd.toFixed(2)}`}
+          </button>
+        </div>
+      )}
       <h3>Add trading funds</h3>
 
       <div className="lvp-field">
@@ -198,31 +299,18 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
 
       {error && <p className="lvp-error">{error}</p>}
 
-      {quotes && (
-        <div className="lvp-quotes" role="radiogroup" aria-label="Deposit route">
-          {quotes.map((q, i) => (
-            <button
-              key={q.rail}
-              role="radio"
-              aria-checked={i === selected}
-              className={`lvp-quote ${i === selected ? "sel" : ""}`}
-              onClick={() => setSelected(i)}
-            >
-              <span className="lvp-quote-name">{railLabel[q.rail] ?? q.rail}</span>
-              <span className="lvp-quote-out">≈ ${q.estimatedUsdcOut.toFixed(2)} Cash</span>
-              <span className="lvp-muted">
-                ~{Math.round(q.estimatedSeconds / 60) || "<1"} min · ${q.feeUsd.toFixed(2)} fee
-              </span>
-            </button>
-          ))}
+      {quote && (
+        <div className="lvp-order-summary">
+          <div className="lvp-row"><span className="lvp-muted">You'll receive</span><span>≈ ${quote.estimatedUsdcOut.toFixed(2)} Cash</span></div>
+          <div className="lvp-row"><span className="lvp-muted">Time</span><span>~{Math.round(quote.estimatedSeconds / 60) || "<1"} min</span></div>
         </div>
       )}
 
-      <button className="lvp-btn primary" disabled={!quotes} onClick={begin}>
-        {quotes ? `Deposit $${amt} Cash` : "Enter an amount"}
+      <button className="lvp-btn primary" disabled={!quote} onClick={begin}>
+        {quote ? `Deposit $${amt} Cash` : "Enter an amount"}
       </button>
       <p className="lvp-fine">
-        One signature. Funds settle as cash collateral in your self-custody trading account.
+        Two confirmations, a minute or two apart. Funds settle as cash collateral in your self-custody trading account.
       </p>
     </div>
   );

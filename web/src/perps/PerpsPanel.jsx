@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
 import { tenthsBpsToPercent } from "./hl/builder.js";
 import { useBuilderApproval, usePlaceOrder, usePositions } from "./useHyperliquid.js";
 import { liquidationPrice } from "./hl/margin.js";
+import { EQUITY_DEX } from "./config.js";
 
 /**
  * Explicit one-time transfer between dexs (e.g. crypto ↔ equities) via
@@ -17,7 +18,12 @@ export function MoveFundsCard({
 }) {
   const [amount, setAmount] = useState("");
   const amt = Number(amount);
-  const valid = amt > 0 && amt <= (fromBalance ?? 0);
+  // Floor (not round) to cents for display/Max — fromBalance is a raw float,
+  // and .toFixed(2) rounding it up (e.g. 5.5361 -> "5.54") meant clicking Max
+  // produced an amount that failed its own "exceeds available" check against
+  // the un-rounded value. Same fix as WithdrawWizard.jsx.
+  const fromBalanceDisplay = Math.floor((fromBalance ?? 0) * 100) / 100;
+  const valid = amt > 0 && amt <= fromBalanceDisplay;
 
   const submit = async () => {
     const ok = await moveDexFunds.move(amt, sourceDex, destinationDex);
@@ -29,16 +35,16 @@ export function MoveFundsCard({
       <h3>{title}</h3>
       {description && <p className="lvp-muted">{description}</p>}
       <div className="lvp-field" style={{ marginTop: 10 }}>
-        <span>Available: ${(fromBalance ?? 0).toFixed(2)}</span>
+        <span>Available: ${fromBalanceDisplay.toFixed(2)}</span>
         <div className="lvp-input-wrap">
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="10" />
-          <button className="lvp-max" onClick={() => setAmount((fromBalance ?? 0).toFixed(2))}>
-            Max {(fromBalance ?? 0).toFixed(2)}
+          <button className="lvp-max" onClick={() => setAmount(fromBalanceDisplay.toFixed(2))}>
+            Max {fromBalanceDisplay.toFixed(2)}
           </button>
         </div>
       </div>
       <button className="lvp-btn primary" disabled={!valid || moveDexFunds.busy} onClick={() => void submit()}>
-        {moveDexFunds.busy ? "Waiting for signature…" : buttonLabel}
+        {moveDexFunds.busy ? "Confirming…" : buttonLabel}
       </button>
       {moveDexFunds.error && <p className="lvp-error" style={{ marginTop: 10 }}>{moveDexFunds.error}</p>}
     </div>
@@ -52,12 +58,44 @@ export function OrderTicket({
   const approval = useBuilderApproval(hl, user, mainWallet);
   const order = usePlaceOrder(hl, tradingWallet, user);
   const [isBuy, setIsBuy] = useState(true);
+  // Both fields are shown together and both stay editable — "size" (asset
+  // units) is still what actually goes into the order downstream (notional,
+  // margin, liquidation preview, submit), "usdAmount" is just the same
+  // amount expressed in dollars. "lastEdited" tracks which one the user
+  // actually typed into, so a leverage change knows which value to hold
+  // fixed and which to recompute: edit USD, drag leverage, the asset size
+  // updates to match (and vice versa if they'd typed the asset size instead).
   const [size, setSize] = useState("");
+  const [usdAmount, setUsdAmount] = useState("");
+  const [lastEdited, setLastEdited] = useState("usd"); // "usd" | "asset"
   const [limit, setLimit] = useState("");
   const [leverage, setLeverage] = useState(5);
   const [leveragePending, setLeveragePending] = useState(false);
   const [msg, setMsg] = useState(null);
   const [msgType, setMsgType] = useState("ok"); // ok | err
+
+  // Live preview always shows the real computed number, even one that's
+  // below the tradeable minimum at this asset's precision — formatSize
+  // (the strict, truncate-and-throw-on-zero version Hyperliquid actually
+  // requires) is only applied at submit time below. Using it here too
+  // meant a small enough $ amount (e.g. $0.07 margin on BTC, whose
+  // szDecimals=5 truncates anything under ~0.00001 BTC to zero) silently
+  // blanked the field instead of showing why nothing was happening.
+  useEffect(() => {
+    if (lastEdited !== "usd") return;
+    const usd = Number(usdAmount) || 0;
+    if (usd <= 0 || !markPrice || !leverage) { setSize(""); return; }
+    const raw = (usd * leverage) / markPrice;
+    setSize(raw > 0 ? raw.toFixed(Math.max(szDecimals ?? 0, 8)) : "");
+  }, [usdAmount, leverage, markPrice, szDecimals, lastEdited]);
+
+  useEffect(() => {
+    if (lastEdited !== "asset") return;
+    const sz = Number(size) || 0;
+    if (sz <= 0 || !markPrice || !leverage) { setUsdAmount(""); return; }
+    const usd = (sz * markPrice) / leverage;
+    setUsdAmount(usd > 0 ? usd.toFixed(2) : "");
+  }, [size, leverage, markPrice, lastEdited]);
 
   const feePct = tenthsBpsToPercent(cfg.builderFeeTenthsBps);
   const showConsent = approval.status !== null && !approval.status.sufficient;
@@ -100,7 +138,7 @@ export function OrderTicket({
       });
       setMsg(`Order placed: ${isBuy ? "long" : "short"} ${size} ${assetDisplayName ?? assetName} @ ${leverage}x`);
       setMsgType("ok");
-      setSize(""); setLimit("");
+      setSize(""); setUsdAmount(""); setLimit("");
     } catch (e) {
       if (!order.needsApproval) { setMsg(e instanceof Error ? e.message : "Order failed"); setMsgType("err"); }
     }
@@ -116,7 +154,7 @@ export function OrderTicket({
           we can never charge above it, and you can revoke it any time in Settings.
         </p>
         <button className="lvp-btn primary" disabled={approval.busy} onClick={() => void approval.approve()}>
-          {approval.busy ? "Waiting for signature…" : `Approve ${cfg.approvalMaxFeeRate} max fee`}
+          {approval.busy ? "Confirming…" : `Approve ${cfg.approvalMaxFeeRate} max fee`}
         </button>
       </div>
     );
@@ -147,16 +185,30 @@ export function OrderTicket({
   const marginRequired = leverage > 0 ? notional / leverage : 0;
   const currentPosition = positions?.find((p) => p.coin === assetName) || null;
 
+  // Calls the real formatSize (not an approximation) so this exactly
+  // matches what submit() will actually do — Hyperliquid truncates
+  // (rounds down) to szDecimals, which isn't the same as JS's toFixed
+  // (rounds to nearest) right at the boundary.
+  let sizeTooSmall = false;
+  if (notional > 0) {
+    try { formatSize(size, szDecimals ?? 0); } catch { sizeTooSmall = true; }
+  }
+
   // What fraction of available margin this order would use — the actual
   // answer to "how much of my account am I risking," which a raw
   // asset-unit size input doesn't convey on its own. Sets size FROM a
   // chosen percentage (one-way: dragging the slider computes size; typing
   // a size just updates what percentage is shown) rather than keeping two
-  // redundant pieces of state in sync.
+  // redundant pieces of state in sync. Also keeps usdAmount in sync so
+  // switching to $ mode afterward shows a sensible starting value instead
+  // of a blank field.
   const pctOfMargin = withdrawable > 0 ? Math.min(100, (marginRequired / withdrawable) * 100) : 0;
   const setSizeFromPct = (pct) => {
     if (!withdrawable || !markPrice || !leverage) return;
-    const desiredNotional = (pct / 100) * withdrawable * leverage;
+    setLastEdited("usd");
+    const marginUsd = (pct / 100) * withdrawable;
+    setUsdAmount(marginUsd > 0 ? marginUsd.toFixed(2) : "");
+    const desiredNotional = marginUsd * leverage;
     if (desiredNotional <= 0) { setSize(""); return; }
     try {
       setSize(formatSize(desiredNotional / markPrice, szDecimals ?? 0));
@@ -204,10 +256,24 @@ export function OrderTicket({
         <span className="lvp-muted" style={{ fontSize: 11 }}>max {max}x</span>
       </div>
 
-      <div className="lvp-field" style={{ marginTop: 10 }}>
-        <span>Size ({assetDisplayName ?? assetName})</span>
-        <div className="lvp-input-wrap">
-          <input inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value)} />
+      {/* Both fields shown together, both editable — type into either one
+          and the other recomputes from it (margin × leverage ÷ price).
+          Whichever was typed into most recently stays fixed when leverage
+          changes, and the other updates to match. */}
+      <div className="lvp-size-pair" style={{ marginTop: 10 }}>
+        <div className="lvp-field">
+          <span>USD</span>
+          <div className="lvp-input-wrap">
+            <input inputMode="decimal" placeholder="100" value={usdAmount}
+              onChange={(e) => { setLastEdited("usd"); setUsdAmount(e.target.value); }} />
+          </div>
+        </div>
+        <div className="lvp-field">
+          <span>{assetDisplayName ?? assetName}</span>
+          <div className="lvp-input-wrap">
+            <input inputMode="decimal" value={size}
+              onChange={(e) => { setLastEdited("asset"); setSize(e.target.value); }} />
+          </div>
         </div>
       </div>
 
@@ -247,7 +313,12 @@ export function OrderTicket({
         <div className="lvp-row"><span className="lvp-muted">Fees</span><span>{feePct}% + Hyperliquid taker/maker</span></div>
       </div>
 
-      <button className="lvp-btn primary" disabled={order.pending || !size || !markPrice} onClick={() => void submit()}>
+      {sizeTooSmall && (
+        <p className="lvp-error" style={{ marginBottom: 8 }}>
+          Too small to trade — try a larger amount or higher leverage.
+        </p>
+      )}
+      <button className="lvp-btn primary" disabled={order.pending || !size || !markPrice || sizeTooSmall} onClick={() => void submit()}>
         {order.pending ? "Placing…" : `${isBuy ? "Long" : "Short"} ${assetDisplayName ?? assetName} ${leverage}x`}
       </button>
       {msg && <p className={`lvp-order-msg ${msgType === "err" ? "lvp-error" : "lvp-muted"}`} role="status">{msg}</p>}
@@ -256,7 +327,19 @@ export function OrderTicket({
 }
 
 export function PositionsPanel({ hl, cfg, user, tradingWallet, onPositionClosed }) {
-  const { positions, accountValue, withdrawable } = usePositions(hl, user);
+  // Crypto and equities ("xyz") are independently-margined dexs on
+  // Hyperliquid — querying only the crypto dex here meant equities
+  // positions never appeared in this panel at all, regardless of how long
+  // you waited (confirmed against a real open xyz:MU position that never
+  // showed up). Fetch and merge both, same as the main dashboard does.
+  const cryptoAccount = usePositions(hl, user);
+  const equityAccount = usePositions(hl, user, EQUITY_DEX);
+  const positions = useMemo(() => [
+    ...cryptoAccount.positions.map((p) => ({ ...p, dex: "crypto" })),
+    ...equityAccount.positions.map((p) => ({ ...p, dex: "equity" })),
+  ], [cryptoAccount.positions, equityAccount.positions]);
+  const accountValue = (cryptoAccount.accountValue || 0) + (equityAccount.accountValue || 0);
+  const withdrawable = (cryptoAccount.withdrawable || 0) + (equityAccount.withdrawable || 0);
   return (
     <div className="lvp-card lvp-positions-card">
       <header className="lvp-row">
@@ -269,7 +352,7 @@ export function PositionsPanel({ hl, cfg, user, tradingWallet, onPositionClosed 
         <p className="lvp-muted" style={{ marginTop: 8 }}>No open positions.</p>
       )}
       {positions.map((p) => (
-        <PositionRow key={p.coin} p={p} hl={hl} cfg={cfg} user={user} tradingWallet={tradingWallet} onClosed={onPositionClosed} />
+        <PositionRow key={`${p.dex}-${p.coin}`} p={p} hl={hl} cfg={cfg} user={user} tradingWallet={tradingWallet} onClosed={onPositionClosed} />
       ))}
     </div>
   );

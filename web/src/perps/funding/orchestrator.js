@@ -6,13 +6,16 @@ export class DepositOrchestrator {
     this.store = store;
   }
 
-  // `rail`, if given, quotes only that one provider — required once multiple
-  // providers bridge from DIFFERENT source assets (SOL vs USDC), since the
-  // same numeric inputAmount means a different thing for each and isn't a
-  // fair "pick the best quote" comparison. Omit `rail` to compare providers
-  // that share the same input asset (e.g. multiple SOL bridge routes).
+  // `rail`, if given (a single rail id, or an array of them), quotes only
+  // those providers — required once multiple providers bridge from
+  // DIFFERENT source assets (SOL vs USDC), since the same numeric
+  // inputAmount means a different thing for each and isn't a fair
+  // "pick the best quote" comparison. Omit `rail` to compare every
+  // registered provider, or pass an array to compare a specific subset
+  // that share the same input asset (e.g. the two USDC-source rails).
   async quote(inputAmount, user, rail) {
-    const providers = rail ? [this.providers[rail]].filter(Boolean) : Object.values(this.providers);
+    const rails = Array.isArray(rail) ? rail : rail ? [rail] : Object.keys(this.providers);
+    const providers = rails.map((r) => this.providers[r]).filter(Boolean);
     const quotes = await Promise.allSettled(providers.map((p) => p.quote(inputAmount, user)));
     const ok = quotes
       .filter((q) => q.status === "fulfilled")

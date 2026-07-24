@@ -11,6 +11,7 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
     "@jup-ag/referral-sdk": "^0.3.0",
     "@nktkas/hyperliquid": "^0.33.2",
     "@noble/curves": "^2.2.0",

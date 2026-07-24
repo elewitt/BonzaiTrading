@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallets, useSendTransaction, useCreateWallet, useUser, useSignTypedData } from "@privy-io/react-auth";
-import { useSolanaWallets, useSignTransaction, useSignMessage as useSolanaSignMessage } from "@privy-io/react-auth/solana";
-import { VersionedTransaction, Connection } from "@solana/web3.js";
+import { useSignTransaction, useSignMessage as useSolanaSignMessage } from "@privy-io/react-auth/solana";
+import { VersionedTransaction, Transaction, Connection, PublicKey } from "@solana/web3.js";
 
 import { DEFAULT_CONFIG, EQUITY_DEX, EQUITY_DEX_LABEL } from "./config.js";
 import { COINGECKO_SLUGS } from "./coingeckoSlugs.js";
@@ -11,6 +11,7 @@ import { evaluateGate, fetchIpCountry } from "./compliance/geoGate.js";
 import { DepositOrchestrator, LocalStateStore } from "./funding/orchestrator.js";
 import { DeBridgeProvider } from "./funding/debridge.js";
 import { RealDeBridgeIo } from "./funding/realDebridge.js";
+import { CctpProvider, RealCctpIo } from "./funding/cctp.js";
 import { WithdrawOrchestrator } from "./funding/withdraw.js";
 import { useLongviewHl, useAssets, usePositions, useMoveDexFunds } from "./useHyperliquid.js";
 import { DepositWizard } from "./DepositWizard.jsx";
@@ -82,12 +83,16 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // SignTypedDataParams shape ({ domain, types, primaryType, message })
   // matches Hyperliquid's ViemTypedDataParams exactly, so no transform needed.
   const { signTypedData } = useSignTypedData();
+  // Skips Privy's own signing modal for every action this wallet object
+  // signs (trades, builder approval, withdraw, moving funds between dexs)
+  // — this app's own buttons are the sole confirmation gate everywhere now,
+  // not just the deposit/trade flows this started with.
   const viemAccount = useMemo(() => {
     if (!evmAddress) return null;
     return {
       address: evmAddress,
       signTypedData: async (params) => {
-        const { signature } = await signTypedData(params, { address: evmAddress });
+        const { signature } = await signTypedData(params, { address: evmAddress, uiOptions: { showWalletUIs: false } });
         return signature;
       },
     };
@@ -149,15 +154,11 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // Privy EVM send transaction (for Bridge2 deposit on Arbitrum)
   const { sendTransaction: sendEvmTx } = useSendTransaction();
 
-  // Privy Solana sign transaction (for deBridge Solana tx). Uses the
-  // dedicated useSolanaWallets() hook (same one App.jsx's xStocks flow
-  // already relies on successfully all session) rather than filtering the
-  // generic useWallets() array for a "solana" entry — that generic hook has
-  // a confirmed sync bug for the EVM wallet in this same session, so its
-  // Solana entries shouldn't be trusted either even when present.
+  // Privy Solana sign transaction (for deBridge Solana tx) — the properly
+  // typed useSignTransaction() hook, needed (not the wallet-adapter-style
+  // ConnectedSolanaWallet.signTransaction) since only the hook form accepts
+  // uiOptions to skip Privy's own confirmation modal.
   const { signTransaction: signSolanaTx } = useSignTransaction();
-  const { wallets: solanaWallets } = useSolanaWallets();
-  const solanaWallet = solanaWallets.find((w) => w.walletClientType === "privy") || solanaWallets[0];
 
   // ——— HL client + assets ———
   const hl = useLongviewHl(DEFAULT_CONFIG);
@@ -186,6 +187,10 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // Shared by both the deposit orchestrator (approve/transfer into HL) and
   // the withdraw orchestrator (approve/order-creation back out) — same
   // wallet, same signing path, no reason to duplicate it per-orchestrator.
+  //
+  // Always skips Privy's own transaction-confirmation modal
+  // (uiOptions.showWalletUIs: false) — this app's own buttons are the sole
+  // confirmation step everywhere now, not just deposit.
   const sendEvm = useCallback(async ({ to, data, chainId, gasLimit, value }) => {
     // Explicit address, not reliance on useWallets()'s "connected" wallet
     // list — that list has a confirmed sync gap (wallet verified to exist
@@ -196,7 +201,10 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
     // "intrinsic gas too low" relying on Privy's auto-estimation for these
     // specific ERC20 approve / custom Bridge2 calls. Callers pass a
     // generous fixed limit instead of leaving it to auto-estimation.
-    const result = await sendEvmTx({ to, data, chainId, gasLimit, value }, { address: evmAddress });
+    const result = await sendEvmTx(
+      { to, data, chainId, gasLimit, value },
+      { address: evmAddress, uiOptions: { showWalletUIs: false } },
+    );
     return result.hash ?? result.transactionHash ?? result;
   }, [sendEvmTx, evmAddress]);
 
@@ -224,10 +232,17 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
       const { blockhash } = await connection.getLatestBlockhash("finalized");
       tx.message.recentBlockhash = blockhash;
 
-      // Sign with Privy Solana wallet
-      const signed = await (solanaWallet?.signTransaction
-        ? solanaWallet.signTransaction(tx)
-        : signSolanaTx({ transaction: tx, wallet: solanaWallet }));
+      // Sign with the Privy Solana wallet via the properly-typed hook (not
+      // the legacy wallet-adapter-style solanaWallet.signTransaction(tx),
+      // which has no uiOptions support at all) — deposit is the first flow
+      // opted into skipping Privy's own confirmation modal in favor of this
+      // app's own "Deposit"/"Complete Deposit" buttons as the sole gate.
+      const signed = await signSolanaTx({
+        transaction: tx,
+        connection,
+        address: solanaAddress,
+        uiOptions: { showWalletUIs: false },
+      });
       // Submit to Solana
       return connection.sendRawTransaction(signed.serialize());
     };
@@ -238,18 +253,47 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
       rpcUrl: SOL_RPC,
     });
 
+    // CCTP's burn instruction is built locally (see cctp/burnInstruction.js)
+    // rather than fetched from a server — it also needs a second, ephemeral
+    // co-signer (a fresh ed25519 keypair generated per-transaction that
+    // owns the new "message sent" event account CCTP creates), unlike
+    // deBridge's single-signer pre-built tx above.
+    const signAndSendCctpBurn = async (instruction, messageSentEventKeypair) => {
+      const connection = new Connection(SOL_RPC, "confirmed");
+      const tx = new Transaction();
+      tx.add(instruction);
+      tx.feePayer = new PublicKey(solanaAddress);
+      const { blockhash } = await connection.getLatestBlockhash("finalized");
+      tx.recentBlockhash = blockhash;
+      tx.partialSign(messageSentEventKeypair);
+
+      const signed = await signSolanaTx({
+        transaction: tx,
+        connection,
+        address: solanaAddress,
+        uiOptions: { showWalletUIs: false },
+      });
+      return connection.sendRawTransaction(signed.serialize());
+    };
+
+    const cctpIo = new RealCctpIo({
+      signAndSendCctpBurn,
+      sendEvmTx: sendEvm,
+      rpcUrl: SOL_RPC,
+    });
+
     return new DepositOrchestrator(
       // Unit rail excluded: funding/unit.js is still UnitDemoIo, a fake stub
       // that never touches real funds but reports "done" — unsafe to expose
-      // until it has a real IO implementation. deBridge is the only real rail,
-      // registered twice for the two source assets it can bridge from.
+      // until it has a real IO implementation.
       {
         debridge: new DeBridgeProvider(debridgeIo, "sol"),
         debridge_usdc: new DeBridgeProvider(debridgeIo, "usdc"),
+        cctp_usdc: new CctpProvider(cctpIo),
       },
       store,
     );
-  }, [solanaWallet, signSolanaTx, sendEvm]);
+  }, [signSolanaTx, sendEvm, solanaAddress]);
 
   const user = useMemo(() => {
     if (!solanaAddress || !evmAddress) return null;
@@ -532,7 +576,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
 
                 {fundAccount === "crypto" && fundView === "deposit" && (
                   <DepositWizard orchestrator={orchestrator} user={user}
-                    walletSolBalance={solBalance} walletUsdcBalance={usdcBalance}
+                    walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
                     onFunded={() => setFundModal(false)} />
                 )}
                 {fundAccount === "crypto" && fundView === "withdraw" && (
@@ -540,14 +584,29 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
                     withdrawable={cryptoWithdrawable} onWithdrawn={() => setFundModal(false)} />
                 )}
                 {fundAccount === "equity" && fundView === "deposit" && (
-                  <MoveFundsCard
-                    title={`Deposit to ${EQUITY_DEX_LABEL}`}
-                    fromBalance={cryptoWithdrawable}
-                    sourceDex="" destinationDex={EQUITY_DEX}
-                    moveDexFunds={moveDexFunds}
-                    buttonLabel="Deposit"
-                    onDone={() => setFundModal(false)}
-                  />
+                  <>
+                    <MoveFundsCard
+                      title={`Deposit to ${EQUITY_DEX_LABEL}`}
+                      description={`Move cash already in your trading account into ${EQUITY_DEX_LABEL}.`}
+                      fromBalance={cryptoWithdrawable}
+                      sourceDex="" destinationDex={EQUITY_DEX}
+                      moveDexFunds={moveDexFunds}
+                      buttonLabel="Deposit"
+                      onDone={() => setFundModal(false)}
+                    />
+                    {/* sendAsset can only move USDC already inside Hyperliquid
+                        between dexs — it can't pull from the wallet directly,
+                        so a user with little/no crypto-dex balance had no way
+                        to fund Equities at all without leaving this modal,
+                        depositing on the Crypto tab, then coming back. Offer
+                        the same wallet deposit inline instead. */}
+                    <p className="lvp-muted" style={{ marginTop: 18, marginBottom: 8, fontSize: 13 }}>
+                      Need more cash first? Add funds below, then move them to {EQUITY_DEX_LABEL} above.
+                    </p>
+                    <DepositWizard orchestrator={orchestrator} user={user}
+                      walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
+                      onFunded={() => {}} />
+                  </>
                 )}
                 {fundAccount === "equity" && fundView === "withdraw" && (
                   <MoveFundsCard

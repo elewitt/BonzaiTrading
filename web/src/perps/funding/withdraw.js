@@ -8,12 +8,17 @@
  *
  *   1. Hyperliquid withdraw3 → lands USDC on the user's own Arbitrum
  *      address (~5 min, Hyperliquid's own $1 flat fee taken automatically).
- *   2. deBridge DLN, Arbitrum → Solana (reverse of the deposit bridge) →
- *      lands back in the user's Solana wallet / Bonzai Trading balance.
+ *      Rail-agnostic — this step is identical no matter which bridge
+ *      brings the funds back to Solana afterward.
+ *   2. Arbitrum → Solana, via either deBridge DLN (the original rail) or
+ *      CCTP V2 (added alongside it — Circle's native burn-and-mint, no
+ *      solver margin, same tradeoff as the deposit direction's two rails).
+ *      Selected per-withdrawal via `rail` at start() time.
  */
 import { encodeFunctionData } from "viem";
 import { PROTOCOL } from "../config.js";
 import { API_BASE } from "../../lib/api.js";
+import { buildWithdrawBurnTxs } from "./cctp/withdrawBurnEvm.js";
 
 const ARB_RPC = "https://arb1.arbitrum.io/rpc";
 const ARB_USDC = PROTOCOL.ARBITRUM_NATIVE_USDC;
@@ -28,6 +33,9 @@ export const MIN_WITHDRAW_USDC = 5;
 // tx value, confirmed via a real create-tx response for this exact route)
 // plus gas for both the approve and order-creation transactions.
 const MIN_ARB_ETH_FOR_BRIDGE_WEI = "1500000000000000"; // 0.0015 ETH
+// CCTP's approve + depositForBurn need less — no protocol fee paid as tx
+// value (Standard Transfer, maxFee=0), just gas for the two calls.
+const MIN_ARB_ETH_FOR_CCTP_WEI = "500000000000000"; // 0.0005 ETH
 
 const ERC20_ABI = [{
   name: "approve", type: "function", stateMutability: "nonpayable",
@@ -98,21 +106,40 @@ export class WithdrawOrchestrator {
     this.store = store;
   }
 
-  async quote(usdcAmount, user) {
-    const r = await fetch(
-      `${API_BASE}/api/perps/withdraw-bridge/quote?usdcAmount=${usdcAmount}&solanaRecipient=${encodeURIComponent(user.solana)}&evmSender=${encodeURIComponent(user.evm)}`,
-    );
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "couldn't price this withdrawal");
-    return await r.json(); // { usdcOut, feeUsd, etaSeconds }
+  // `rail`, if given (a single rail id or an array), quotes only those —
+  // same convention DepositOrchestrator.quote() uses. Omit to compare both.
+  async quote(usdcAmount, user, rail) {
+    const rails = Array.isArray(rail) ? rail : rail ? [rail] : ["debridge", "cctp"];
+    const results = await Promise.allSettled(rails.map((r) => this._quoteOne(usdcAmount, user, r)));
+    const ok = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+    if (!ok.length) {
+      const reasons = results.filter((r) => r.status === "rejected").map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+      throw new Error(reasons[0] || "no return-bridge rail available for quote");
+    }
+    return ok.sort((a, b) => b.usdcOut - a.usdcOut);
   }
 
-  async start(id, usdcAmount, user) {
+  async _quoteOne(usdcAmount, user, rail) {
+    if (rail === "cctp") {
+      // CCTP V2 Standard Transfer (maxFee=0) is a native 1:1 burn-and-mint
+      // — no solver margin like deBridge's DLN, so the only real cost is
+      // gas (already sponsored). etaSeconds is an estimate, not a live
+      // quote — same reasoning as the deposit direction's CCTP rail.
+      return { rail: "cctp", usdcOut: usdcAmount, feeUsd: 0, etaSeconds: 120 };
+    }
+    const r = await fetch(`${API_BASE}/api/perps/withdraw-bridge/quote?usdcAmount=${usdcAmount}&solanaRecipient=${encodeURIComponent(user.solana)}&evmSender=${encodeURIComponent(user.evm)}`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "couldn't price this withdrawal");
+    const d = await r.json(); // { usdcOut, feeUsd, etaSeconds }
+    return { rail: "debridge", ...d };
+  }
+
+  async start(id, usdcAmount, user, rail = "cctp") {
     if (!(usdcAmount >= MIN_WITHDRAW_USDC)) {
       throw new Error(`Minimum withdrawal is $${MIN_WITHDRAW_USDC} — Hyperliquid's flat $1 fee plus the return bridge fee make smaller amounts not worth withdrawing.`);
     }
     const existing = await this.store.load(id);
     if (existing) return existing;
-    const state = { id, step: "INIT", user, amountUsdc: usdcAmount, legs: {}, updatedAt: Date.now() };
+    const state = { id, step: "INIT", user, amountUsdc: usdcAmount, rail, legs: {}, updatedAt: Date.now() };
     await this.store.save(state);
     return state;
   }
@@ -162,13 +189,25 @@ export class WithdrawOrchestrator {
 
     if (state.step === "AWAITING_SOL_CREDIT") {
       try {
-        const r = await fetch(`${API_BASE}/api/perps/bridge/status/${encodeURIComponent(state.legs.bridgeOrderId)}`);
-        if (r.ok) {
-          const { fulfilled } = await r.json();
-          if (fulfilled) {
-            const next = { ...state, step: "DONE", updatedAt: Date.now() };
-            await this.store.save(next);
-            return next;
+        if (state.rail === "cctp") {
+          const r = await fetch(`${API_BASE}/api/perps/cctp/withdraw-status/${encodeURIComponent(state.legs.bridgeOrderId)}?solanaRecipient=${encodeURIComponent(state.user.solana)}`);
+          if (r.ok) {
+            const { status } = await r.json();
+            if (status === "relayed") {
+              const next = { ...state, step: "DONE", updatedAt: Date.now() };
+              await this.store.save(next);
+              return next;
+            }
+          }
+        } else {
+          const r = await fetch(`${API_BASE}/api/perps/bridge/status/${encodeURIComponent(state.legs.bridgeOrderId)}`);
+          if (r.ok) {
+            const { fulfilled } = await r.json();
+            if (fulfilled) {
+              const next = { ...state, step: "DONE", updatedAt: Date.now() };
+              await this.store.save(next);
+              return next;
+            }
           }
         }
       } catch {}
@@ -179,10 +218,15 @@ export class WithdrawOrchestrator {
   }
 
   /**
-   * Real user click only — the ERC20 approve + deBridge order-creation
+   * Real user click only — the ERC20 approve + return-bridge order-creation
    * transactions. Same rule as completeDeposit() in orchestrator.js.
    */
   async completeBridgeToSolana(state) {
+    if (state.rail === "cctp") return this._completeBridgeCctp(state);
+    return this._completeBridgeDebridge(state);
+  }
+
+  async _completeBridgeDebridge(state) {
     let next;
     try {
       const arbAtoms = await getArbUsdcBalanceAtoms(state.user.evm);
@@ -238,6 +282,43 @@ export class WithdrawOrchestrator {
       await waitForArbTxReceipt(orderHash);
 
       next = { ...state, step: "AWAITING_SOL_CREDIT", legs: { ...state.legs, bridgeOrderId: orderId }, updatedAt: Date.now() };
+    } catch (e) {
+      next = { ...state, legs: { ...state.legs, bridgeError: e instanceof Error ? e.message : String(e) }, updatedAt: Date.now() };
+    }
+    await this.store.save(next);
+    return next;
+  }
+
+  async _completeBridgeCctp(state) {
+    let next;
+    try {
+      const arbAtoms = await getArbUsdcBalanceAtoms(state.user.evm);
+      if (arbAtoms <= 0n) throw new Error("No cash found on Arbitrum to bridge back.");
+
+      await fetch(`${API_BASE}/api/perps/arbitrum-gas`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address: state.user.evm, minWei: MIN_ARB_ETH_FOR_CCTP_WEI }),
+      }).catch(() => {});
+      const ethBalance = await getArbEthBalance(state.user.evm);
+      if (ethBalance < BigInt(MIN_ARB_ETH_FOR_CCTP_WEI)) {
+        throw new Error("Needs a small amount of ETH on Arbitrum to bridge back — your cash is safe on Arbitrum and this is the last step.");
+      }
+
+      const { approve, depositForBurn } = await buildWithdrawBurnTxs({
+        amountAtoms: arbAtoms, solanaRecipient: state.user.solana,
+      });
+
+      const approveHash = await this.sendEvmTx(approve);
+      await waitForArbTxReceipt(approveHash);
+
+      const burnHash = await this.sendEvmTx(depositForBurn);
+      await waitForArbTxReceipt(burnHash);
+
+      // bridgeOrderId doubles as the burn tx hash here — Circle's
+      // attestation API looks messages up by source transactionHash, no
+      // separate order id like deBridge's DLN has.
+      next = { ...state, step: "AWAITING_SOL_CREDIT", legs: { ...state.legs, bridgeOrderId: burnHash }, updatedAt: Date.now() };
     } catch (e) {
       next = { ...state, legs: { ...state.legs, bridgeError: e instanceof Error ? e.message : String(e) }, updatedAt: Date.now() };
     }

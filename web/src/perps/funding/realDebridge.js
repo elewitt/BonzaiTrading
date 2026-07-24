@@ -23,47 +23,8 @@
  * surfaced as an on-chain revert on a real attempt.
  */
 import { Connection } from "@solana/web3.js";
-import { encodeFunctionData } from "viem";
-import { PROTOCOL } from "../config.js";
 import { API_BASE } from "../../lib/api.js";
-
-const BRIDGE2   = PROTOCOL.BRIDGE2_ADDRESS;
-const ARB_USDC  = PROTOCOL.ARBITRUM_NATIVE_USDC;
-const ARB_CHAIN_ID = 42161;
-const ARB_RPC = "https://arb1.arbitrum.io/rpc";
-// A real stuck deposit had 0.00002 ETH and failed to cover approve+deposit's
-// gas — this threshold gives real margin above that observed failure point.
-const MIN_ARB_ETH_WEI = 100_000_000_000_000n; // 0.0001 ETH
-
-async function getArbEthBalance(address) {
-  const r = await fetch(ARB_RPC, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [address, "latest"] }),
-  });
-  const { result } = await r.json();
-  return BigInt(result);
-}
-
-// ERC20 balanceOf selector: 0x70a08231 + 32-byte padded address
-async function getArbUsdcBalanceAtoms(address) {
-  const data = "0x70a08231" + "000000000000000000000000" + address.slice(2).toLowerCase();
-  const r = await fetch(ARB_RPC, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: ARB_USDC, data }, "latest"] }),
-  });
-  const { result } = await r.json();
-  return BigInt(result);
-}
-
-// Standard ERC20 transfer — this is the whole deposit mechanism (see file
-// header comment). No custom Bridge2 ABI needed at all.
-const ERC20_TRANSFER_ABI = [{
-  name: "transfer", type: "function", stateMutability: "nonpayable",
-  inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
-  outputs: [{ name: "", type: "bool" }],
-}];
+import { checkHlReady as checkHlReadyShared, completeHlDeposit as completeHlDepositShared } from "./arbitrumHlDeposit.js";
 
 export class RealDeBridgeIo {
   /**
@@ -121,62 +82,13 @@ export class RealDeBridgeIo {
    * ever prompted a real signature.
    */
   async checkHlReady(evmAddress) {
-    // Ask the server to top up gas if needed BEFORE checking balance — the
-    // sponsor endpoint checks balance internally too, so one call covers
-    // both "already funded" and "needs a top-up" cases.
-    let ethBalance;
-    try {
-      const topupResult = await fetch(`${API_BASE}/api/perps/arbitrum-gas`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ address: evmAddress }),
-      }).then((r) => r.json());
-      ethBalance = topupResult.balance != null ? BigInt(topupResult.balance) : await getArbEthBalance(evmAddress);
-    } catch {
-      try { ethBalance = await getArbEthBalance(evmAddress); }
-      catch (e2) { return { ready: false, error: `Couldn't check Arbitrum gas balance: ${e2.message}` }; }
-    }
-    if (ethBalance < MIN_ARB_ETH_WEI) {
-      return {
-        ready: false,
-        needsGas: true,
-        error: `Needs a small amount of ETH on Arbitrum to complete (has ${(Number(ethBalance) / 1e18).toFixed(6)}, needs ~${Number(MIN_ARB_ETH_WEI) / 1e18}) — your cash has already arrived at ${evmAddress} and is safe, this is the last step.`,
-      };
-    }
-    return { ready: true };
+    return checkHlReadyShared(evmAddress);
   }
 
   /**
    * Only ever call this from a real user click — see class comment above.
-   *
-   * Deposits the wallet's ACTUAL current USDC balance on Arbitrum, not a
-   * fixed constant. This used to always pass PROTOCOL.MIN_BRIDGE2_DEPOSIT_USDC
-   * (a fixed $5) regardless of how much really arrived — confirmed as a
-   * real bug against a $6.85 delivery: it would have deposited only $5 and
-   * left the remaining ~$1.85 stranded on Arbitrum, uncredited, with no
-   * account of it anywhere.
    */
   async completeHlDeposit(evmAddress) {
-    const usdcAtoms = await getArbUsdcBalanceAtoms(evmAddress);
-    if (usdcAtoms <= 0n) {
-      return { credited: false, error: "No cash found on Arbitrum for this address to deposit." };
-    }
-    try {
-      // One plain ERC20 transfer to Bridge2 — see file header comment for
-      // why there's no approve step or custom Bridge2 function call.
-      // Explicit gasLimit: Privy's auto-estimation failed with "intrinsic
-      // gas too low" on a real attempt; a standard ERC20 transfer needs
-      // ~50-65k gas, 100k gives real margin at negligible Arbitrum cost.
-      await this._sendEvmTx({
-        to: ARB_USDC,
-        data: encodeFunctionData({ abi: ERC20_TRANSFER_ABI, functionName: "transfer", args: [BRIDGE2, usdcAtoms] }),
-        chainId: ARB_CHAIN_ID,
-        gasLimit: 100_000,
-      });
-      return { credited: true };
-    } catch (e) {
-      console.error("[deBridge] Bridge2 deposit failed:", e.message);
-      return { credited: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    return completeHlDepositShared(evmAddress, this._sendEvmTx);
   }
 }

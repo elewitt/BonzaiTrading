@@ -12,7 +12,7 @@ export const PROTOCOL = {
 export const DEFAULT_CONFIG = {
   network: import.meta.env.VITE_HL_NETWORK || "testnet",
   builderAddress: import.meta.env.VITE_HL_BUILDER_ADDRESS || "0x0000000000000000000000000000000000000000",
-  builderFeeTenthsBps: 50,
+  builderFeeTenthsBps: 70, // 7bps — still within the 0.08% approval ceiling below, so this applies to already-approved customers with no re-signature needed
   approvalMaxFeeRate: "0.08%",
 };
 

@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
     "@nktkas/hyperliquid": "^0.33.1",
     "@privy-io/react-auth": "^2.13.0",
     "@solana-program/system": "^0.7.0",

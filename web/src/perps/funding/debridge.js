@@ -4,14 +4,16 @@
  * Replace this.io with a real DeBridgeIo implementation for mainnet.
  */
 import { PROTOCOL } from "../config.js";
+import { BridgeProviderBase } from "./bridgeProviderBase.js";
 
-export class DeBridgeProvider {
+export class DeBridgeProvider extends BridgeProviderBase {
   // srcAsset: "sol" (default) or "usdc" — which Solana-side asset this
   // instance bridges FROM. Each asset gets its own rail id so both can be
   // registered side by side and quoted independently (they aren't
   // comparable the way two SOL-bridging providers would be — the input
   // amount means a different asset depending on which is picked).
   constructor(io, srcAsset = "sol") {
+    super();
     this.srcAsset = srcAsset;
     this.rail = srcAsset === "usdc" ? "debridge_usdc" : "debridge";
     this.io = io;
@@ -29,77 +31,6 @@ export class DeBridgeProvider {
       estimatedUsdcOut: q.usdcOut,
       estimatedSeconds: q.etaSeconds,
       feeUsd: q.feeUsd,
-    };
-  }
-
-  async advance(state) {
-    switch (state.step) {
-      case "QUOTING":
-      case "SWAPPING_SOL_TO_USDC":
-        return { ...state, step: "BRIDGING", updatedAt: Date.now() };
-
-      case "BRIDGING": {
-        if (!state.legs.bridgeTxId) {
-          const { txSig, orderId } = await this.io.createAndSendOrder(state);
-          return {
-            ...state,
-            legs: { ...state.legs, swapTxSig: txSig, bridgeTxId: orderId },
-            step: "AWAITING_HL_CREDIT",
-            updatedAt: Date.now(),
-          };
-        }
-        return { ...state, step: "AWAITING_HL_CREDIT", updatedAt: Date.now() };
-      }
-
-      case "AWAITING_HL_CREDIT": {
-        // Polling only ever CHECKS readiness (order fulfilled + gas
-        // present) — it never attempts the actual approve+deposit
-        // signatures itself. Those require a real user click (see
-        // completeHlDeposit below and realDebridge.js's class comment) —
-        // a real stuck deposit confirmed that attempting them from this
-        // background poll silently never completes, even with gas present.
-        const fulfilled = await this.io.isOrderFulfilled(state.legs.bridgeTxId);
-        if (!fulfilled) return state;
-        const readiness = await this.io.checkHlReady(state.user.evm);
-        if (!readiness.ready) {
-          return {
-            ...state,
-            legs: { ...state.legs, hlDepositError: readiness.error, needsArbGas: !!readiness.needsGas, readyForHlDeposit: false },
-            updatedAt: Date.now(),
-          };
-        }
-        if (state.legs.readyForHlDeposit) return state; // already surfaced, wait for the user's click
-        return {
-          ...state,
-          legs: { ...state.legs, readyForHlDeposit: true, hlDepositError: null, needsArbGas: false },
-          updatedAt: Date.now(),
-        };
-      }
-
-      default:
-        return state;
-    }
-  }
-
-  /**
-   * Called directly by DepositOrchestrator.completeDeposit(), NOT part of
-   * the advance()/resume() polling loop — only invoke this from a real user
-   * click (e.g. a "Complete Deposit" button), never from a timer.
-   */
-  async completeHlDeposit(state) {
-    const result = await this.io.completeHlDeposit(state.user.evm);
-    if (!result.credited) {
-      return {
-        ...state,
-        legs: { ...state.legs, hlDepositError: result.error },
-        updatedAt: Date.now(),
-      };
-    }
-    return {
-      ...state,
-      legs: { ...state.legs, hlCreditObserved: true, hlDepositError: null, readyForHlDeposit: false },
-      step: "DONE",
-      updatedAt: Date.now(),
     };
   }
 }
