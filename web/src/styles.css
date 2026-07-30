@@ -1495,10 +1495,10 @@ a.trow { color: inherit; text-decoration: none; }
   position: relative;
   overflow: hidden;
 }
-/* Quiet looping backdrop — desaturated toward the pine/moss palette and
+/* Quiet still backdrop — desaturated toward the pine/moss palette and
    washed with --paper (see overlay below) so it reads as soft texture
    behind the headline rather than competing with it. */
-.lp-hero-video {
+.lp-hero-bg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1508,7 +1508,7 @@ a.trow { color: inherit; text-decoration: none; }
   filter: saturate(0.55) brightness(1.08) sepia(6%);
   z-index: 0;
 }
-.lp-hero-video-overlay {
+.lp-hero-bg-overlay {
   position: absolute;
   inset: 0;
   z-index: 0;

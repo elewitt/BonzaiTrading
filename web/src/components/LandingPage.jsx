@@ -278,10 +278,8 @@ export default function LandingPage({ onLogin }) {
 
       {/* ── Hero ── */}
       <section className="lp-hero">
-        <video className="lp-hero-video" autoPlay muted loop playsInline>
-          <source src="/hero-bonsai.mp4" type="video/mp4" />
-        </video>
-        <div className="lp-hero-video-overlay" />
+        <img className="lp-hero-bg" src="/hero-bonsai.jpg" alt="" />
+        <div className="lp-hero-bg-overlay" />
 <div className="lp-center">
           <h1 className="lp-headline">
             Your perfect{" "}
