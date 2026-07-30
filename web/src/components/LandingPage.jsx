@@ -279,7 +279,7 @@ export default function LandingPage({ onLogin }) {
       {/* ── Hero ── */}
       <section className="lp-hero">
         <video className="lp-hero-video" autoPlay muted loop playsInline>
-          <source src="/hero-branches.mp4" type="video/mp4" />
+          <source src="/hero-bonsai.mp4" type="video/mp4" />
         </video>
         <div className="lp-hero-video-overlay" />
 <div className="lp-center">
