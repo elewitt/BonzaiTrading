@@ -1495,6 +1495,30 @@ a.trow { color: inherit; text-decoration: none; }
   position: relative;
   overflow: hidden;
 }
+/* Quiet looping backdrop — desaturated toward the pine/moss palette and
+   washed with --paper (see overlay below) so it reads as soft texture
+   behind the headline rather than competing with it. */
+.lp-hero-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  filter: saturate(0.55) brightness(1.08) sepia(6%);
+  z-index: 0;
+}
+.lp-hero-video-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(237, 239, 233, 0.6) 0%,
+    rgba(237, 239, 233, 0.7) 55%,
+    var(--paper) 100%
+  );
+}
 .lp-center {
   position: relative;
   z-index: 1;
