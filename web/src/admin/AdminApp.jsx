@@ -539,7 +539,7 @@ function KaminoFeesSection({ password }) {
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <Section title="Kamino deposit fees — borrow/lend">
+    <Section title="Kamino borrow fees — borrow/lend">
       {error && <div className="tiny warn" style={{ marginBottom: 8 }}>{error}</div>}
       {!status ? (
         <p className="muted tiny">Loading…</p>
@@ -547,7 +547,7 @@ function KaminoFeesSection({ password }) {
         <p className="muted tiny">Sponsor wallet not configured — Kamino fees unavailable.</p>
       ) : (
         <>
-          <div className="trow"><span className="label">Fee rate</span><span className="mono">{(status.feeBps / 100).toFixed(2)}% on deposit</span></div>
+          <div className="trow"><span className="label">Fee rate</span><span className="mono">{(status.feeBps / 100).toFixed(2)}% on borrow</span></div>
           <div className="trow"><span className="label">Fee wallet</span><span className="mono tiny">{status.sponsorAddress}</span></div>
           <div className="trow"><span className="label">Total collected (lifetime)</span><span className="mono">{usd(status.totalUsd)}</span></div>
           <div className="trow"><span className="label">Fee events</span><span className="mono">{status.count}</span></div>
@@ -646,74 +646,372 @@ function GasSponsorSection({ password }) {
   );
 }
 
-function FlaggedList({ items, renderMetric }) {
-  const flagged = items.filter((x) => x.flagged);
-  if (items.length === 0) return <p className="muted tiny">Not checked yet.</p>;
-  if (flagged.length === 0) return <p className="tiny gain">All clear — 0 of {items.length} flagged.</p>;
+function OfacMatchList({ result }) {
+  if (result.listError) return <p className="tiny warn">OFAC list unavailable: {result.listError}</p>;
+  if (result.matches.length === 0) return <p className="tiny gain">No matches found.</p>;
   return (
     <>
-      <p className="tiny warn" style={{ marginBottom: 8 }}>{flagged.length} of {items.length} flagged</p>
-      {flagged.map((x, i) => (
-        <div className="trow" key={`${x.symbol}-${x.dex ?? ""}-${i}`}>
-          <span>{x.symbol}{x.dex ? ` · ${x.dex}` : ""}</span>
-          <span className="mono tiny warn">{x.reason || renderMetric(x)}</span>
+      <p className="tiny warn" style={{ marginBottom: 8 }}>
+        {result.matches.length} possible match{result.matches.length === 1 ? "" : "es"} — review each, this is a fuzzy match, not a confirmed hit
+      </p>
+      {result.matches.map((m, i) => (
+        <div className="card" key={`${m.name}-${i}`} style={{ marginBottom: 10, padding: 14 }}>
+          <div className="trow"><span className="label">Name</span><span>{m.name}</span></div>
+          {m.matchedName && <div className="trow"><span className="label">Matched alias</span><span>{m.matchedName}</span></div>}
+          <div className="trow"><span className="label">Match score</span><span className="mono">{(m.score * 100).toFixed(0)}%</span></div>
+          <div className="trow"><span className="label">List</span><span>{m.source}</span></div>
+          {m.type && <div className="trow"><span className="label">Type</span><span>{m.type}</span></div>}
+          {m.programs?.length > 0 && <div className="trow"><span className="label">Programs</span><span>{m.programs.join(", ")}</span></div>}
+          {m.remarks && <p className="tiny muted" style={{ marginTop: 6 }}>{m.remarks}</p>}
+          {m.sourceInformationUrl && (
+            <a className="tiny" href={m.sourceInformationUrl} target="_blank" rel="noreferrer">View list source →</a>
+          )}
         </div>
       ))}
     </>
   );
 }
 
-function MarketLiquidityView({ password }) {
-  const [snapshot, setSnapshot] = useState(null);
-  const [error, setError] = useState(null);
+function AdverseMediaResults({ result }) {
+  if (result.error) return <p className="tiny warn">Search failed: {result.error}</p>;
+  if (result.results.length === 0) return <p className="tiny muted">No results.</p>;
+  return result.results.map((r, i) => (
+    <div className="trow" key={i} style={{ alignItems: "flex-start" }}>
+      <a href={r.url} target="_blank" rel="noreferrer" style={{ flex: 1 }}>{r.title}</a>
+      <span className="tiny muted" style={{ flex: 1, textAlign: "right" }}>{r.description}</span>
+    </div>
+  ));
+}
 
-  async function refresh() {
+const TRADE_KIND_LABELS = {
+  swap: "Swap",
+  kamino_deposit: "Kamino Deposit",
+  kamino_borrow: "Kamino Borrow",
+  kamino_repay: "Kamino Repay",
+  kamino_withdraw: "Kamino Withdraw",
+  kamino_borrow_fee: "Kamino Fee",
+  kamino_deposit_fee: "Kamino Fee",
+  perp_fill: "Perps",
+};
+
+function tradeSideChipClass(side) {
+  const s = String(side || "").toLowerCase();
+  if (s.includes("long") || s === "buy") return "buy";
+  if (s.includes("short") || s === "sell") return "sell";
+  return null;
+}
+
+/**
+ * Cumulative trading volume over time — hand-rolled SVG, same technique as
+ * PerpsDashboard.jsx's PnlChart (gradient-filled line, no charting
+ * library anywhere in this app). Uses --pine rather than gain/loss
+ * coloring since this is a volume-growth curve, not a P&L series — it
+ * only ever goes up, so green/red would be misleading here.
+ */
+function TradeVolumeChart({ trades }) {
+  const points = [...trades].filter((t) => t.usdValue != null).sort((a, b) => a.time - b.time);
+  if (points.length < 2) {
+    return <p className="tiny muted" style={{ padding: "28px 0", textAlign: "center" }}>Not enough valued trades yet to chart.</p>;
+  }
+
+  let running = 0;
+  const series = points.map((t) => { running += Math.abs(t.usdValue); return { time: t.time, v: running }; });
+
+  const W = 600, H = 200;
+  const PAD = { top: 10, right: 16, bottom: 16, left: 62 };
+  const vMax = series[series.length - 1].v || 1;
+  const tMin = series[0].time, tMax = series[series.length - 1].time;
+  const tRange = tMax - tMin || 1;
+  const inner = { w: W - PAD.left - PAD.right, h: H - PAD.top - PAD.bottom };
+  const sx = (ts) => PAD.left + ((ts - tMin) / tRange) * inner.w;
+  const sy = (v) => PAD.top + inner.h - (v / vMax) * inner.h;
+
+  const mapped = series.map((p) => [sx(p.time), sy(p.v)]);
+  const linePath = mapped.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const bottom = (PAD.top + inner.h + 1).toFixed(1);
+  const areaPath = `${linePath} L${mapped[mapped.length - 1][0].toFixed(1)},${bottom} L${mapped[0][0].toFixed(1)},${bottom} Z`;
+  const [cx, cy] = mapped[mapped.length - 1];
+
+  const TICK_COUNT = 4;
+  const yTicks = Array.from({ length: TICK_COUNT }, (_, i) => (vMax * i) / (TICK_COUNT - 1));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="lvp-pnl-svg" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="adminVolGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--pine)" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="var(--pine)" stopOpacity="0.01" />
+        </linearGradient>
+        <clipPath id="adminVolClip">
+          <rect x={PAD.left} y={PAD.top - 4} width={inner.w + 1} height={inner.h + 5} />
+        </clipPath>
+      </defs>
+      {yTicks.map((v, i) => (
+        <line key={i} x1={PAD.left} y1={sy(v).toFixed(1)} x2={W - PAD.right} y2={sy(v).toFixed(1)} stroke="var(--line)" strokeWidth="1" opacity="0.6" />
+      ))}
+      <path d={areaPath} fill="url(#adminVolGrad)" clipPath="url(#adminVolClip)" />
+      <path d={linePath} fill="none" stroke="var(--pine)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" clipPath="url(#adminVolClip)" />
+      <circle cx={cx.toFixed(1)} cy={cy.toFixed(1)} r="4.5" fill="var(--pine)" stroke="var(--card)" strokeWidth="2" />
+      {yTicks.map((v, i) => (
+        <text key={i} x={PAD.left - 10} y={sy(v) + 3} textAnchor="end" fontSize="11" fontFamily="IBM Plex Mono,monospace" fill="var(--moss)">
+          {v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v.toFixed(0)}`}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+function TradeRow({ t }) {
+  const sideClass = tradeSideChipClass(t.side);
+  return (
+    <div className="trow" style={{ alignItems: "center" }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span className="pos-leverage-chip">{TRADE_KIND_LABELS[t.kind] || t.kind}</span>
+        {sideClass ? (
+          <span className={`trade-chip ${sideClass}`} style={{ padding: "3px 10px", fontSize: 11 }}>{t.side}</span>
+        ) : t.side ? (
+          <span className="tiny muted">{t.side}</span>
+        ) : null}
+        <span>{t.symbol || "—"}</span>
+        {t.status && t.status !== "confirmed" && <span className="tiny warn">({t.status})</span>}
+      </span>
+      <span className="mono tiny" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+        <span className="muted" style={{ marginRight: 10 }}>{new Date(t.time).toLocaleString()}</span>
+        {t.usdValue != null && <span>{usd(t.usdValue)}</span>}
+        {t.closedPnl ? (
+          <span className={t.closedPnl >= 0 ? "gain" : "warn"} style={{ marginLeft: 8 }}>
+            {t.closedPnl >= 0 ? "+" : ""}{usd(t.closedPnl)}
+          </span>
+        ) : null}
+        {t.signature && (
+          <a href={`https://solscan.io/tx/${t.signature}`} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>↗</a>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Brokerage swaps + Kamino activity + Hyperliquid perps fills, merged into
+ * one chronological record — separate on-demand fetch from the initial
+ * customer lookup (see /api/admin/customer/:query/trading-history's own
+ * comment for why), same on-demand pattern as the OFAC/adverse-media
+ * searches above.
+ */
+function TradingHistorySection({ password, query }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+
+  async function load() {
+    setBusy(true); setError(null); setData(null);
     try {
-      setSnapshot(await adminFetch("/api/admin/market-health", password));
-      setError(null);
+      setData(await adminFetch(`/api/admin/customer/${encodeURIComponent(query)}/trading-history`, password));
     } catch (err) {
-      setError(err.message || "Failed to load market health.");
+      setError(err.message || "Failed to load trading history.");
+    } finally {
+      setBusy(false);
     }
   }
 
-  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const trades = data?.trades || [];
+  const q = search.trim().toLowerCase();
+  const filtered = q ? trades.filter((t) => (t.symbol || "").toLowerCase().includes(q) || t.kind.toLowerCase().includes(q)) : trades;
 
-  const all = snapshot ? [...snapshot.brokerage, ...snapshot.perps, ...snapshot.borrow] : [];
-  const flaggedCount = all.filter((x) => x.flagged).length;
+  const totalVolume = trades.reduce((s, t) => s + Math.abs(t.usdValue || 0), 0);
+  const closedPerp = trades.filter((t) => t.kind === "perp_fill" && t.closedPnl);
+  const realizedPnl = closedPerp.reduce((s, t) => s + t.closedPnl, 0);
+  const winRate = closedPerp.length ? (closedPerp.filter((t) => t.closedPnl > 0).length / closedPerp.length) * 100 : null;
+
+  return (
+    <Section title="Trading history">
+      <p className="tiny muted" style={{ marginBottom: 12 }}>
+        Brokerage swaps, Kamino borrow/lend activity, and Hyperliquid perps fills, merged into one chronological record.
+      </p>
+      {!data && (
+        <button className="btn ghost" disabled={busy} onClick={load}>
+          {busy ? "Loading…" : "Load trading history"}
+        </button>
+      )}
+      {error && <p className="warn tiny" style={{ marginTop: 10 }}>{error}</p>}
+
+      {data && (
+        trades.length === 0 ? (
+          <p className="muted tiny">No trading activity found for this customer.</p>
+        ) : (
+          <>
+            <div className="lvp-stats-row" style={{ marginBottom: 18 }}>
+              <div className="card lvp-stat-box">
+                <span className="tiny muted">Total Trades</span>
+                <p className="mono lvp-stat-value">{trades.length}</p>
+              </div>
+              <div className="card lvp-stat-box">
+                <span className="tiny muted">Total Volume</span>
+                <p className="mono lvp-stat-value">{usd(totalVolume, 0)}</p>
+              </div>
+              <div className="card lvp-stat-box">
+                <span className="tiny muted">Perps Realized P&L</span>
+                <p className={`mono lvp-stat-value ${realizedPnl >= 0 ? "gain" : "warn"}`}>{usd(realizedPnl)}</p>
+              </div>
+              <div className="card lvp-stat-box">
+                <span className="tiny muted">Perps Win Rate</span>
+                <p className="mono lvp-stat-value">{winRate != null ? `${winRate.toFixed(0)}%` : "—"}</p>
+              </div>
+            </div>
+
+            <TradeVolumeChart trades={trades} />
+
+            <input
+              className="field perps-asset-search"
+              placeholder="Filter by asset or type…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ margin: "18px 0 4px", width: "100%" }}
+            />
+            {filtered.length === 0 ? (
+              <p className="tiny muted" style={{ marginTop: 8 }}>No trades match "{search}".</p>
+            ) : (
+              <div style={{ maxHeight: 420, overflowY: "auto" }}>
+                {filtered.map((t, i) => <TradeRow key={i} t={t} />)}
+              </div>
+            )}
+          </>
+        )
+      )}
+
+      {data && (
+        <button className="btn ghost" style={{ marginTop: 14 }} disabled={busy} onClick={load}>
+          {busy ? "Refreshing…" : "Refresh"}
+        </button>
+      )}
+    </Section>
+  );
+}
+
+function ComplianceView({ password }) {
+  const [query, setQuery] = useState("");
+  const [customer, setCustomer] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const [name, setName] = useState("");
+  const [ofacResult, setOfacResult] = useState(null);
+  const [ofacBusy, setOfacBusy] = useState(false);
+  const [ofacError, setOfacError] = useState(null);
+  const [mediaResult, setMediaResult] = useState(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [mediaError, setMediaError] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    setBusy(true); setError(null); setCustomer(null);
+    setName(""); setOfacResult(null); setMediaResult(null);
+    try {
+      const data = await adminFetch(`/api/admin/customer/${encodeURIComponent(q)}`, password);
+      setCustomer(data.identity);
+    } catch (err) {
+      setError(err.message || "Lookup failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runOfac() {
+    const n = name.trim();
+    if (!n) return;
+    setOfacBusy(true); setOfacError(null); setOfacResult(null);
+    try {
+      setOfacResult(await adminFetch(`/api/admin/compliance/ofac?name=${encodeURIComponent(n)}`, password));
+    } catch (err) {
+      setOfacError(err.message || "OFAC search failed.");
+    } finally {
+      setOfacBusy(false);
+    }
+  }
+
+  async function runAdverseMedia() {
+    const n = name.trim();
+    if (!n) return;
+    setMediaBusy(true); setMediaError(null); setMediaResult(null);
+    try {
+      setMediaResult(await adminFetch(`/api/admin/compliance/adverse-media?name=${encodeURIComponent(n)}`, password));
+    } catch (err) {
+      setMediaError(err.message || "Adverse media search failed.");
+    } finally {
+      setMediaBusy(false);
+    }
+  }
 
   return (
     <div>
-      <p className="lede sm">Background liquidity checks across every product, refreshed every 15 minutes — flags thin markets before customers hit them.</p>
-      {error && <div className="tiny warn" style={{ marginBottom: 8 }}>{error}</div>}
-      {!snapshot ? (
-        <p className="muted tiny">Loading…</p>
-      ) : !snapshot.generatedAt ? (
-        <p className="muted tiny">Background check hasn't completed its first cycle yet — check back shortly.</p>
-      ) : (
-        <>
-          <div className="card" style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-            <div>
-              <span className="label">Last checked</span>
-              <p className="tiny muted" style={{ margin: "2px 0 0" }}>{new Date(snapshot.generatedAt).toLocaleString()}</p>
-            </div>
-            <div style={{ textAlign: "center" }}>
-              <span className={flaggedCount > 0 ? "warn" : "gain"} style={{ fontSize: 22, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>{flaggedCount}</span>
-              <p className="tiny muted" style={{ margin: "2px 0 0" }}>of {all.length} markets flagged</p>
-            </div>
-            <button className="btn ghost" onClick={refresh}>Refresh</button>
-          </div>
+      <p className="lede sm">Select a customer, then screen a name against OFAC's sanctions lists and run an adverse-media search.</p>
+      <form onSubmit={submit} style={{ display: "flex", gap: 10, margin: "0 0 24px" }}>
+        <input
+          className="field"
+          style={{ flex: 1 }}
+          placeholder="Email or wallet address (Solana or Ethereum)"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          autoFocus
+        />
+        <button className="btn primary" type="submit" disabled={busy || !query.trim()}>
+          {busy ? "Searching…" : "Find customer"}
+        </button>
+      </form>
+      {error && <p className="warn">{error}</p>}
 
-          <div className="admin-ops-grid">
-            <Section title="Brokerage — swap impact at $1,000">
-              <FlaggedList items={snapshot.brokerage} renderMetric={(x) => `${x.impactPct?.toFixed(2)}% impact`} />
-            </Section>
-            <Section title="Perps — spread / depth near mid">
-              <FlaggedList items={snapshot.perps} renderMetric={(x) => `${x.spreadPct?.toFixed(2)}% spread · $${x.depthUsd?.toFixed(0)} depth`} />
-            </Section>
-            <Section title="Borrow — reserve utilization">
-              <FlaggedList items={snapshot.borrow} renderMetric={(x) => `${x.utilizationPct?.toFixed(1)}% utilized`} />
-            </Section>
-          </div>
+      {customer && (
+        <>
+          <IdentitySection identity={customer} />
+
+          <Section title="Screening">
+            <p className="tiny muted" style={{ marginBottom: 10 }}>
+              No legal name is stored for any customer — enter the name to screen. Neither search below makes any
+              automated decision; both return results for manual review.
+            </p>
+            <div className="borrow-field" style={{ marginBottom: 14 }}>
+              <span className="tiny muted">Full legal name</span>
+              <input className="field" placeholder="Jane Q. Customer" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+              <button className="btn ghost" disabled={!name.trim() || ofacBusy} onClick={runOfac}>
+                {ofacBusy ? "Checking…" : "Run OFAC search"}
+              </button>
+              <button className="btn ghost" disabled={!name.trim() || mediaBusy} onClick={runAdverseMedia}>
+                {mediaBusy ? "Searching…" : "Run adverse media search"}
+              </button>
+            </div>
+
+            {ofacError && <p className="warn tiny">{ofacError}</p>}
+            {ofacResult && (
+              <div style={{ marginBottom: 22 }}>
+                <p className="tiny label" style={{ marginBottom: 8 }}>
+                  OFAC result for "{ofacResult.query}"
+                  {ofacResult.dataUpdatedAt && (
+                    <span className="muted"> · Treasury list data as of {new Date(ofacResult.dataUpdatedAt).toLocaleString()}</span>
+                  )}
+                </p>
+                <OfacMatchList result={ofacResult} />
+              </div>
+            )}
+
+            {mediaError && <p className="warn tiny">{mediaError}</p>}
+            {mediaResult && (
+              <div>
+                <p className="tiny label" style={{ marginBottom: 4 }}>Adverse media search for "{mediaResult.query}"</p>
+                <p className="tiny muted" style={{ marginBottom: 8 }}>
+                  General web search for the name plus risk keywords — not a licensed adverse-media provider. Review manually.
+                </p>
+                <AdverseMediaResults result={mediaResult} />
+              </div>
+            )}
+          </Section>
+
+          <TradingHistorySection key={query} password={password} query={query} />
         </>
       )}
     </div>
@@ -793,7 +1091,7 @@ function OpsView({ password }) {
 }
 
 function AdminShell({ password, onLogout }) {
-  const [tab, setTab] = useState("customer"); // "customer" | "ops" | "liquidity"
+  const [tab, setTab] = useState("customer"); // "customer" | "ops" | "compliance"
 
   return (
     <div className="stage wide">
@@ -809,14 +1107,14 @@ function AdminShell({ password, onLogout }) {
         <button className={`admin-tab ${tab === "ops" ? "active" : ""}`} onClick={() => setTab("ops")}>
           Ops
         </button>
-        <button className={`admin-tab ${tab === "liquidity" ? "active" : ""}`} onClick={() => setTab("liquidity")}>
-          Market Liquidity
+        <button className={`admin-tab ${tab === "compliance" ? "active" : ""}`} onClick={() => setTab("compliance")}>
+          Compliance
         </button>
       </div>
 
       {tab === "customer" && <CustomerServiceView password={password} />}
       {tab === "ops" && <OpsView password={password} />}
-      {tab === "liquidity" && <MarketLiquidityView password={password} />}
+      {tab === "compliance" && <ComplianceView password={password} />}
     </div>
   );
 }

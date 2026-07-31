@@ -84,6 +84,27 @@ export class DepositOrchestrator {
     await this.store.save(next);
     return next;
   }
+
+  /**
+   * User-initiated bailout from a stuck, non-terminal deposit — e.g.
+   * completeDeposit() keeps failing with "no cash found" because the funds
+   * already left Arbitrum on an earlier attempt whose success response was
+   * lost client-side, and there's nothing left to retry. Persists as
+   * FAILED (never just dropped from local React state) because the
+   * restore-on-mount effect in DepositWizard.jsx only skips DONE/FAILED
+   * entries — leaving this any other step would just pull the same stuck
+   * record back in on the next render/reload.
+   */
+  async abandon(state, reason) {
+    const next = {
+      ...state,
+      step: "FAILED",
+      error: reason || state.legs?.hlDepositError || "Deposit cancelled",
+      updatedAt: Date.now(),
+    };
+    await this.store.save(next);
+    return next;
+  }
 }
 
 export function validateDeposit(rail, inputSol) {

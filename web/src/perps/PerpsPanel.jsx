@@ -4,6 +4,46 @@ import { tenthsBpsToPercent } from "./hl/builder.js";
 import { useBuilderApproval, usePlaceOrder, usePositions } from "./useHyperliquid.js";
 import { liquidationPrice } from "./hl/margin.js";
 import { EQUITY_DEX } from "./config.js";
+import { usd } from "../lib/api.js";
+
+/**
+ * Shared close-position button + inline error, used by both the account
+ * page's Open Positions table below and the main dashboard's Perps
+ * Positions table (App.jsx) — one place for the actual closePosition()
+ * call so the two views can't drift out of sync on how a close is built.
+ */
+export function PerpsCloseCell({ p, hl, user, tradingWallet, onClosed }) {
+  const [closing, setClosing] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const close = async () => {
+    if (!tradingWallet || !user) return;
+    setClosing(true); setErr(null);
+    try {
+      await hl.closePosition(tradingWallet, user, {
+        assetIndex: p.assetIndex,
+        isLong: p.side === "long",
+        size: p.size,
+        markPrice: p.markPx,
+        szDecimals: p.szDecimals,
+      });
+      onClosed?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Close failed");
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  return (
+    <span>
+      <button className="lvp-close-btn" disabled={closing} onClick={close}>
+        {closing ? "Closing…" : "Close"}
+      </button>
+      {err && <span className="lvp-error" style={{ display: "block", fontSize: 11, marginTop: 4 }}>{err}</span>}
+    </span>
+  );
+}
 
 /**
  * Explicit one-time transfer between dexs (e.g. crypto ↔ equities) via
@@ -326,7 +366,12 @@ export function OrderTicket({
   );
 }
 
-export function PositionsPanel({ hl, cfg, user, tradingWallet, onPositionClosed }) {
+// Table layout is the same shape as the main dashboard's Perps Positions
+// card (App.jsx) — same .positions-table markup/columns/badges, so a
+// position reads the same at a glance in both places — dressed up further
+// here with a per-side accent, bolder key numbers, and Add/Close actions,
+// since this is the dedicated account page rather than a compact summary.
+export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAddToPosition }) {
   // Crypto and equities ("xyz") are independently-margined dexs on
   // Hyperliquid — querying only the crypto dex here meant equities
   // positions never appeared in this panel at all, regardless of how long
@@ -341,20 +386,72 @@ export function PositionsPanel({ hl, cfg, user, tradingWallet, onPositionClosed 
   const accountValue = (cryptoAccount.accountValue || 0) + (equityAccount.accountValue || 0);
   const withdrawable = (cryptoAccount.withdrawable || 0) + (equityAccount.withdrawable || 0);
   return (
-    <div className="lvp-card lvp-positions-card">
-      <header className="lvp-row">
-        <h3>Open Positions</h3>
-        <span className="lvp-muted">
-          Equity ${accountValue.toFixed(2)} · Available ${withdrawable.toFixed(2)}
-        </span>
-      </header>
-      {positions.length === 0 && (
-        <p className="lvp-muted" style={{ marginTop: 8 }}>No open positions.</p>
+    <section className="card table-card card-pop">
+      <div className="card-toprow">
+        <p className="table-card-title">
+          Open Positions{positions.length > 0 && <span className="pos-count-badge">{positions.length}</span>}
+        </p>
+        <span className="tiny muted">Equity ${accountValue.toFixed(2)} · Available ${withdrawable.toFixed(2)}</span>
+      </div>
+      {positions.length === 0 ? (
+        <p className="muted" style={{ padding: "16px 0" }}>No open positions.</p>
+      ) : (
+        <div className="positions-table-wrap">
+          <table className="positions-table positions-table-lg">
+            <thead>
+              <tr>
+                <th className="pt-asset">Asset</th>
+                <th>Entry price</th>
+                <th>Size</th>
+                <th>Mark price</th>
+                <th>Liq. price</th>
+                <th>Unrealized PnL</th>
+                <th>Leverage</th>
+                <th className="pt-action"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p) => (
+                <tr key={`${p.dex}-${p.coin}`}>
+                  <td className={`pt-asset pos-accent-${p.side}`}>
+                    <span className="asset">
+                      <span className="serif pos-asset-name">{p.coin}</span>
+                      <span className="pos-side-row">
+                        <span className={`pos-side-badge ${p.side}`}>{p.side === "long" ? "Long" : "Short"}</span>
+                        <span className="tiny muted">{p.dex === "equity" ? "Equities" : "Crypto"}</span>
+                        {p.health.status !== "healthy" && (
+                          <span className={`lvp-badge ${p.health.status}`}>
+                            {p.health.status === "warning" && "Thin margin"}
+                            {p.health.status === "critical" && "Near liq."}
+                            {p.health.status === "backstop_imminent" && "Liq. imminent"}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </td>
+                  <td>${usd(p.entryPx)}</td>
+                  <td>{p.size}</td>
+                  <td className="pos-mark">${usd(p.markPx)}</td>
+                  <td className={p.health.status !== "healthy" ? `pos-liq-warn ${p.health.status}` : undefined}>
+                    {p.health.liquidationPrice != null ? `$${usd(p.health.liquidationPrice)}` : "—"}
+                  </td>
+                  <td className={`pos-pnl pos-pnl-lg ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>
+                    {p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}
+                  </td>
+                  <td><span className="pos-leverage-chip">{p.leverage}x</span></td>
+                  <td className="pt-action">
+                    <span className="pt-action-group">
+                      <button className="lvp-add-btn" onClick={() => onAddToPosition?.(p)}>Add</button>
+                      <PerpsCloseCell p={p} hl={hl} user={user} tradingWallet={tradingWallet} onClosed={onPositionClosed} />
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-      {positions.map((p) => (
-        <PositionRow key={`${p.dex}-${p.coin}`} p={p} hl={hl} cfg={cfg} user={user} tradingWallet={tradingWallet} onClosed={onPositionClosed} />
-      ))}
-    </div>
+    </section>
   );
 }
 

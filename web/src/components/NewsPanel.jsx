@@ -37,16 +37,14 @@ function SourceBadge({ source }) {
   );
 }
 
-export default function NewsPanel({ symbols }) {
+// `searchSymbol` is controlled by the parent (App.jsx) — its search input
+// lives in the dash-tabs-row above the whole dash-grid, not inside this
+// card, so this card's own top edge (and its "News Feed" title) lines up
+// exactly with the Brokerage Account card beside it rather than being
+// pushed down by a search row only this column had.
+export default function NewsPanel({ symbols, searchSymbol = null }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  // A search replaces the portfolio-driven symbol list entirely with
-  // whatever ticker was typed — /api/news already accepts any symbol, not
-  // just ones the user holds (it just falls back to the raw string as the
-  // ticker/name when the registry doesn't recognize it), so no server
-  // change is needed to look up an arbitrary ticker.
-  const [searchInput, setSearchInput] = useState("");
-  const [searchSymbol, setSearchSymbol] = useState(null);
   const symbolKey = searchSymbol ? searchSymbol : (symbols || []).join(",");
   const timerRef = useRef(null);
 
@@ -71,33 +69,13 @@ export default function NewsPanel({ symbols }) {
     return () => clearInterval(timerRef.current);
   }, [symbolKey]);
 
-  const runSearch = (e) => {
-    e.preventDefault();
-    const cleaned = searchInput.trim().replace(/^\$/, "").toUpperCase();
-    if (cleaned) setSearchSymbol(cleaned);
-  };
-  const clearSearch = () => {
-    setSearchInput("");
-    setSearchSymbol(null);
-  };
-
   return (
     <aside className="news-panel card">
-      <form className="news-search-row" onSubmit={runSearch}>
-        <input
-          className="perps-asset-search news-search-input"
-          placeholder="Search news — e.g. $TSLA"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
-        {searchSymbol && (
-          <button type="button" className="btn ghost news-search-clear" onClick={clearSearch}>Clear</button>
-        )}
-      </form>
-
-      <p className="table-card-title" style={{ marginBottom: 14 }}>
-        {searchSymbol ? `News for $${searchSymbol}` : "News Feed"}
-      </p>
+      <div className="card-toprow">
+        <p className="table-card-title">
+          {searchSymbol ? `News for $${searchSymbol}` : "News Feed"}
+        </p>
+      </div>
 
       {loading && !items.length && (
         <div className="loading-dots" style={{ marginTop: 8 }}><span /><span /><span /></div>

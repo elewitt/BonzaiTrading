@@ -15,13 +15,14 @@ import ShareModal from "./components/ShareCard.jsx";
 import DemoAnimation from "./components/DemoAnimation.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PerpsApp from "./perps/PerpsApp.jsx";
+import { PerpsCloseCell } from "./perps/PerpsPanel.jsx";
 import EquitiesMarketsApp from "./EquitiesMarketsApp.jsx";
 import PredictionMarketsApp from "./PredictionMarketsApp.jsx";
 import ReferralsApp from "./ReferralsApp.jsx";
 import BorrowApp from "./borrow/BorrowApp.jsx";
 import PositionCard from "./borrow/PositionCard.jsx";
 import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
-import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_DEPOSIT_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, setAuthTokenProvider } from "./lib/api.js";
+import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, setAuthTokenProvider } from "./lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials, hasQaBypassCredentials } from "./lib/qaBypass.js";
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -51,42 +52,6 @@ const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 // signerId is what actually registers our authorization key as an
 // authorized signer on the user's wallet.
 const BOT_SESSION_SIGNER_ID = "km6qux413cpcb5n4ug8ujqp7";
-
-// Close-position action for the dashboard's Perps "Positions" table — a
-// single grid cell, not the taller PerpsPanel.jsx PositionRow card (that's
-// for the dedicated Perps app's own layout, not this compact table row).
-function PerpsCloseCell({ p, hl, user, tradingWallet, onClosed }) {
-  const [closing, setClosing] = useState(false);
-  const [err, setErr] = useState(null);
-
-  const close = async () => {
-    if (!tradingWallet || !user) return;
-    setClosing(true); setErr(null);
-    try {
-      await hl.closePosition(tradingWallet, user, {
-        assetIndex: p.assetIndex,
-        isLong: p.side === "long",
-        size: p.size,
-        markPrice: p.markPx,
-        szDecimals: p.szDecimals,
-      });
-      onClosed?.();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Close failed");
-    } finally {
-      setClosing(false);
-    }
-  };
-
-  return (
-    <span>
-      <button className="lvp-close-btn" disabled={closing} onClick={close}>
-        {closing ? "Closing…" : "Close"}
-      </button>
-      {err && <span className="lvp-error" style={{ display: "block", fontSize: 11, marginTop: 4 }}>{err}</span>}
-    </span>
-  );
-}
 
 // Single-position sell popup for the main dashboard's brokerage Positions
 // table — mirrors EquitiesMarketsApp.jsx's BuyPopup exactly (same $/units
@@ -189,9 +154,9 @@ function LendModal({ row, reserve, wallet, signWithWallet, solBalance = 0, onClo
   const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
   const supplyApyPct = reserve ? Number(reserve.supplyApy) * 100 : 0;
   const depositValueUsd = depositAmt * (row.price || 0);
-  const depositFeeUsd = depositValueUsd * (KAMINO_DEPOSIT_FEE_BPS / 10000);
-  const netDepositValueUsd = depositValueUsd - depositFeeUsd;
-  const maxBorrowUsd = netDepositValueUsd * maxLtv;
+  // Deposits are free — the 0.10% platform fee lives on borrows instead,
+  // taken in USDC, so this is against the full deposited value.
+  const maxBorrowUsd = depositValueUsd * maxLtv;
 
   const submitDeposit = async () => {
     if (!validDeposit || !reserve) return;
@@ -239,8 +204,7 @@ function LendModal({ row, reserve, wallet, signWithWallet, solBalance = 0, onClo
 
             {depositAmt > 0 && (
               <p className="tiny muted">
-                ${depositValueUsd.toFixed(2)} in collateral value — {(KAMINO_DEPOSIT_FEE_BPS / 100).toFixed(2)}%
-                fee (${depositFeeUsd.toFixed(2)}) · ${netDepositValueUsd.toFixed(2)} net deposited —
+                ${depositValueUsd.toFixed(2)} in collateral value — no deposit fee —
                 up to ${maxBorrowUsd.toFixed(2)} borrowable
               </p>
             )}
@@ -408,6 +372,14 @@ export default function App() {
   const [investPct, setInvestPct] = useState(100);
   const [statsFlipped, setStatsFlipped] = useState(false);
   const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow"
+  const [newsSearchInput, setNewsSearchInput] = useState("");
+  const [newsSearchSymbol, setNewsSearchSymbol] = useState(null);
+  const runNewsSearch = (e) => {
+    e.preventDefault();
+    const cleaned = newsSearchInput.trim().replace(/^\$/, "").toUpperCase();
+    if (cleaned) setNewsSearchSymbol(cleaned);
+  };
+  const clearNewsSearch = () => { setNewsSearchInput(""); setNewsSearchSymbol(null); };
   const [borrowDashTabKey, setBorrowDashTabKey] = useState(null);
   const [history, setHistory] = useState([]);
   const [yieldMode, setYieldMode] = useState(() => localStorage.getItem("lv_yield_mode") === "true");
@@ -1331,19 +1303,13 @@ export default function App() {
         kaminoDepositAmount = depositAmt >= row.uiAmount ? trueUnscaledMax : (depositAmt / row.uiAmount) * trueUnscaledMax;
       }
 
-      // Platform fee taken on deposit, before it's posted as collateral —
-      // Kamino's own hosted API has no fee-passthrough, so this happens as
-      // a separate transfer inside executeKaminoAction() (lib/api.js).
-      const depositFeeUsd = depositValueUsd * (KAMINO_DEPOSIT_FEE_BPS / 10000);
-      const netDepositValueUsd = depositValueUsd - depositFeeUsd;
-
-      // Matches BorrowTicket.jsx's own scoping exactly: a fresh deposit's
-      // borrow ceiling is that deposit's NET (post-fee) value × its own
-      // max LTV, not combined with unrelated existing room — Kamino's
-      // cross-margin behavior across multiple different collateral assets
-      // in one obligation isn't confirmed safe/simple enough to blend here yet.
+      // Deposits are free — a fresh deposit's borrow ceiling is its FULL
+      // value × its own max LTV, not combined with unrelated existing room —
+      // Kamino's cross-margin behavior across multiple different collateral
+      // assets in one obligation isn't confirmed safe/simple enough to blend
+      // here yet.
       const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
-      const maxBorrowUsd = intent.action === "borrow" ? existingBorrowRoom.roomUsd : netDepositValueUsd * maxLtv;
+      const maxBorrowUsd = intent.action === "borrow" ? existingBorrowRoom.roomUsd : depositValueUsd * maxLtv;
 
       let borrowUsd = 0;
       if (intent.action !== "deposit") {
@@ -1354,11 +1320,14 @@ export default function App() {
         if (borrowUsd > maxBorrowUsd + 0.01)
           throw new Error(`That needs $${borrowUsd.toFixed(2)} of borrowing room but only $${maxBorrowUsd.toFixed(2)} is available.`);
       }
+      // 0.10% platform fee on the borrow leg only, taken in USDC.
+      const borrowFeeUsd = borrowUsd * (KAMINO_FEE_BPS / 10000);
+      const netBorrowUsd = borrowUsd - borrowFeeUsd;
 
       setBorrowProposal({
         action: intent.action, row, reserve, usdcReserveKey: usdcReserve.reserve,
-        depositAmt, depositValueUsd, depositFeeUsd, netDepositValueUsd, kaminoDepositAmount, maxLtv,
-        borrowUsd, maxBorrowUsd, summary: intent.summary,
+        depositAmt, depositValueUsd, kaminoDepositAmount, maxLtv,
+        borrowUsd, borrowFeeUsd, netBorrowUsd, maxBorrowUsd, summary: intent.summary,
       });
     } catch (e) {
       setError(e.message);
@@ -2199,48 +2168,60 @@ export default function App() {
           </section>
 
           <div className="dash-tabs-row">
-          <div className="dash-product-tabs">
-            <button className={`dash-product-tab ${dashProduct === "brokerage" ? "active" : ""}`}
-              onClick={() => setDashProduct("brokerage")}>
-              Brokerage
-            </button>
-            <button className={`dash-product-tab ${dashProduct === "perps" ? "active" : ""}`}
-              onClick={() => setDashProduct("perps")}>
-              Perpetual Futures
-            </button>
-            <button className={`dash-product-tab ${dashProduct === "borrow" ? "active" : ""}`}
-              onClick={() => setDashProduct("borrow")}>
-              Borrow / Lend
-            </button>
+          <div className="dash-tabs-left">
+            {dashProduct === "brokerage" && (
+              <div className="watch-tabs-row">
+                {(showAllWatchTabs ? watchedPortfolios : watchedPortfolios.slice(0, 4)).map((w) => (
+                  <button key={w.address} className={`watch-tab ${activeAllocTab === w.address ? "active" : ""}`}
+                    onClick={() => setActiveAllocTab(activeAllocTab === w.address ? "mine" : w.address)}>
+                    {w.label}
+                    <span className="alloc-tab-x" onClick={(e) => { e.stopPropagation(); removeWatchedPortfolio(w.address); }}>×</span>
+                  </button>
+                ))}
+                {!showAllWatchTabs && watchedPortfolios.length > 4 && (
+                  <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(true)}>
+                    +{watchedPortfolios.length - 4} more
+                  </button>
+                )}
+                {showAllWatchTabs && watchedPortfolios.length > 4 && (
+                  <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(false)}>
+                    Show less
+                  </button>
+                )}
+                <button className="watch-tab watch-tab-add" title="Watch another portfolio"
+                  onClick={() => setAddPortfolioOpen(true)}>+</button>
+              </div>
+            )}
+            <div className="dash-product-tabs">
+              <button className={`dash-product-tab ${dashProduct === "brokerage" ? "active" : ""}`}
+                onClick={() => setDashProduct("brokerage")}>
+                Brokerage
+              </button>
+              <button className={`dash-product-tab ${dashProduct === "perps" ? "active" : ""}`}
+                onClick={() => setDashProduct("perps")}>
+                Perpetual Futures
+              </button>
+              <button className={`dash-product-tab ${dashProduct === "borrow" ? "active" : ""}`}
+                onClick={() => setDashProduct("borrow")}>
+                Borrow / Lend
+              </button>
+            </div>
           </div>
+          <form className="news-search-row" onSubmit={runNewsSearch}>
+            <input className="perps-asset-search news-search-input"
+              placeholder="Search news — e.g. $TSLA"
+              value={newsSearchInput}
+              onChange={(e) => setNewsSearchInput(e.target.value)} />
+            {newsSearchSymbol && (
+              <button type="button" className="btn ghost news-search-clear" onClick={clearNewsSearch}>Clear</button>
+            )}
+          </form>
           </div>{/* dash-tabs-row */}
 
           <div className="dash-grid">
           <div className="dash-main">
 
           {dashProduct === "brokerage" && (
-          <>
-          <div className="watch-tabs-row">
-            {(showAllWatchTabs ? watchedPortfolios : watchedPortfolios.slice(0, 4)).map((w) => (
-              <button key={w.address} className={`watch-tab ${activeAllocTab === w.address ? "active" : ""}`}
-                onClick={() => setActiveAllocTab(activeAllocTab === w.address ? "mine" : w.address)}>
-                {w.label}
-                <span className="alloc-tab-x" onClick={(e) => { e.stopPropagation(); removeWatchedPortfolio(w.address); }}>×</span>
-              </button>
-            ))}
-            {!showAllWatchTabs && watchedPortfolios.length > 4 && (
-              <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(true)}>
-                +{watchedPortfolios.length - 4} more
-              </button>
-            )}
-            {showAllWatchTabs && watchedPortfolios.length > 4 && (
-              <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(false)}>
-                Show less
-              </button>
-            )}
-            <button className="watch-tab watch-tab-add" title="Watch another portfolio"
-              onClick={() => setAddPortfolioOpen(true)}>+</button>
-          </div>
           <div className="flip-scene">
             <div className={`flip-inner ${statsFlipped ? "flipped" : ""}`}>
               <div className="flip-face flip-front card card-pop">
@@ -2318,7 +2299,6 @@ export default function App() {
               </div>
             </div>
           </div>
-          </>
           )}
 
           {dashProduct === "perps" && (
@@ -2501,6 +2481,7 @@ export default function App() {
                       <th>Entry price</th>
                       <th>Size</th>
                       <th>Mark price</th>
+                      <th>Liq. price</th>
                       <th>Unrealized PnL</th>
                       <th>Leverage</th>
                       <th className="pt-action"></th>
@@ -2515,12 +2496,20 @@ export default function App() {
                             <span className="pos-side-row">
                               <span className={`pos-side-badge ${p.side}`}>{p.side === "long" ? "Long" : "Short"}</span>
                               <span className="tiny muted">{p.dex === "equity" ? "Equities" : "Crypto"}</span>
+                              {p.health.status !== "healthy" && (
+                                <span className={`lvp-badge ${p.health.status}`}>
+                                  {p.health.status === "warning" && "Thin margin"}
+                                  {p.health.status === "critical" && "Near liq."}
+                                  {p.health.status === "backstop_imminent" && "Liq. imminent"}
+                                </span>
+                              )}
                             </span>
                           </span>
                         </td>
                         <td>${usd(p.entryPx)}</td>
                         <td>{p.size}</td>
                         <td>${usd(p.markPx)}</td>
+                        <td>{p.health.liquidationPrice != null ? `$${usd(p.health.liquidationPrice)}` : "—"}</td>
                         <td className={`pos-pnl ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>{p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}</td>
                         <td><span className="pos-leverage-chip">{p.leverage}x</span></td>
                         <td className="pt-action"><PerpsCloseCell p={p} hl={hl} user={evmAddress} tradingWallet={perpsWallet} /></td>
@@ -2674,24 +2663,24 @@ export default function App() {
                 </p>
                 {borrowProposal.summary && <p className="lede sm">{borrowProposal.summary}</p>}
 
-                {(borrowProposal.action === "deposit" || borrowProposal.action === "deposit_and_borrow") && (<>
+                {(borrowProposal.action === "deposit" || borrowProposal.action === "deposit_and_borrow") && (
                   <div className="borrow-field" style={{ marginTop: 10 }}>
                     <span className="tiny muted">Deposit</span>
                     <span className="mono">
-                      {borrowProposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {borrowProposal.row.symbol} (${usd(borrowProposal.depositValueUsd)}) · max LTV {(borrowProposal.maxLtv * 100).toFixed(0)}%
+                      {borrowProposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {borrowProposal.row.symbol} (${usd(borrowProposal.depositValueUsd)}) · max LTV {(borrowProposal.maxLtv * 100).toFixed(0)}% · no deposit fee
                     </span>
                   </div>
-                  <div className="borrow-field">
-                    <span className="tiny muted">Platform fee ({(KAMINO_DEPOSIT_FEE_BPS / 100).toFixed(2)}%)</span>
-                    <span className="mono">${usd(borrowProposal.depositFeeUsd)} · ${usd(borrowProposal.netDepositValueUsd)} net deposited</span>
-                  </div>
-                </>)}
-                {(borrowProposal.action === "borrow" || borrowProposal.action === "deposit_and_borrow") && (
+                )}
+                {(borrowProposal.action === "borrow" || borrowProposal.action === "deposit_and_borrow") && (<>
                   <div className="borrow-field">
                     <span className="tiny muted">Borrow</span>
                     <span className="mono">${usd(borrowProposal.borrowUsd)} USDC (of ${usd(borrowProposal.maxBorrowUsd)} available)</span>
                   </div>
-                )}
+                  <div className="borrow-field">
+                    <span className="tiny muted">Platform fee ({(KAMINO_FEE_BPS / 100).toFixed(2)}%)</span>
+                    <span className="mono">${usd(borrowProposal.borrowFeeUsd)} · ${usd(borrowProposal.netBorrowUsd)} net received</span>
+                  </div>
+                </>)}
                 {(borrowProposal.action === "repay" || borrowProposal.action === "repay_and_withdraw") && (
                   <div className="borrow-field" style={{ marginTop: 10 }}>
                     <span className="tiny muted">Repay</span>
@@ -2722,6 +2711,7 @@ export default function App() {
                 ? portfolio.rows.map((r) => r.symbol)
                 : ["SPYx", "AAPLx", "TSLAx"]
             }
+            searchSymbol={newsSearchSymbol}
           />
           </div>{/* dash-grid */}
 

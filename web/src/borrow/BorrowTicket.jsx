@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useKaminoAction } from "./useKamino.js";
-import { KAMINO_DEPOSIT_FEE_BPS } from "../lib/api.js";
+import { KAMINO_FEE_BPS } from "../lib/api.js";
 
 // Kamino creates a new on-chain "Obligation" account the first time a wallet
 // deposits into this market, PLUS a token account for the collateral mint —
@@ -95,18 +95,19 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
   // AAPLx 40%), not a guessed constant.
   const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
   const depositValueUsd = row ? depositAmt * row.price : 0;
-  // Platform fee taken on deposit, before it's posted as collateral —
-  // Kamino's own hosted API has no fee-passthrough, so this happens as a
-  // separate transfer inside executeKaminoAction() (web/src/lib/api.js).
-  // maxBorrowUsd is against the NET (post-fee) value actually deposited.
-  const depositFeeUsd = depositValueUsd * (KAMINO_DEPOSIT_FEE_BPS / 10000);
-  const netDepositValueUsd = depositValueUsd - depositFeeUsd;
-  const maxBorrowUsd = netDepositValueUsd * maxLtv;
+  // Deposits are free — maxBorrowUsd is against the FULL deposited value,
+  // no fee reduction. The 0.10% platform fee now lives on borrows instead,
+  // taken in USDC as its own transfer inside executeKaminoAction().
+  const maxBorrowUsd = depositValueUsd * maxLtv;
   const borrowAmt = Number(borrowAmount);
   const validBorrow = borrowAmt > 0 && borrowAmt <= maxBorrowUsd;
+  const borrowFeeUsd = borrowAmt * (KAMINO_FEE_BPS / 10000);
+  const netBorrowUsd = borrowAmt - borrowFeeUsd;
 
   const quickBorrowAmt = Number(quickBorrowAmount);
   const validQuickBorrow = quickBorrowAmt > 0 && quickBorrowAmt <= existingRoom.roomUsd;
+  const quickBorrowFeeUsd = quickBorrowAmt * (KAMINO_FEE_BPS / 10000);
+  const netQuickBorrowUsd = quickBorrowAmt - quickBorrowFeeUsd;
 
   const submitDeposit = async () => {
     if (!validDeposit || !reserve) return;
@@ -185,11 +186,19 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
             <div className="borrow-input-wrap">
               <input className="field" inputMode="decimal" value={quickBorrowAmount}
                 onChange={(e) => setQuickBorrowAmount(e.target.value)} placeholder="0" />
-              <button className="btn ghost borrow-max" onClick={() => setQuickBorrowAmount(existingRoom.roomUsd.toFixed(2))}>
-                Max
-              </button>
+            </div>
+            <div className="lvp-pct-presets">
+              <button type="button" className="lvp-pct-btn" onClick={() => setQuickBorrowAmount((existingRoom.roomUsd * 0.25).toFixed(2))}>25%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setQuickBorrowAmount((existingRoom.roomUsd * 0.5).toFixed(2))}>50%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setQuickBorrowAmount(existingRoom.roomUsd.toFixed(2))}>Max</button>
             </div>
           </div>
+          {quickBorrowAmt > 0 && (
+            <p className="tiny muted">
+              {(KAMINO_FEE_BPS / 100).toFixed(2)}% platform fee (${quickBorrowFeeUsd.toFixed(2)}) ·
+              ${netQuickBorrowUsd.toFixed(2)} net received
+            </p>
+          )}
           <button className="btn primary" style={{ marginTop: 12 }} disabled={!validQuickBorrow || action.busy}
             onClick={() => void submitQuickBorrow()}>
             {action.busy ? "Waiting for signature…" : "Borrow USDC"}
@@ -263,8 +272,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
               </div>
               {depositAmt > 0 && (
                 <p className="tiny muted">
-                  ${depositValueUsd.toFixed(2)} in collateral value — {(KAMINO_DEPOSIT_FEE_BPS / 100).toFixed(2)}%
-                  fee (${depositFeeUsd.toFixed(2)}) · ${netDepositValueUsd.toFixed(2)} net deposited —
+                  ${depositValueUsd.toFixed(2)} in collateral value — no deposit fee —
                   up to ${maxBorrowUsd.toFixed(2)} borrowable
                 </p>
               )}
@@ -294,11 +302,19 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
             <div className="borrow-input-wrap">
               <input className="field" inputMode="decimal" value={borrowAmount}
                 onChange={(e) => setBorrowAmount(e.target.value)} placeholder="0" />
-              <button className="btn ghost borrow-max" onClick={() => setBorrowAmount((maxBorrowUsd * 0.5).toFixed(2))}>
-                50% of max
-              </button>
+            </div>
+            <div className="lvp-pct-presets">
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((maxBorrowUsd * 0.25).toFixed(2))}>25%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((maxBorrowUsd * 0.5).toFixed(2))}>50%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount(maxBorrowUsd.toFixed(2))}>Max</button>
             </div>
           </div>
+          {borrowAmt > 0 && (
+            <p className="tiny muted">
+              {(KAMINO_FEE_BPS / 100).toFixed(2)}% platform fee (${borrowFeeUsd.toFixed(2)}) ·
+              ${netBorrowUsd.toFixed(2)} net received
+            </p>
+          )}
           <button className="btn primary" style={{ marginTop: 12 }} disabled={!validBorrow || action.busy}
             onClick={() => void submitBorrow()}>
             {action.busy ? "Waiting for signature…" : "Borrow USDC"}

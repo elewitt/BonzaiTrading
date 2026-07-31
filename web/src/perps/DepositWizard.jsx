@@ -214,6 +214,14 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
     }
   };
 
+  // Only reachable once completeDeposit() has already failed at least once
+  // (see the hlDepositError gate below) — before that, "Complete Deposit"
+  // is the only CTA a working deposit should ever need.
+  const handleAbandon = async () => {
+    await orchestrator.abandon(state);
+    setState(null);
+  };
+
   if (state) {
     const done = state.step === "DONE";
     const failed = state.step === "FAILED";
@@ -250,6 +258,11 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
             <button className="lvp-btn primary" disabled={completing} onClick={handleComplete}>
               {completing ? "Confirming…" : "Complete Deposit"}
             </button>
+            {state.legs?.hlDepositError && (
+              <button className="lvp-btn" style={{ marginTop: 8 }} disabled={completing} onClick={handleAbandon}>
+                Start over
+              </button>
+            )}
           </>
         )}
         {done && (

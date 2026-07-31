@@ -62,7 +62,7 @@ export const api = {
   kaminoBorrow:      (body)            => post("/api/kamino/borrow", body),
   kaminoRepay:       (body)            => post("/api/kamino/repay", body),
   kaminoWithdraw:    (body)            => post("/api/kamino/withdraw", body),
-  kaminoDepositFee:  (body)            => post("/api/kamino/deposit-fee", body),
+  kaminoFee:         (body)            => post("/api/kamino/fee", body),
 };
 
 /** Send any SPL token directly to a Solana address (no swap involved). */
@@ -98,12 +98,20 @@ const KAMINO_BUILDERS = {
   repay: api.kaminoRepay, withdraw: api.kaminoWithdraw,
 };
 
-// Platform fee on Kamino collateral deposits — Kamino's own hosted
-// transaction-building API has no fee-passthrough param (confirmed
-// directly against its live OpenAPI spec: deposit/borrow/repay/withdraw
-// accept only {wallet,market,reserve,amount}), so this is taken as a
-// separate transfer to our own wallet, deposit-only per product decision.
-export const KAMINO_DEPOSIT_FEE_BPS = 10; // 0.10%
+// Platform fee on Kamino borrows — Kamino's own hosted transaction-building
+// API has no fee-passthrough param (confirmed directly against its live
+// OpenAPI spec: deposit/borrow/repay/withdraw accept only
+// {wallet,market,reserve,amount}), so this is taken as a separate USDC
+// transfer to our own wallet. Deposits are free; borrow-only per product
+// decision (moved off deposits, which were previously charged in whatever
+// stock was being deposited — USDC is simpler to account for and to spend).
+export const KAMINO_FEE_BPS = 10; // 0.10%
+
+// Well-known mainnet USDC mint — every Kamino borrow on this market pays out
+// in USDC, so unlike the old deposit fee (which had to know the deposited
+// stock's own mint) the borrow fee always transfers this one, fixed asset.
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDC_DECIMALS = 6;
 
 async function signAndSubmit(transaction, signWithWallet) {
   const tx = VersionedTransaction.deserialize(
@@ -121,44 +129,23 @@ async function signAndSubmit(transaction, signWithWallet) {
  * this app already uses to broadcast a signed transaction. No Kamino-
  * specific submit endpoint needed.
  *
- * For deposits, `mint`/`decimals` (of the collateral being deposited) let
- * this take the 0.10% platform fee FIRST, as its own signed transfer, then
- * deposit the reduced (net) amount as collateral — one shared place so
- * both callers (the manual Borrow ticket and the borrow-via-prompt flow)
- * stay consistent automatically, same reasoning as applyReferralFee()
- * being one shared function on the Jupiter side (server/src/index.js).
- * Fails closed: if the fee transfer doesn't go through, the deposit never
- * happens either — never silently skip taking the fee.
+ * Borrows carry the 0.10% platform fee, taken in USDC as its own separate
+ * transfer AFTER the borrow succeeds — unlike the old deposit-fee (which
+ * could shrink the deposit amount before sending), a borrow's proceeds
+ * don't exist until Kamino's own tx lands, so there's no way to take the
+ * fee "first" here. If the fee transfer fails, the borrow itself has
+ * already gone through (real debt, real USDC in the wallet) — surfaced as
+ * its own distinct error rather than pretending the whole thing rolled
+ * back. Deposits are free (product decision — fees moved off deposits,
+ * which used to be charged in whatever stock was being deposited, onto
+ * borrows, charged in USDC instead).
  */
-export async function executeKaminoAction(action, { wallet, reserve, amount, signWithWallet, onStatus, mint, decimals, usdValue }) {
+export async function executeKaminoAction(action, { wallet, reserve, amount, signWithWallet, onStatus, usdValue }) {
   const build = KAMINO_BUILDERS[action];
   if (!build) throw new Error(`unknown kamino action: ${action}`);
 
-  let depositAmount = amount;
-  if (action === "deposit" && mint) {
-    const feeAmount = (Number(amount) * KAMINO_DEPOSIT_FEE_BPS) / 10000;
-    const feeAtoms = Math.floor(feeAmount * 10 ** (decimals ?? 8));
-    if (feeAtoms > 0) {
-      onStatus?.("fee");
-      const { transaction: feeTx } = await api.kaminoDepositFee({ from: wallet, mint, decimals, amount: feeAtoms });
-      if (!feeTx) throw new Error("could not build deposit fee transaction");
-      const signedFeeB64 = await signAndSubmit(feeTx, signWithWallet);
-      const feeResult = await api.execute({
-        signedTransaction: signedFeeB64, swapV1: true,
-        logMeta: {
-          walletAddress: wallet, kind: "kamino_deposit_fee",
-          usdValue: usdValue != null ? (usdValue * KAMINO_DEPOSIT_FEE_BPS) / 10000 : null,
-          details: { mint, feeAtoms },
-        },
-      });
-      if (feeResult.status && feeResult.status !== "Success")
-        throw new Error(feeResult.error || `deposit fee transfer failed (${feeResult.status})`);
-      depositAmount = String(Number(amount) - feeAmount);
-    }
-  }
-
   onStatus?.("building");
-  const { transaction } = await build({ wallet, reserve, amount: depositAmount });
+  const { transaction } = await build({ wallet, reserve, amount });
   if (!transaction) throw new Error(`could not build ${action} transaction`);
 
   onStatus?.("signing");
@@ -167,11 +154,34 @@ export async function executeKaminoAction(action, { wallet, reserve, amount, sig
   onStatus?.("executing");
   const result = await api.execute({
     signedTransaction: signedB64, swapV1: true,
-    logMeta: { walletAddress: wallet, kind: `kamino_${action}`, usdValue: usdValue ?? null, details: { reserve, amount: depositAmount } },
+    logMeta: { walletAddress: wallet, kind: `kamino_${action}`, usdValue: usdValue ?? null, details: { reserve, amount } },
   });
   if (result.status && result.status !== "Success")
     throw new Error(result.error || `${action} failed (${result.status})`);
   onStatus?.("confirmed");
+
+  if (action === "borrow") {
+    const feeAmount = (Number(amount) * KAMINO_FEE_BPS) / 10000;
+    const feeAtoms = Math.floor(feeAmount * 10 ** USDC_DECIMALS);
+    if (feeAtoms > 0) {
+      onStatus?.("fee");
+      const { transaction: feeTx } = await api.kaminoFee({ from: wallet, mint: USDC_MINT, decimals: USDC_DECIMALS, amount: feeAtoms });
+      if (!feeTx) throw new Error("Borrowed successfully, but could not build the platform fee transfer. Contact support.");
+      const signedFeeB64 = await signAndSubmit(feeTx, signWithWallet);
+      const feeResult = await api.execute({
+        signedTransaction: signedFeeB64, swapV1: true,
+        logMeta: {
+          walletAddress: wallet, kind: "kamino_borrow_fee",
+          usdValue: feeAmount,
+          details: { mint: USDC_MINT, feeAtoms },
+        },
+      });
+      if (feeResult.status && feeResult.status !== "Success")
+        throw new Error(`Borrowed successfully, but the platform fee transfer failed (${feeResult.error || feeResult.status}). Contact support.`);
+      onStatus?.("confirmed");
+    }
+  }
+
   return result;
 }
 

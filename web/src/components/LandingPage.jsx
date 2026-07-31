@@ -257,6 +257,167 @@ const PRODUCT_TABS = [
   },
 ];
 
+/* ─── How Bonzai Trading Works (step flow) ───
+   Distinct from the Products tabs above (what you can do) — this walks
+   through the stack underneath it (what's actually moving your funds),
+   one layer at a time: the wallet, the assets, the protocols executing
+   trades, and the chain everything settles on. */
+// Inactive nav tabs use these — one cohesive green family (matching the
+// section's own dark-green field) rather than a different hue per step —
+// the active tab turns solid white instead (see .lp-flow-tab.active) so it
+// visually fuses with the card below it.
+const STEP_GRADIENTS = {
+  wallet: "linear-gradient(135deg, #2F6B50, #163427)",
+  assets: "linear-gradient(135deg, #4C8A69, #1F4E39)",
+  defi: "linear-gradient(135deg, #6FA98A, #2C6449)",
+  network: "linear-gradient(135deg, #9AC4A8, #3D7A5C)",
+};
+
+const HOW_IT_WORKS = [
+  {
+    key: "wallet",
+    label: "Wallet",
+    title: "One wallet, fully yours",
+    body: "Sign in with just an email — Privy creates a self-custodial embedded wallet behind the scenes, spanning Solana and Arbitrum. Bonzai Trading never holds your keys or your funds; every trade, deposit, and withdrawal is signed by a wallet only you control.",
+    points: [
+      "No seed phrases, no browser extension — just email",
+      "Self-custodial by default — we never hold your keys or funds",
+      "One wallet covers Solana and Arbitrum automatically",
+    ],
+    chips: [
+      { name: "Privy", blurb: "Embedded, self-custodial wallet infrastructure" },
+    ],
+  },
+  {
+    key: "assets",
+    label: "Assets",
+    title: "Real assets, tokenized 1:1",
+    body: "Every position you hold is backed by the real thing — tokenized equities, regulated stablecoins, and yield-bearing cash, issued by regulated partners and settled on-chain.",
+    points: [
+      "167 tokenized stocks and ETFs, issued 1:1 by Backed's xStocks",
+      "USDC and EURC — Coinbase's regulated stablecoins",
+      "USDY — Ondo Finance's yield-bearing tokenized Treasury note",
+    ],
+    chips: [
+      { name: "xStocks", blurb: "167 tokenized stocks & ETFs, by Backed" },
+      { name: "Coinbase", blurb: "USDC & EURC regulated stablecoins", color: "#0052FF" },
+      { name: "Ondo Finance", blurb: "USDY yield-bearing Treasury token" },
+    ],
+  },
+  {
+    key: "defi",
+    label: "Trading",
+    title: "Execution on real, audited protocols",
+    body: "Every trade is a real on-chain transaction, routed through established DeFi infrastructure — never an internal ledger. You hold custody at every step, from quote to settlement.",
+    points: [
+      "Jupiter — instant spot swaps between any asset, with no loss of custody",
+      "Hyperliquid — leveraged crypto and equity perpetual futures",
+      "Kamino — borrow directly against tokenized equity or crypto positions",
+      "Kalshi, via DFlow — regulated, tokenized prediction market positions",
+    ],
+    chips: [
+      { name: "Jupiter", blurb: "Instant spot swaps, no custody loss" },
+      { name: "Hyperliquid", blurb: "Crypto & equity perpetual futures" },
+      { name: "KAMINO", blurb: "Borrow against tokenized positions", caps: true },
+      { name: "Kalshi", blurb: "Regulated prediction markets", color: "#00A67E" },
+      { name: "DFlow", blurb: "Tokenization & routing layer", color: "#2D5DA8" },
+    ],
+  },
+  {
+    key: "network",
+    label: "Network",
+    title: "Settled on Solana",
+    body: "Every trade, swap, and position lives on Solana — sub-second finality and fees measured in fractions of a cent, so markets that used to take days to settle now settle before you finish reading this.",
+    points: [
+      "Sub-second transaction finality",
+      "Fees measured in fractions of a cent",
+      "Every position is a real, verifiable on-chain transaction",
+    ],
+    chips: [
+      { name: "Solana", blurb: "High-performance settlement layer", gradient: true },
+    ],
+  },
+];
+
+// Wordmark-only treatment (no icon marks) for every partner — deliberate,
+// not a placeholder: several of these (Coinbase, Kalshi, DFlow) don't have
+// a logo file in /public/logos yet, and mixing raster logos for some
+// entries with plain text for others would look unfinished. Brand color
+// (Coinbase blue, Kalshi green, etc.) carries the identity instead of an
+// icon; swap in real logo files later by rendering an <img> here instead.
+function FlowChip({ name, blurb, color, gradient, caps }) {
+  const textStyle = gradient
+    ? {
+        backgroundImage: "linear-gradient(90deg, #9945FF, #14F195)",
+        WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
+      }
+    : color
+    ? { color }
+    : undefined;
+  // Same color that colors the name also fills a small monogram badge —
+  // one consistent identity per partner instead of a plain bullet, without
+  // needing an actual logo file for the ones we don't have.
+  const badgeStyle = gradient
+    ? { backgroundImage: "linear-gradient(135deg, #9945FF, #14F195)" }
+    : { backgroundColor: color || "var(--pine)" };
+  return (
+    <div className="lp-flow-chip">
+      <span className="lp-flow-chip-badge" style={badgeStyle}>{name.trim().charAt(0).toUpperCase()}</span>
+      <span className="lp-flow-chip-body">
+        <span className={`serif lp-flow-chip-name ${caps ? "lp-flow-chip-caps" : ""}`} style={textStyle}>{name}</span>
+        <span className="tiny muted lp-flow-chip-blurb">{blurb}</span>
+      </span>
+    </div>
+  );
+}
+
+function HowItWorksSection({ onLogin }) {
+  const [step, setStep] = useState(0);
+  const active = HOW_IT_WORKS[step];
+  const last = HOW_IT_WORKS.length - 1;
+
+  return (
+    <section className="lp-section lp-flow-section">
+      <div className="lp-container">
+        <h2 className="lp-section-title lp-dark-title" style={{ textAlign: "center" }}>Tokenized Trading Simplified</h2>
+
+        <div className="lp-flow-nav" role="tablist">
+          {HOW_IT_WORKS.map((s, i) => (
+            <button key={s.key} role="tab" aria-selected={i === step}
+              className={`lp-flow-tab ${i === step ? "active" : ""}`}
+              style={i === step ? undefined : { backgroundImage: STEP_GRADIENTS[s.key] }}
+              onClick={() => setStep(i)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="lp-flow-card" key={active.key}>
+          <div className="lp-flow-panel">
+            <div className="lp-flow-text">
+              <h3 className="lp-product-title">{active.title}</h3>
+              <p className="lp-product-body">{active.body}</p>
+              <ul className="lp-product-points">
+                {active.points.map((pt) => <li key={pt}>{pt}</li>)}
+              </ul>
+            </div>
+            <div className="lp-flow-chips">
+              {active.chips.map((c) => <FlowChip key={c.name} {...c} />)}
+            </div>
+          </div>
+        </div>
+
+        <div className="lp-flow-arrows">
+          <button className="btn ghost lp-flow-arrow-btn" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>← Back</button>
+          <button className="btn ghost lp-flow-arrow-btn" onClick={() => (step === last ? onLogin() : setStep((s) => s + 1))}>
+            {step === last ? "Get started →" : "Next →"}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ─── Infrastructure ─── */
 const INFRA = [
   { name: "xStocks by Backed", logo: "/logos/xstocks.svg" },
@@ -347,6 +508,9 @@ export default function LandingPage({ onLogin }) {
           </div>
         </div>
       </section>
+
+      {/* ── How Bonzai Trading Works ── */}
+      <HowItWorksSection onLogin={onLogin} />
 
       {/* ── Infrastructure ── */}
       <section className="lp-section lp-infra-section">

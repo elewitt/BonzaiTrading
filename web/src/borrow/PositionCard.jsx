@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useKaminoAction } from "./useKamino.js";
+import { KAMINO_FEE_BPS } from "../lib/api.js";
 
 /**
  * Shows one open Kamino obligation and lets the user repay/withdraw against
@@ -12,10 +13,16 @@ import { useKaminoAction } from "./useKamino.js";
  * Kamino doesn't expose a single normalized "health factor," and its own
  * docs frame that gap (not the gap to maxLtv) as the real liquidation buffer.
  *
- * Repay and Withdraw are deliberately kept as two separate sub-tabs, never
- * shown side by side — they act on different sides of the position (debt vs
- * collateral) and cramming both into one row made it easy to fill in the
- * wrong field or miss that a full repay doesn't also return collateral.
+ * Borrow More, Repay, and Withdraw are deliberately kept as separate
+ * sub-tabs, never shown side by side — they act on different sides of the
+ * position (new debt vs paying down debt vs collateral) and cramming them
+ * into one row made it easy to fill in the wrong field or miss that a full
+ * repay doesn't also return collateral. Borrow More is the same "borrow
+ * against collateral you've already deposited, no new deposit needed"
+ * action BorrowTicket.jsx's own quick-borrow step offers — this is what
+ * lets a user come back later and pull more out of an existing position,
+ * from either the dashboard card or the Borrow product page's My Positions
+ * tab (both render this same component).
  *
  * `focusMint`: when a Kamino obligation holds more than one collateral
  * asset (e.g. SPYx and TSLAx both deposited into the same market), the
@@ -32,28 +39,43 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
   // silently disable this card's Repay/Withdraw buttons with no indication
   // why (previously they shared one instance app-wide).
   const action = useKaminoAction(wallet, signWithWallet);
-  const [section, setSection] = useState("repay"); // "repay" | "withdraw"
+  const [section, setSection] = useState("borrow"); // "borrow" | "repay" | "withdraw"
+  const [borrowAmount, setBorrowAmount] = useState("");
   const [repayAmount, setRepayAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
 
   const info = loan.loanInfo ?? loan;
   const currentLtv = Number(info.currentLtv ?? 0);
   const liquidationLtv = Number(info.liquidationLtv ?? 0);
+  const maxLtv = Number(info.maxLtv ?? 0);
   const collateralDeposits = info.collateral?.deposits ?? [];
   const debtBorrows = info.debt?.borrows ?? [];
 
   const focusedDeposit = focusMint ? collateralDeposits.find((d) => d.tokenMint === focusMint) : null;
   const otherDeposits = focusMint ? collateralDeposits.filter((d) => d.tokenMint !== focusMint) : [];
 
-  const collateralValue = focusedDeposit
-    ? Number(focusedDeposit.tokenValue ?? 0)
-    : collateralDeposits.reduce((s, d) => s + Number(d.tokenValue ?? 0), 0);
+  // Always the OBLIGATION's total, regardless of which asset tab is
+  // focused — Kamino's max LTV (and thus borrowing room) is computed
+  // against everything posted, not just the one collateral type this tab
+  // happens to be showing.
+  const collateralValueTotal = collateralDeposits.reduce((s, d) => s + Number(d.tokenValue ?? 0), 0);
+  const collateralValue = focusedDeposit ? Number(focusedDeposit.tokenValue ?? 0) : collateralValueTotal;
   const debtValue = debtBorrows.reduce((s, d) => s + Number(d.tokenValue ?? 0), 0);
 
   // How close current LTV is to the liquidation threshold, as a fraction —
   // 1.0 means "about to be liquidated," not "fully utilized."
   const proximityToLiquidation = liquidationLtv > 0 ? currentLtv / liquidationLtv : 0;
   const isRisky = proximityToLiquidation > 0.85;
+
+  // Unused borrowing room on this obligation — same computation as
+  // BorrowTicket.jsx's own existingRoom, just scoped to this one loan
+  // rather than picked out of a list of every position the user has.
+  const usdcReserve = reserves.find((r) => r.liquidityToken === "USDC") ?? null;
+  const borrowRoom = Math.max(0, collateralValueTotal * maxLtv - debtValue);
+  const borrowAmt = Number(borrowAmount);
+  const validBorrow = borrowAmt > 0 && borrowAmt <= borrowRoom;
+  const borrowFeeUsd = borrowAmt * (KAMINO_FEE_BPS / 10000);
+  const netBorrowUsd = borrowAmt - borrowFeeUsd;
 
   const primaryDebt = debtBorrows[0];
   const primaryCollateral = focusedDeposit ?? collateralDeposits[0];
@@ -96,6 +118,12 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
   // maxWithdrawableAmount string there rather than risk overshooting past
   // what's actually allowed.
   const withdrawMax = Number(withdrawDeposit?.maxWithdrawableAmount ?? 0);
+
+  const submitBorrow = async () => {
+    if (!validBorrow || !usdcReserve) return;
+    const result = await action.run("borrow", { reserve: usdcReserve.reserve, amount: borrowAmount });
+    if (result) { setBorrowAmount(""); onDone?.(); }
+  };
 
   const submitRepay = async () => {
     const reserve = reserves.find((r) => r.liquidityTokenMint === primaryDebt?.tokenMint);
@@ -145,6 +173,9 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
       </p>
 
       <div className="borrow-subtabs">
+        <button className={`borrow-subtab ${section === "borrow" ? "active" : ""}`} onClick={() => setSection("borrow")}>
+          Borrow More
+        </button>
         <button className={`borrow-subtab ${section === "repay" ? "active" : ""}`} onClick={() => setSection("repay")}>
           Repay Loan
         </button>
@@ -152,6 +183,42 @@ export default function PositionCard({ loan, reserves, wallet, signWithWallet, f
           Withdraw Collateral
         </button>
       </div>
+
+      {section === "borrow" && (
+        <div className="borrow-section-panel">
+          {borrowRoom > 0.01 ? (
+            <p className="tiny muted">
+              Up to <strong>${borrowRoom.toFixed(2)}</strong> more USDC available to borrow right now against
+              this collateral, no new deposit needed.
+            </p>
+          ) : (
+            <p className="tiny muted">
+              No additional borrowing room — you're already at this position's max LTV. Repay some of your
+              loan or deposit more collateral to free up room.
+            </p>
+          )}
+          <div className="borrow-input-wrap">
+            <input className="field" inputMode="decimal" value={borrowAmount}
+              onChange={(e) => setBorrowAmount(e.target.value)} placeholder="Borrow USDC" disabled={borrowRoom <= 0.01} />
+            <button className="btn primary" disabled={!validBorrow || action.busy} onClick={() => void submitBorrow()}>
+              {action.busy ? "Waiting for signature…" : "Borrow"}
+            </button>
+          </div>
+          {borrowRoom > 0.01 && (
+            <div className="lvp-pct-presets">
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((borrowRoom * 0.25).toFixed(2))}>25%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((borrowRoom * 0.5).toFixed(2))}>50%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount(borrowRoom.toFixed(2))}>Max</button>
+            </div>
+          )}
+          {borrowAmt > 0 && (
+            <p className="tiny muted">
+              {(KAMINO_FEE_BPS / 100).toFixed(2)}% platform fee (${borrowFeeUsd.toFixed(2)}) ·
+              ${netBorrowUsd.toFixed(2)} net received
+            </p>
+          )}
+        </div>
+      )}
 
       {section === "repay" && (
         <div className="borrow-section-panel">

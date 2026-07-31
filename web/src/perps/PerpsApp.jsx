@@ -381,6 +381,20 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   const asset = (selectedAsset?.category === assetCategory ? selectedAsset : null) ?? filteredAssets[0] ?? null;
   const markPrice = asset ? (markPrices[asset.name] ?? 0) : 0;
 
+  // "Add" on an open position (Positions tab) — rather than building a
+  // second, separately-tested order-submission path, this just hands off
+  // to the real Trade tab's own OrderTicket, preselected to the position's
+  // exact market. Looks the asset up from the real `assets` list (not
+  // built from the position's own fields) so maxLeverage/displayName are
+  // never guessed at.
+  const handleAddToPosition = useCallback((p) => {
+    const match = assets.find((a) => a.name === p.coin && a.category === (p.dex === "equity" ? "equity" : "crypto"));
+    if (!match) return;
+    setAssetCategory(match.category);
+    setSelectedAsset(match);
+    setTab("trade");
+  }, [assets]);
+
   // The order ticket's natural height (leverage slider, size input, etc.) is
   // the reference the Market panel and the chart/positions column should
   // both be capped to and scroll within — not the other way around, so a
@@ -641,9 +655,10 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
 
       {tab === "account" && (
         <div className="perps-account-layout">
-          <PositionsPanel hl={hl} cfg={DEFAULT_CONFIG} user={evmAddress}
+          <PositionsPanel hl={hl} user={evmAddress}
             tradingWallet={viemAccount}
-            onPositionClosed={() => {}} />
+            onPositionClosed={() => {}}
+            onAddToPosition={handleAddToPosition} />
         </div>
       )}
     </div>
