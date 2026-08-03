@@ -1,0 +1,26 @@
+name: Prod smoke test
+
+# Scheduled, not just on-push — the frontend (Vercel) and backend
+# (Railway) deploy independently of each other and independently of a
+# git push (e.g. a Railway env var change), so a push-triggered check
+# alone wouldn't catch every way the two can drift apart. Running this on
+# a timer catches drift regardless of what caused it.
+"on":
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "web/src/**"
+      - "scripts/smoke-test.mjs"
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/smoke-test.mjs
