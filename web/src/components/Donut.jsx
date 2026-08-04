@@ -3,8 +3,13 @@ import { usd } from "../lib/api.js";
 
 const SEG_COLORS = ["#1C4A38", "#2F6B50", "#4C8A69", "#71A987", "#9AC4A8", "#C6DCCC", "#173B2D", "#3E7A5C", "#5E9578", "#86B497"];
 const ETFS = new Set(["SPYx", "QQQx", "GLDx"]);
+// No registry available in this component (only rows/cash/total are
+// passed in) — kept as an explicit symbol list rather than threading a
+// new registry prop through all 3 call sites for what's purely a legend
+// badge label.
+const YIELD_SYMBOLS = new Set(["USDY", "KTB", "CETES", "TESOURO", "GILTS"]);
 const category = (sym) =>
-  sym === "USDY" ? "Yield" : sym === "BTC" ? "Crypto" : sym === "EURC" ? "Currency" : ETFS.has(sym) ? "ETF" : "Stock";
+  YIELD_SYMBOLS.has(sym) ? "Yield" : sym === "BTC" ? "Crypto" : sym === "EURC" ? "Currency" : ETFS.has(sym) ? "ETF" : "Stock";
 
 function fmtPrice(p) {
   if (!p) return "—";

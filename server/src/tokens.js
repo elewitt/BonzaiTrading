@@ -19,6 +19,44 @@ export const USDY = {
   mint: "A1KLoBrKBde8Ty9qtNQUtq3C2ortoC3u7twggz7sEto6", decimals: 6, category: "yield",
 };
 
+// Etherfuse Stablebonds — tokenized sovereign treasury bonds, each backed
+// 1:1 by the real underlying bond and held via regulated custodians (e.g.
+// INDEVAL for CETES — see app.etherfuse.com/legal). Verified directly
+// on-chain before pinning: real Token-2022 mints with InterestBearingConfig
+// + MetadataPointer extensions (no PermanentDelegate or TransferHook — the
+// two dangerous Token-2022 extensions that let an issuer move or intercept
+// a holder's tokens), Metaplex metadata naming Etherfuse as issuer with a
+// working app.etherfuse.com/bonds/{slug} product page, and live Jupiter
+// swap routes with real holder counts (41-4,102 each, confirmed via
+// Jupiter's own token API). Etherfuse itself is independently documented —
+// founded 2021, presented at Solana Breakpoint 2023, covered by CoinGecko/
+// CoinMarketCap/Coinbase and Solana's own official media.
+//
+// UNLIKE USDY, these carry real currency exposure on top of the sovereign
+// yield — a Tesouro's price moves with BRL, not just with interest rates —
+// so they deliberately do NOT get USDY's cash-equivalent treatment
+// anywhere (Yield Mode's auto-sweep, portfolio cash-bucketing, or the
+// "$1 per unit" withdrawal shortcut all stay USDY-only; grep each of those
+// for "USDY" before extending). `category: "yield"` here only drives
+// discoverability (the Yield filter/badge, AI-prompt awareness) — it does
+// not imply cash-equivalence.
+export const KTB = {
+  symbol: "KTB", name: "Korean Treasury Bond",
+  mint: "KTBeXe7VMPMLxBsqDQu4KA9PdSajF3Hkw1y9qRsKqfL", decimals: 6, category: "yield",
+};
+export const CETES = {
+  symbol: "CETES", name: "Mexican CETES",
+  mint: "CETES7CKqqKQizuSN6iWQwmTeFRjbJR6Vw2XRKfEDR8f", decimals: 6, category: "yield",
+};
+export const TESOURO = {
+  symbol: "TESOURO", name: "Brazilian Tesouro",
+  mint: "BRNTNaZeTJANz9PeuD8drNbBHwGgg7ZTjiQYrFgWQ48p", decimals: 6, category: "yield",
+};
+export const GILTS = {
+  symbol: "GILTS", name: "UK Gilts",
+  mint: "GiLTSeSFnNse7xQVYeKdMyckGw66AoRmyggGg1NNd4yr", decimals: 6, category: "yield",
+};
+
 // Coinbase Wrapped BTC — verified against Jupiter's token list before pinning
 // (isVerified: true, "verified" tag, ~$21M liquidity, 69k+ holders, tracked
 // since Oct 2024). Displayed simply as "Bitcoin" / BTC in the app.
@@ -210,17 +248,19 @@ const XSTOCKS_RAW = {
 // Build registry synchronously — no network call needed.
 let registry = null;
 
+const NON_XSTOCK_SYMBOLS = ["USDC", "USDY", "KTB", "CETES", "TESOURO", "GILTS", "BTC", "EURC"];
+
 export async function getRegistry() {
   if (registry) return registry;
-  const bySymbol = { USDC, USDY, BTC, EURC };
+  const bySymbol = { USDC, USDY, KTB, CETES, TESOURO, GILTS, BTC, EURC };
   for (const [symbol, { name, mint }] of Object.entries(XSTOCKS_RAW)) {
     bySymbol[symbol] = { symbol, name, mint, decimals: 8 };
   }
   const byMint = {};
   for (const t of Object.values(bySymbol)) byMint[t.mint] = t;
   registry = { bySymbol, byMint };
-  const xCount = Object.keys(bySymbol).filter((s) => !["USDC", "USDY", "BTC", "EURC"].includes(s)).length;
-  console.log(`[tokens] registry loaded: ${xCount} xStocks + USDY + BTC + EURC + USDC`);
+  const xCount = Object.keys(bySymbol).filter((s) => !NON_XSTOCK_SYMBOLS.includes(s)).length;
+  console.log(`[tokens] registry loaded: ${xCount} xStocks + USDY + 4 Etherfuse Stablebonds + BTC + EURC + USDC`);
   return registry;
 }
 
@@ -228,4 +268,4 @@ function jupHeaders() {
   return JUP_KEY ? { "x-api-key": JUP_KEY } : {};
 }
 
-export { JUP_BASE, jupHeaders };
+export { JUP_BASE, jupHeaders, NON_XSTOCK_SYMBOLS };

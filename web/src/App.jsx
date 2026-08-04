@@ -1686,7 +1686,7 @@ export default function App() {
   // "Energy Select Sector SPDR ETF", etc.), so this self-maintains as new
   // xStocks are added instead of silently misclassifying them as "Stock".
   const assetCategory = (sym) =>
-    sym === "USDY" ? "Yield" : sym === "BTC" ? "Crypto" : sym === "EURC" ? "Currency"
+    registry?.[sym]?.category === "yield" ? "Yield" : sym === "BTC" ? "Crypto" : sym === "EURC" ? "Currency"
     : registry?.[sym]?.name?.includes("ETF") ? "ETF" : "Stock";
   const fmtQty = (n) => {
     const v = n || 0;

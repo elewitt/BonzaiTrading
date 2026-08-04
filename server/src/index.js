@@ -9,7 +9,7 @@ import {
   Connection, PublicKey, Keypair, VersionedTransaction,
   SystemProgram, Transaction, TransactionInstruction, TransactionMessage,
 } from "@solana/web3.js";
-import { getRegistry, USDC, USDY, JUP_BASE, jupHeaders } from "./tokens.js";
+import { getRegistry, USDC, USDY, JUP_BASE, jupHeaders, NON_XSTOCK_SYMBOLS } from "./tokens.js";
 import { generateLinkCode, mountTelegramRoutes } from "./telegram.js";
 import { getMarketInfo, getMarketChart } from "./marketdata.js";
 import { ensureArbitrumGas, depositToHyperliquid, getArbitrumSponsorStatus } from "./arbitrumSponsor.js";
@@ -504,7 +504,7 @@ async function parsePromptToAllocations({ prompt, current, total }) {
     if (!prompt) throw new Error("prompt required");
     const { bySymbol } = await getRegistry();
     const xStocks = Object.values(bySymbol)
-      .filter((t) => !["USDC", "USDY", "BTC", "EURC"].includes(t.symbol))
+      .filter((t) => !NON_XSTOCK_SYMBOLS.includes(t.symbol))
       .map((t) => `${t.symbol} — ${t.name}`)
       .join("\n");
     const minPct = total > 0 ? Math.ceil((0.25 / total) * 100 * 2) : 2; // minimum % that produces >$0.25 trade (2× buffer)
@@ -517,8 +517,14 @@ async function parsePromptToAllocations({ prompt, current, total }) {
 Equities / ETFs (symbol — name):
 ${xStocks}
 
-Yield / Cash-equivalent:
+Yield / Cash-equivalent (USD-denominated — no currency risk):
 USDY — US Dollar Yield (Ondo Finance · tokenized T-bills · ~5% APY)
+
+Foreign Sovereign Bonds (yield-bearing, but priced in and exposed to the named foreign currency — NOT cash-equivalent, only use when the user names that country/currency specifically):
+KTB — Korean Treasury Bond (Etherfuse · KRW exposure · ~2.5% APY)
+CETES — Mexican CETES (Etherfuse · MXN exposure · ~5.5% APY)
+TESOURO — Brazilian Tesouro (Etherfuse · BRL exposure · ~12.8% APY)
+GILTS — UK Gilts (Etherfuse · GBP exposure · ~3.2% APY)
 
 Crypto:
 BTC — Bitcoin (Coinbase Wrapped BTC on Solana)
@@ -536,7 +542,7 @@ Rules:
 - NEVER include USDC in allocations. If the user asks to hold cash/USDC, return empty allocations.
 - Honor explicit weights the user gives; otherwise equal-weight the requested positions.
 - Map company/index names to symbols (Apple→AAPLx, S&P 500→SPYx, Nasdaq→QQQx, etc). Use only listed symbols.
-- Map yield/treasury/T-bill/cash-yield requests to USDY.
+- Map generic yield/treasury/T-bill/cash-yield requests (no country named) to USDY — it's the safe, USD-denominated default. Only map to a Foreign Sovereign Bond (KTB/CETES/TESOURO/GILTS) when the user names that specific country or currency (e.g. "Korean bonds"→KTB, "Mexican treasuries"→CETES, "Brazilian debt"→TESOURO, "UK gilts"→GILTS) — these carry real FX exposure the user should be explicitly opting into, not a substitute for a generic yield request.
 - Map bitcoin/BTC requests to BTC.
 - Map euro/EUR/EURC requests to EURC.
 - If something requested isn't available, leave it out and say so in "summary".
@@ -1556,7 +1562,7 @@ app.post("/api/ask", requireAuth, parseLimiter, async (req, res) => {
 
     const { bySymbol } = await getRegistry();
     const symbolList = Object.values(bySymbol)
-      .filter((t) => t.symbol !== "USDC" && t.symbol !== "USDY")
+      .filter((t) => t.symbol !== "USDC" && t.category !== "yield")
       .map((t) => `${t.symbol} (${t.name})`)
       .join(", ");
 
@@ -1615,7 +1621,7 @@ If relevant, mention specific available symbols the user could trade — but alw
     if (!finalText) throw new Error("no response from Claude");
 
     // Extract any xStock symbols mentioned in the answer
-    const xSymbols = Object.keys(bySymbol).filter((s) => s !== "USDC" && s !== "USDY");
+    const xSymbols = Object.keys(bySymbol).filter((s) => s !== "USDC" && bySymbol[s].category !== "yield");
     const mentionedSymbols = xSymbols.filter((sym) => new RegExp(`\\b${sym}\\b`).test(finalText));
 
     // Deduplicate sources

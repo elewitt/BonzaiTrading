@@ -21,8 +21,13 @@ function underlyingTicker(symbol) {
   return symbol.replace(/x$/, "");
 }
 
+// Etherfuse's Stablebond product-page slugs — confirmed live (app.etherfuse.
+// com/bonds/{slug} returns 200) for each of the 4 sovereign bonds, not
+// guessed. USDY has no equivalent listed-instrument page of its own.
+const ETHERFUSE_BOND_SLUGS = { KTB: "ktb", CETES: "cetes", TESOURO: "tesouro", GILTS: "gilts" };
+
 function categoryOf(symbol, registry) {
-  if (symbol === "USDY") return "Yield";
+  if (registry[symbol]?.category === "yield") return "Yield";
   if (symbol === "BTC") return "Crypto";
   if (symbol === "EURC") return "Currency";
   return registry[symbol]?.name?.includes("ETF") ? "ETF" : "Stock";
@@ -31,9 +36,11 @@ function categoryOf(symbol, registry) {
 // Where "clicking the tile" should send someone — a real per-asset quote
 // page where one exists, never a guessed/invented URL. USDY has no
 // external security to point at (an on-chain yield token, not a listed
-// instrument), so it's shown but not clickable.
+// instrument), so it's shown but not clickable. The 4 Etherfuse bonds DO
+// have a real product page each (see ETHERFUSE_BOND_SLUGS above).
 function externalUrl(symbol, category) {
   if (symbol === "USDY") return null;
+  if (ETHERFUSE_BOND_SLUGS[symbol]) return `https://app.etherfuse.com/bonds/${ETHERFUSE_BOND_SLUGS[symbol]}`;
   if (symbol === "BTC") return coingeckoUrl("BTC");
   if (symbol === "EURC") return "https://finance.yahoo.com/quote/EURUSD=X";
   return yahooFinanceUrl(underlyingTicker(symbol));
@@ -43,7 +50,11 @@ const CATEGORIES = ["All", "Stock", "ETF", "Crypto", "Currency", "Yield"];
 
 // Assets you can't actually buy through the brokerage's USDC→token swap
 // path — USDC itself (already excluded above) and USDY, which is acquired
-// via yield-mode conversion, not a direct swap route.
+// via yield-mode conversion, not a direct swap route. The 4 Etherfuse
+// bonds are deliberately NOT in this set — unlike USDY they have real,
+// confirmed Jupiter liquidity (verified directly against live quotes
+// before adding them) and are meant to be bought like any other asset,
+// not funneled through Yield Mode's automatic USDC<->cash conversion.
 const NOT_DIRECTLY_BUYABLE = new Set(["USDY"]);
 
 function BuyPopup({ row, price, availableCash, flagged, onClose, onConfirm }) {
