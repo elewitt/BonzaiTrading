@@ -105,13 +105,18 @@ const KAMINO_BUILDERS = {
 // transfer to our own wallet. Deposits are free; borrow-only per product
 // decision (moved off deposits, which were previously charged in whatever
 // stock was being deposited — USDC is simpler to account for and to spend).
+//
+// This is display-only now — e.g. BorrowTicket.jsx's live "$X fee" preview
+// while a user is still typing an amount, before anything has been
+// submitted. It is NOT what the actual fee charged is computed from
+// anymore: an earlier version had the amount/mint for the real fee
+// transfer come straight from the client too, which was a real, live
+// fee-bypass (call /api/kamino/fee with amount:1 and pay basically
+// nothing, regardless of what was actually borrowed — nothing tied that
+// call to a specific borrow at all). The server now computes and tracks
+// the real obligation itself at borrow time; see server/src/db.js's
+// kamino_fee_obligations table and /api/kamino/fee's own comment.
 export const KAMINO_FEE_BPS = 10; // 0.10%
-
-// Well-known mainnet USDC mint — every Kamino borrow on this market pays out
-// in USDC, so unlike the old deposit fee (which had to know the deposited
-// stock's own mint) the borrow fee always transfers this one, fixed asset.
-const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const USDC_DECIMALS = 6;
 
 async function signAndSubmit(transaction, signWithWallet) {
   const tx = VersionedTransaction.deserialize(
@@ -139,17 +144,24 @@ async function signAndSubmit(transaction, signWithWallet) {
  * back. Deposits are free (product decision — fees moved off deposits,
  * which used to be charged in whatever stock was being deposited, onto
  * borrows, charged in USDC instead).
+ *
+ * The fee amount/mint are never computed or sent by this client — the
+ * server records the real obligation itself at borrow time (from the same
+ * `amount` this function passes to build the borrow tx) and /api/kamino/fee
+ * builds the transfer from THAT, not from anything passed here. This
+ * function just follows what the server says is owed (`built.feeAtoms`)
+ * rather than deciding it locally.
  */
 export async function executeKaminoAction(action, { wallet, reserve, amount, signWithWallet, onStatus, usdValue }) {
   const build = KAMINO_BUILDERS[action];
   if (!build) throw new Error(`unknown kamino action: ${action}`);
 
   onStatus?.("building");
-  const { transaction } = await build({ wallet, reserve, amount });
-  if (!transaction) throw new Error(`could not build ${action} transaction`);
+  const built = await build({ wallet, reserve, amount });
+  if (!built.transaction) throw new Error(`could not build ${action} transaction`);
 
   onStatus?.("signing");
-  const signedB64 = await signAndSubmit(transaction, signWithWallet);
+  const signedB64 = await signAndSubmit(built.transaction, signWithWallet);
 
   onStatus?.("executing");
   const result = await api.execute({
@@ -160,26 +172,22 @@ export async function executeKaminoAction(action, { wallet, reserve, amount, sig
     throw new Error(result.error || `${action} failed (${result.status})`);
   onStatus?.("confirmed");
 
-  if (action === "borrow") {
-    const feeAmount = (Number(amount) * KAMINO_FEE_BPS) / 10000;
-    const feeAtoms = Math.floor(feeAmount * 10 ** USDC_DECIMALS);
-    if (feeAtoms > 0) {
-      onStatus?.("fee");
-      const { transaction: feeTx } = await api.kaminoFee({ from: wallet, mint: USDC_MINT, decimals: USDC_DECIMALS, amount: feeAtoms });
-      if (!feeTx) throw new Error("Borrowed successfully, but could not build the platform fee transfer. Contact support.");
-      const signedFeeB64 = await signAndSubmit(feeTx, signWithWallet);
-      const feeResult = await api.execute({
-        signedTransaction: signedFeeB64, swapV1: true,
-        logMeta: {
-          walletAddress: wallet, kind: "kamino_borrow_fee",
-          usdValue: feeAmount,
-          details: { mint: USDC_MINT, feeAtoms },
-        },
-      });
-      if (feeResult.status && feeResult.status !== "Success")
-        throw new Error(`Borrowed successfully, but the platform fee transfer failed (${feeResult.error || feeResult.status}). Contact support.`);
-      onStatus?.("confirmed");
-    }
+  if (action === "borrow" && built.feeAtoms > 0) {
+    onStatus?.("fee");
+    const { transaction: feeTx, obligationId, feeAtoms } = await api.kaminoFee({ from: wallet });
+    if (!feeTx) throw new Error("Borrowed successfully, but could not build the platform fee transfer. Contact support.");
+    const signedFeeB64 = await signAndSubmit(feeTx, signWithWallet);
+    const feeResult = await api.execute({
+      signedTransaction: signedFeeB64, swapV1: true,
+      logMeta: {
+        walletAddress: wallet, kind: "kamino_borrow_fee",
+        usdValue: feeAtoms / 10 ** 6,
+        details: { obligationId },
+      },
+    });
+    if (feeResult.status && feeResult.status !== "Success")
+      throw new Error(`Borrowed successfully, but the platform fee transfer failed (${feeResult.error || feeResult.status}). Contact support.`);
+    onStatus?.("confirmed");
   }
 
   return result;

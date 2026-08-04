@@ -53,6 +53,20 @@ export async function checkAndRelayCctpDeposit(solanaTxHash) {
     relayedByTxHash.set(solanaTxHash, { arbTxHash: hash, at: Date.now() });
     return { status: "relayed", arbTxHash: hash };
   } catch (e) {
+    // MessageTransmitterV2's own nonce check reverts with this exact reason
+    // when the message was already successfully relayed by an earlier
+    // attempt — most commonly because a server restart cleared the
+    // in-memory relayedByTxHash cache after a real relay had already gone
+    // through. Confirmed against a real case where this kept reverting on
+    // every single poll indefinitely (never becoming "relayed" from this
+    // server's point of view) since a plain revert was always treated as
+    // "not yet relayed, retry later" below. No real arbTxHash to record
+    // here — this call never succeeded, an earlier one already did — but
+    // caching it as relayed still stops the pointless repeat attempts.
+    if (/nonce already used/i.test(e.message || "")) {
+      relayedByTxHash.set(solanaTxHash, { arbTxHash: null, at: Date.now() });
+      return { status: "relayed", arbTxHash: null };
+    }
     console.error(`[cctp] relay failed for ${solanaTxHash}:`, e.message);
     // Attested but not yet relayed — client keeps polling and this will
     // retry on the next call. Distinct from "pending" so the UI can show
@@ -92,6 +106,21 @@ export async function checkAndRelayCctpWithdraw(arbTxHash, solanaRecipient) {
     relayedByArbTxHash.set(arbTxHash, { solanaTxSig, at: Date.now() });
     return { status: "relayed", solanaTxSig };
   } catch (e) {
+    // Solana's equivalent of Arbitrum's "Nonce already used" (see the
+    // matching guard in checkAndRelayCctpDeposit above) — the CCTP
+    // used_nonce PDA this relay tries to Allocate already exists because
+    // an earlier attempt already succeeded, most commonly because a server
+    // restart cleared the in-memory relayedByArbTxHash cache after a real
+    // relay had already gone through. Confirmed against a real withdrawal
+    // stuck retrying this exact failure every 5s poll, indefinitely, since
+    // a plain error was always treated as "not yet relayed, retry later"
+    // below. No real solanaTxSig to record here — this call never
+    // succeeded, an earlier one already did — but caching it as relayed
+    // still stops the pointless repeat attempts.
+    if (/already in use/i.test(e.message || "")) {
+      relayedByArbTxHash.set(arbTxHash, { solanaTxSig: null, at: Date.now() });
+      return { status: "relayed", solanaTxSig: null };
+    }
     console.error(`[cctp] withdraw relay failed for ${arbTxHash}:`, e.message);
     return { status: "attested", error: e.message };
   }

@@ -21,6 +21,7 @@ import {
   getCustomerStatus, getCustomerStatusDetail, setCustomerStatus,
   getOrCreateReferralCode, findReferralCodeOwner, attributeReferral,
   getReferralsFor, getEquitiesStatsForWallet, getKaminoFeeStatsForWallet, getKaminoFeeTotals,
+  createKaminoFeeObligation, getUnpaidKaminoFeeObligation, markKaminoFeeObligationPaid,
 } from "./db.js";
 import { getPerpsPositions } from "./hyperliquid.js";
 import { sendEmail } from "./email.js";
@@ -28,8 +29,9 @@ import {
   ensureReferralAccount, ensureTokenAccount, claimAllFees,
   referralAccountPubkey, referralAccountExists, getPendingBalance,
 } from "./referral.js";
-import { getBuilderFeeStatus, claimBuilderRewards, withdrawFromSponsor, getUserPerpsStats } from "./hlBuilder.js";
+import { getBuilderFeeStatus, claimBuilderRewards, withdrawFromSponsor, getUserPerpsStats, getUserPerpsFills } from "./hlBuilder.js";
 import { getMarketHealthSnapshot, startMarketHealthMonitor } from "./marketHealth.js";
+import { searchOfac, getOfacListStatus } from "./ofacScreening.js";
 import { getPredictionMarketsSnapshot, startPredictionMarketsMonitor } from "./predictionMarkets.js";
 
 // A real stuck deposit had 0.00002 ETH and failed to cover the
@@ -116,6 +118,18 @@ const parseLimiter = rateLimit({
 const kaminoLimiter = rateLimit({
   windowMs: 60_000,
   max: Number(process.env.RATE_LIMIT_KAMINO || 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateKey,
+  skip: skipForQaBypass,
+});
+// Tighter than the other limiters above — a legitimate user needs this once
+// per deposit, not repeatedly, and it directly spends sponsor SOL (see
+// /api/perps/bridge/tx's own comment for the fuller story on why this
+// route in particular needed both auth and a limiter it didn't have before).
+const bridgeGasLimiter = rateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.RATE_LIMIT_BRIDGE_GAS || 10),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateKey,
@@ -1102,6 +1116,13 @@ app.post("/api/execute", requireAuth, requireAllowedGeo, requireActiveAccount, o
         signature: result?.signature,
         details: logMeta.details,
       });
+      // Reached only after executeSignedOrder has already confirmed
+      // success above (a throw would've hit the catch block instead) —
+      // never speculative. This is what clears the borrow-blocking check
+      // in the /api/kamino/borrow loop above.
+      if (logMeta.kind === "kamino_borrow_fee" && logMeta.details?.obligationId) {
+        markKaminoFeeObligationPaid(logMeta.details.obligationId, result?.signature);
+      }
     }
     res.json(result);
   } catch (e) {
@@ -1215,21 +1236,35 @@ app.post("/api/withdraw", requireAuth, requireAllowedGeo, requireActiveAccount, 
 });
 
 /**
- * Kamino collateral deposit fee (0.10%) — builds a transfer of the fee
- * amount straight to our own wallet, entirely separate from Kamino's own
- * protocol/referrer mechanics (their hosted transaction-building API has
- * no fee-passthrough param — confirmed against its live OpenAPI spec).
- * `to` is hardcoded to our own sponsor wallet here, never taken from the
- * client, same reasoning as buildOrder() always hardcoding
- * referralAccountPubkey() rather than trusting a client-supplied fee
- * destination.
+ * Kamino borrow fee (0.10%) — builds a transfer of the fee amount straight
+ * to our own wallet, entirely separate from Kamino's own protocol/referrer
+ * mechanics (their hosted transaction-building API has no fee-passthrough
+ * param — confirmed against its live OpenAPI spec). `to` is hardcoded to
+ * our own sponsor wallet, never taken from the client, same reasoning as
+ * buildOrder() always hardcoding referralAccountPubkey() rather than
+ * trusting a client-supplied fee destination.
+ *
+ * `amount`/`mint` are NOT taken from the client (a prior version trusted
+ * them directly — a real, live fee-bypass: a client could call this with
+ * amount:1 and pay essentially nothing regardless of what was actually
+ * borrowed, since nothing tied this call to a specific borrow at all).
+ * The only thing trusted here is `from` — the fee amount always comes from
+ * the wallet's own pending obligation row, written server-side at borrow
+ * time in the SAME amount used to build that borrow's transaction (see the
+ * kamino action loop below), so it can't be under-reported.
  */
-app.post("/api/kamino/deposit-fee", requireAuth, requireAllowedGeo, requireActiveAccount, orderLimiter, async (req, res) => {
+app.post("/api/kamino/fee", requireAuth, requireAllowedGeo, requireActiveAccount, orderLimiter, async (req, res) => {
   try {
     if (!sponsor) return res.status(503).json({ error: "fee collection not configured" });
-    const { from, mint, decimals, amount } = req.body || {};
-    const { transaction } = await buildTransferTx({ from, to: sponsor.publicKey.toBase58(), amount, mint, decimals });
-    res.json({ transaction });
+    const { from } = req.body || {};
+    if (!from) return res.status(400).json({ error: "from required" });
+    const obligation = await getUnpaidKaminoFeeObligation(from);
+    if (!obligation) return res.status(400).json({ error: "no outstanding platform fee for this wallet" });
+    const { transaction } = await buildTransferTx({
+      from, to: sponsor.publicKey.toBase58(),
+      amount: obligation.fee_atoms, mint: USDC.mint, decimals: USDC.decimals,
+    });
+    res.json({ transaction, obligationId: obligation.id, feeAtoms: Number(obligation.fee_atoms), amountUsd: Number(obligation.amount_usd) });
   } catch (e) {
     const status = e instanceof OrderError ? e.status : 400;
     res.status(status).json({ error: String(e.message || e) });
@@ -1340,12 +1375,53 @@ async function ensureKaminoGas(action, wallet, reserve) {
   }
 }
 
+// Deposits are free; only borrows carry a platform fee (see
+// /api/kamino/fee's own comment for why it's a separate transfer rather
+// than bundled into the same tx). This is the authoritative copy — the
+// one in web/src/lib/api.js is display-only (a live "$X fee" preview
+// before a user submits anything) and isn't what any actual fee transfer
+// is computed from anymore. Also used below by /api/referrals/dashboard
+// to back out an approximate "borrow volume" figure from realized fees.
+const KAMINO_FEE_BPS = 10; // 0.10%
+
 for (const action of ["deposit", "borrow", "repay", "withdraw"]) {
   app.post(`/api/kamino/${action}`, requireAuth, requireAllowedGeo, requireActiveAccount, kaminoLimiter, async (req, res) => {
     try {
       const { wallet, reserve, amount } = req.body || {};
+
+      // A wallet with any unpaid borrow-fee obligation can't borrow again
+      // until it's settled — closes the fee-bypass this loop used to have
+      // (nothing previously stopped a borrow from happening without the
+      // separate /api/kamino/fee call that was supposed to follow it; see
+      // /api/kamino/fee's comment for the full story). One free-and-clear
+      // borrow can still complete before its own fee is paid (the fee is
+      // necessarily charged AFTER — see executeKaminoAction's comment on
+      // why proceeds don't exist until the borrow itself lands), but a
+      // SECOND borrow is blocked until the first one's fee obligation is
+      // settled, so this can't be repeated for free.
+      if (action === "borrow") {
+        const pending = await getUnpaidKaminoFeeObligation(wallet);
+        if (pending) {
+          return res.status(402).json({
+            error: `Settle the outstanding $${(Number(pending.fee_atoms) / 10 ** USDC.decimals).toFixed(2)} platform fee on your last borrow before borrowing again.`,
+            obligationId: pending.id,
+          });
+        }
+      }
+
       await ensureKaminoGas(action, wallet, reserve);
-      res.json(await buildKlendTx(action, { wallet, reserve, amount }));
+      const built = await buildKlendTx(action, { wallet, reserve, amount });
+
+      if (action === "borrow") {
+        const feeAtoms = Math.floor(Number(amount) * (KAMINO_FEE_BPS / 10000) * 10 ** USDC.decimals);
+        if (feeAtoms > 0) {
+          await createKaminoFeeObligation({ walletAddress: wallet, amountUsd: amount, feeAtoms });
+          built.feeAtoms = feeAtoms;
+          built.amountUsd = Number(amount);
+        }
+      }
+
+      res.json(built);
     } catch (e) {
       res.status(e instanceof KaminoError ? e.status : 502).json({ error: String(e.message || e) });
     }
@@ -1449,6 +1525,25 @@ async function executeWebSearch(query) {
     return { text, sources };
   } catch {
     return { text: "Search error.", sources: [] };
+  }
+}
+
+// Structured-results sibling of executeWebSearch — used by the admin
+// adverse-media search, which needs individual title/url/description
+// entries to render as a list, not a single summarized text blob.
+async function braveSearchRaw(query, count = 8) {
+  if (!BRAVE_KEY) return { results: [], error: "Brave Search API not configured" };
+  try {
+    const r = await fetch(
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`,
+      { headers: { "X-Subscription-Token": BRAVE_KEY, "Accept": "application/json" } }
+    );
+    if (!r.ok) return { results: [], error: `Brave search failed (HTTP ${r.status})` };
+    const data = await r.json();
+    const results = (data.web?.results || []).map(({ title, url, description }) => ({ title, url, description: description || "" }));
+    return { results };
+  } catch (e) {
+    return { results: [], error: e.message };
   }
 }
 
@@ -1582,7 +1677,19 @@ app.get("/api/perps/bridge/quote", async (req, res) => {
   }
 });
 
-app.get("/api/perps/bridge/tx", async (req, res) => {
+// Unlike every other sponsor-touching route in this file (ensureKaminoGas,
+// arbitrum-gas, solana-gas — see their own comments), this one had NO proof
+// requirement at all before topping an address up: no auth, no rate limit,
+// no check that solanaSender held anything or had done anything real. A
+// script generating free throwaway keypairs could drain the whole daily
+// sponsor SOL budget in seconds AND deny it to every real user for the
+// rest of the day. There's no on-chain "already did something real" signal
+// available here the way there is for the other routes (a bridge is the
+// FIRST action for this address, nothing to check yet) — requiring
+// solanaSender to be the authenticated caller's own linked wallet is the
+// equivalent-strength substitute: an attacker now needs a distinct real
+// Privy session per address, not just an unlimited supply of free keypairs.
+app.get("/api/perps/bridge/tx", requireAuth, requireAllowedGeo, requireActiveAccount, bridgeGasLimiter, async (req, res) => {
   try {
     const { solAmount, evmRecipient, srcAsset, solanaSender } = req.query;
     if (!solAmount || !evmRecipient || !solanaSender)
@@ -1598,6 +1705,13 @@ app.get("/api/perps/bridge/tx", async (req, res) => {
     // ~0.002 SOL a single ATA would need. Reserve 0.025 SOL for margin.
     // Top up the same way /api/order does for xStock sells, reusing the
     // same sponsor budget.
+    if (sponsor && privyClient) {
+      const user = await privyClient.getUserById(req.privyUserId).catch(() => null);
+      const ownSolanaAddress = user?.linkedAccounts.find((a) => a.type === "wallet" && a.chainType === "solana")?.address;
+      if (!ownSolanaAddress || ownSolanaAddress !== solanaSender) {
+        return res.status(403).json({ error: "solanaSender must be your own wallet" });
+      }
+    }
     if (sponsor) {
       const PERPS_MIN_SOL = 25_000_000; // 0.025 SOL — covers multiple account creations + fees, with margin
       const senderPubkey = new PublicKey(solanaSender);
@@ -1962,12 +2076,6 @@ app.post("/api/referrals/attribute", requireAuth, async (req, res) => {
   }
 });
 
-// Kept in sync with KAMINO_DEPOSIT_FEE_BPS in web/src/lib/api.js — used
-// here only to back out an approximate "deposit volume" figure from the
-// realized fee total for display; the fee itself is computed and charged
-// client-side, this constant isn't used for any money movement here.
-const KAMINO_DEPOSIT_FEE_BPS = 10;
-
 app.get("/api/referrals/dashboard", requireAuth, async (req, res) => {
   try {
     const code = await getOrCreateReferralCode(req.privyUserId);
@@ -1981,7 +2089,7 @@ app.get("/api/referrals/dashboard", requireAuth, async (req, res) => {
         r.referred_evm_address
           ? getUserPerpsStats(r.referred_evm_address, sinceMs).catch(() => ({ volume: 0, fees: 0 }))
           : Promise.resolve({ volume: 0, fees: 0 }),
-        getKaminoFeeStatsForWallet(r.referred_wallet_address, sinceIso, KAMINO_DEPOSIT_FEE_BPS),
+        getKaminoFeeStatsForWallet(r.referred_wallet_address, sinceIso, KAMINO_FEE_BPS),
       ]);
       return {
         walletAddress: r.referred_wallet_address,
@@ -2068,6 +2176,71 @@ app.get("/api/admin/customer/:query", requireAdmin, async (req, res) => {
     ]);
 
     res.json({ identity: { email, privyUserId, solanaAddress, evmAddress }, holdings, kaminoLoans, perps, activity, status });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Admin / ops: customer trading history (Compliance tab) —————
+ * Separate from /api/admin/customer/:query above (identity + current
+ * snapshot) — this pulls in a Hyperliquid fills fetch plus mint/reserve
+ * symbol resolution, which not every Compliance lookup needs, so it's its
+ * own on-demand call rather than bundled into every customer lookup.
+ * Merges brokerage swaps + Kamino borrow/lend activity (activity_log, same
+ * source ActivitySection/the referral dashboard already read from) with
+ * live Hyperliquid perps fills into one chronological list — the same
+ * merge shape as the (removed) community feed used to build, just scoped
+ * to a single customer instead of a follow list, and with no opt-in
+ * gating since this is an internal admin tool already behind requireAdmin. */
+app.get("/api/admin/customer/:query/trading-history", requireAdmin, async (req, res) => {
+  try {
+    const { solanaAddress, evmAddress } = await resolveCustomer(req.params.query);
+    if (!solanaAddress && !evmAddress) return res.status(404).json({ error: "No matching customer found" });
+
+    const [activityRows, fills] = await Promise.all([
+      solanaAddress ? getActivityForWallet(solanaAddress, 500) : Promise.resolve([]),
+      evmAddress ? getUserPerpsFills(evmAddress, { limit: 500 }).catch(() => []) : Promise.resolve([]),
+    ]);
+
+    // Neither swap rows (only raw input/output mints in `details`) nor
+    // kamino_* rows (only the reserve pubkey) get a `symbol` written at log
+    // time — resolve both here via the token registry / reserve list,
+    // rather than changing what every other caller already logs.
+    const [{ byMint }, reserves] = await Promise.all([getRegistry(), getXstocksReserves().catch(() => [])]);
+    const symbolByReserve = new Map(reserves.map((r) => [r.reserve, r.liquidityToken]));
+
+    // activity_log also carries non-trade rows (plain "withdraw"/"deposit"
+    // cash transfers, "admin_*" account-status/email actions) — this is a
+    // trading-history view, so only actual trade/position kinds belong
+    // here, not the full audit trail ActivitySection (Customer Service tab)
+    // already shows.
+    const TRADE_KINDS = new Set([
+      "swap", "kamino_deposit", "kamino_borrow", "kamino_repay", "kamino_withdraw",
+    ]);
+    const trades = activityRows.filter((r) => TRADE_KINDS.has(r.kind)).map((r) => {
+      let symbol = r.symbol;
+      if (!symbol && r.kind === "swap" && r.details) {
+        const mint = r.side === "sell" ? r.details.inputMint : r.details.outputMint;
+        symbol = byMint[mint]?.symbol ?? null;
+      } else if (!symbol && r.kind.startsWith("kamino_") && r.details?.reserve) {
+        symbol = symbolByReserve.get(r.details.reserve) ?? null;
+      }
+      return {
+        time: new Date(r.created_at).getTime(), kind: r.kind, symbol, side: r.side,
+        usdValue: r.usd_value != null ? Number(r.usd_value) : null,
+        status: r.status, signature: r.signature,
+      };
+    });
+
+    for (const f of fills) {
+      trades.push({
+        time: f.time, kind: "perp_fill", symbol: f.coin, side: f.dir,
+        usdValue: f.notionalUsd, closedPnl: f.closedPnl, status: "confirmed", signature: null,
+      });
+    }
+
+    trades.sort((a, b) => b.time - a.time);
+    res.json({ trades });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
@@ -2300,11 +2473,39 @@ app.get("/api/admin/kamino-fees/status", requireAdmin, async (req, res) => {
   }
 });
 
-/* ————— Admin / ops: market liquidity monitoring —————
- * See server/src/marketHealth.js — a background job, not computed on
- * request, so this just returns whatever the latest cycle produced. */
-app.get("/api/admin/market-health", requireAdmin, (req, res) => {
-  res.json(getMarketHealthSnapshot());
+/* ————— Admin / ops: compliance screening —————
+ * See server/src/ofacScreening.js for the OFAC/Treasury sanctions-list
+ * matching (fuzzy name match against a background-refreshed cache of the
+ * U.S. Commerce Dept's Consolidated Screening List). No customer name is
+ * stored anywhere in this app — the admin types in whatever name they're
+ * screening at search time, so this is deliberately a plain query param,
+ * not looked up from any stored customer record. */
+app.get("/api/admin/compliance/ofac", requireAdmin, (req, res) => {
+  const name = String(req.query.name || "").trim();
+  if (!name) return res.status(400).json({ error: "name required" });
+  const status = getOfacListStatus();
+  const matches = searchOfac(name).map((m) => ({
+    name: m.name, matchedName: m.matchedName, score: m.score, type: m.type,
+    programs: m.programs, remarks: m.remarks, source: m.source, sourceInformationUrl: m.sourceInformationUrl,
+  }));
+  res.json({
+    query: name, matches,
+    dataUpdatedAt: status.dataUpdatedAt, sourcesUsed: status.sourcesUsed,
+    entryCount: status.entryCount, listError: status.error,
+  });
+});
+
+// Lightweight substitute for a real licensed adverse-media provider
+// (ComplyAdvantage / LexisNexis / Refinitiv World-Check / Dow Jones, etc.)
+// — a general web search for the name plus risk-related keywords, meant
+// for manual review only. Explicitly NOT a compliance-grade adverse-media
+// screen; the admin UI labels it as such.
+app.get("/api/admin/compliance/adverse-media", requireAdmin, async (req, res) => {
+  const name = String(req.query.name || "").trim();
+  if (!name) return res.status(400).json({ error: "name required" });
+  const query = `"${name}" (fraud OR sanctions OR indictment OR lawsuit OR "money laundering" OR SEC OR investigation OR arrested OR charged OR conviction)`;
+  const { results, error } = await braveSearchRaw(query, 8);
+  res.json({ query: name, results, error: error || null });
 });
 
 /* ————— asset info popup: quote/profile + price chart ————— */

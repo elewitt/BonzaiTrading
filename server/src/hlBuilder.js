@@ -81,6 +81,32 @@ export async function getUserPerpsStats(evmAddress, sinceMs) {
 }
 
 /**
+ * Individual perps fills for one user, most-recent first — powers the
+ * admin trading-history view (Compliance tab). Unlike getUserPerpsStats
+ * above (aggregates only), a compliance review needs each fill as its own
+ * row: asset, side, size, notional, realized P&L. No time window by
+ * default (sinceMs=0, i.e. since epoch) — a compliance lookup needs the
+ * full picture, not a recent slice; Hyperliquid's own API caps how much a
+ * single call returns regardless.
+ */
+export async function getUserPerpsFills(evmAddress, { sinceMs = 0, limit = 500 } = {}) {
+  const fills = await info.userFillsByTime({ user: evmAddress, startTime: sinceMs });
+  return fills
+    .sort((a, b) => b.time - a.time)
+    .slice(0, limit)
+    .map((f) => ({
+      time: f.time,
+      coin: f.coin,
+      dir: f.dir || (Number(f.sz) >= 0 ? "Long" : "Short"),
+      isBuy: f.side === "B",
+      size: Number(f.sz),
+      price: Number(f.px),
+      notionalUsd: Math.abs(Number(f.px) * Number(f.sz)),
+      closedPnl: Number(f.closedPnl || 0),
+    }));
+}
+
+/**
  * Withdraws USDC from the sponsor's OWN Hyperliquid account to an arbitrary
  * Arbitrum address — withdraw3's `destination` field isn't restricted to
  * the signer's own address, so this can land directly on a customer's
