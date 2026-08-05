@@ -165,7 +165,7 @@ export default function StrategiesPanel({ registry, address, signWithWallet }) {
             </div>
             <div className="borrow-field">
               <span className="tiny muted">Frequency</span>
-              <div className="lvp-pnl-periods">
+              <div className="strategy-freq-picker">
                 {INTERVAL_PRESETS.map((p) => (
                   <button type="button" key={p.days} className={`lvp-pct-btn ${intervalDays === p.days ? "sel" : ""}`}
                     onClick={() => setIntervalDays(p.days)}>
@@ -182,12 +182,12 @@ export default function StrategiesPanel({ registry, address, signWithWallet }) {
           </form>
         </div>
 
-        <div className="lvp-card">
+        <div className="lvp-card agents-strategies-card">
           <p className="table-card-title" style={{ marginBottom: 12 }}>Your Strategies</p>
           {loading ? (
-            <p className="lvp-muted">Loading…</p>
+            <p className="lvp-muted agents-empty-state">Loading…</p>
           ) : strategies.length === 0 ? (
-            <p className="lvp-muted">No strategies yet — create your first one to the left.</p>
+            <p className="lvp-muted agents-empty-state">No strategies yet — create your first one to the left.</p>
           ) : (
             strategies.map((s) => (
               <div key={s.id} className="strategy-row">

@@ -1349,8 +1349,29 @@ a.trow { color: inherit; text-decoration: none; }
    for a "worth noticing" signal) sets it apart from the two passive
    cards below without a heavier banner treatment. */
 .agents-proposals-card { border-left: 3px solid var(--gold); }
-.agents-layout { display: grid; grid-template-columns: 380px 1fr; gap: 24px; align-items: start; }
+/* Equal-width columns, stretched to match height — a fixed 380px/1fr split
+   left the form card cramped (not enough room for the Frequency pills,
+   see .strategy-freq-picker below) while stretching "Your Strategies" far
+   wider than its content ever needs, especially when empty. Stretching
+   both to the same height (instead of each sizing to its own content)
+   keeps the two cards visually paired rather than one towering over a
+   half-empty other. */
+.agents-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }
 @media (max-width: 768px) { .agents-layout { grid-template-columns: 1fr; } }
+.agents-strategies-card { display: flex; flex-direction: column; }
+.agents-empty-state { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; margin: 0; padding: 24px 0; }
+
+/* Frequency picker (Daily / Weekly / Every 2 weeks / Monthly) — its own
+   sizing rather than reusing .lvp-pnl-periods .lvp-pct-btn (tuned for
+   short 3-5 char labels like "Day"/"Week" on the perps chart): "Every 2
+   weeks" needs more room than that padding/font-size budget allows, which
+   was overflowing the card at narrower widths. Tighter padding buys most
+   of that room back; flex-wrap is the guarantee that no combination of
+   viewport width and label length can ever clip a button — it wraps to a
+   second row (growing the card, not the button past its edge) instead. */
+.strategy-freq-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.strategy-freq-picker .lvp-pct-btn { flex: 0 0 auto; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 10px; }
+.strategy-freq-picker .lvp-pct-btn.sel { box-shadow: 0 2px 8px rgba(26,68,51,.28); }
 
 .perps-ticket-col { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
 .perps-market-header {
