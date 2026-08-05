@@ -114,6 +114,24 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS strategy_proposals_wallet_idx
       ON strategy_proposals (wallet_address, status, created_at DESC);
   `);
+  // ————— Telegram chat↔wallet links — durable so the Strategy Agents
+  // evaluator can notify a linked chat days after the /link happened.
+  // telegram.js's own linkCodes/pendingProposals stay in-memory
+  // deliberately (both have short, single-digit-minute TTLs, so losing
+  // them on a deploy just means retrying a still-fresh action) — this
+  // table is the one piece that genuinely needs to survive a restart.
+  // One row per chat (a chat links to at most one wallet at a time,
+  // latest link wins); a wallet can have more than one linked chat. —————
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS telegram_links (
+      chat_id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS telegram_links_wallet_idx ON telegram_links (wallet_address);
+  `);
   // ————— Referral system — 50% fee-share flywheel —————
   // One code per user (lazily created on first dashboard/attribute call),
   // and one attribution row per REFERRED user (never per referrer) so a
@@ -573,4 +591,40 @@ export async function expireProposalsForStrategy(strategyId) {
      WHERE strategy_id = $1 AND status = 'pending'`,
     [strategyId],
   );
+}
+
+/** Upserts the link for a chat — re-linking (e.g. a fresh /link code)
+ * overwrites whatever wallet this chat pointed at before, matching the
+ * old in-memory Map's `links.set()` semantics exactly. */
+export async function upsertTelegramLink({ chatId, walletAddress }) {
+  if (!pool) throw new Error("database not configured");
+  await pool.query(
+    `INSERT INTO telegram_links (chat_id, wallet_address) VALUES ($1, $2)
+     ON CONFLICT (chat_id) DO UPDATE SET wallet_address = $2, linked_at = now()`,
+    [chatId, walletAddress],
+  );
+}
+
+/** Shaped as { address } (not the raw row) so every existing
+ * `link.address` call site in telegram.js needed no rewrite beyond
+ * awaiting this instead of a synchronous Map.get(). */
+export async function getTelegramLinkForChat(chatId) {
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT wallet_address FROM telegram_links WHERE chat_id = $1`,
+    [chatId],
+  );
+  return rows[0] ? { address: rows[0].wallet_address } : null;
+}
+
+/** Every chat currently linked to a wallet — a wallet can have more than
+ * one (re-linking from a new device doesn't unlink the old chat), so the
+ * evaluator notifies all of them rather than assuming exactly one. */
+export async function getTelegramLinksForWallet(walletAddress) {
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT chat_id FROM telegram_links WHERE wallet_address = $1`,
+    [walletAddress],
+  );
+  return rows.map((r) => r.chat_id);
 }

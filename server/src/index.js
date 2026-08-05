@@ -2575,6 +2575,9 @@ mountTelegramRoutes(app, {
   buildOrder,
   executeSignedOrder,
   privyClient,
+  // Strategy Agents proposal confirm/reject via "YES <id>"/"NO <id>" —
+  // same DB effects as the web /report-execution route.
+  getProposal, markProposalConfirmed, markProposalRejected, touchStrategyEvaluated, logActivity,
 });
 
 mountStrategyRoutes(app, {

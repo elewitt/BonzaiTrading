@@ -1,5 +1,6 @@
 import { STRATEGY_TYPES } from "./index.js";
 import { sendEmail } from "../email.js";
+import { notifyStrategyProposal as sendTelegramProposal } from "../telegram.js";
 import {
   listActiveStrategies, hasPendingProposalForStrategy, touchStrategyEvaluated,
   createProposal, markStrategyProposed, expireStalePendingProposals,
@@ -43,22 +44,37 @@ async function buildContext(wallet, deps) {
   return { holdings, prices };
 }
 
-/** Best-effort email nudge — a proposal sits waiting in the app regardless
- * of whether this succeeds, so a missing RESEND_API_KEY or a user with no
- * linked email must never block proposal creation itself. */
+/** Best-effort nudges on every channel the wallet has connected — a
+ * proposal sits waiting in the app regardless of whether either of these
+ * succeeds, so a missing RESEND_API_KEY, no linked email, or no linked
+ * Telegram chat must never block proposal creation itself. The two
+ * channels are independent (one failing/missing doesn't skip the other). */
 async function notifyProposal(strategy, proposal, deps) {
-  if (!strategy.privy_user_id || !deps.privyClient) return;
+  const expiresLabel = new Date(proposal.expires_at).toLocaleString();
+
+  if (strategy.privy_user_id && deps.privyClient) {
+    try {
+      const user = await deps.privyClient.getUserById(strategy.privy_user_id);
+      const email = user?.linkedAccounts?.find((a) => a.type === "email")?.address;
+      if (email) {
+        await sendEmail({
+          to: email,
+          subject: "Bonzai Trading — a strategy proposal is ready to confirm",
+          text: `${proposal.summary}\n\nReview and confirm it in the app: https://bonzaitrading.com\n\nThis proposal expires at ${expiresLabel} if not confirmed.`,
+        });
+      }
+    } catch (e) {
+      console.error(`[strategyAgents] email notify failed for strategy ${strategy.id}:`, e.message);
+    }
+  }
+
   try {
-    const user = await deps.privyClient.getUserById(strategy.privy_user_id);
-    const email = user?.linkedAccounts?.find((a) => a.type === "email")?.address;
-    if (!email) return;
-    await sendEmail({
-      to: email,
-      subject: "Bonzai Trading — a strategy proposal is ready to confirm",
-      text: `${proposal.summary}\n\nReview and confirm it in the app: https://bonzaitrading.com\n\nThis proposal expires at ${new Date(proposal.expires_at).toLocaleString()} if not confirmed.`,
-    });
+    await sendTelegramProposal(
+      strategy.wallet_address,
+      `📩 ${proposal.summary}\n\nReply "YES ${proposal.id}" to confirm or "NO ${proposal.id}" to reject.\nExpires ${expiresLabel}.\n\nOr review it in the app: https://bonzaitrading.com`,
+    );
   } catch (e) {
-    console.error(`[strategyAgents] notifyProposal failed for strategy ${strategy.id}:`, e.message);
+    console.error(`[strategyAgents] telegram notify failed for strategy ${strategy.id}:`, e.message);
   }
 }
 

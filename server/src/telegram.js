@@ -13,14 +13,17 @@
  * via useDelegatedActions().delegateWallet() in the web app) and executed
  * through the exact same Jupiter order/execute path the web app uses.
  *
- * PERSISTENCE WARNING: linkCodes/links/pendingProposals are in-memory Maps.
- * They are wiped on every server restart (i.e. every deploy). This is fine
- * for initial testing but must move to a persistent store (SQLite on a
- * Railway volume, or a hosted KV) before this is relied on day to day —
- * flagged in the plan, not silently ignored.
+ * Chat↔wallet links are persisted (telegram_links in Postgres) since the
+ * Strategy Agents evaluator needs to notify a linked chat potentially days
+ * after the /link happened — a restart (i.e. every deploy) must not lose
+ * that. linkCodes and pendingProposals stay in-memory deliberately: both
+ * have short (single-digit-minute) TTLs, so losing them on a deploy just
+ * means the user retries a still-fresh action, not a silent notification
+ * gap days later.
  */
 import { VersionedTransaction } from "@solana/web3.js";
 import { derivePortfolio, planTrades } from "./portfolio.js";
+import { upsertTelegramLink, getTelegramLinkForChat, getTelegramLinksForWallet } from "./db.js";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || "";
@@ -35,7 +38,6 @@ const LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const PROPOSAL_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 const linkCodes = new Map(); // code -> { address, expiresAt }
-const links = new Map(); // chatId (string) -> { address }
 const pendingProposals = new Map(); // chatId (string) -> { trades, summary, address, expiresAt }
 
 /** Called by the authenticated /api/telegram/link-code endpoint in index.js. */
@@ -62,6 +64,16 @@ async function sendMessage(chatId, text) {
   }
 }
 
+/** Called by strategyAgents/evaluator.js whenever a strategy proposal is
+ * created — messages every chat linked to that wallet (usually zero or
+ * one, but never assumed to be exactly one; see telegram_links' own
+ * comment in db.js). Best-effort: a wallet with no linked chat is a
+ * normal, silent no-op, not an error. */
+export async function notifyStrategyProposal(walletAddress, text) {
+  const chatIds = await getTelegramLinksForWallet(walletAddress);
+  for (const chatId of chatIds) await sendMessage(chatId, text);
+}
+
 async function handleLink(chatId, code) {
   if (!code) { await sendMessage(chatId, "Usage: /link 123456 — get a code from My Profile → Settings in the app."); return; }
   const entry = linkCodes.get(code);
@@ -69,7 +81,7 @@ async function handleLink(chatId, code) {
     await sendMessage(chatId, "That code is invalid or expired. Generate a new one in the app (My Profile → Settings).");
     return;
   }
-  links.set(String(chatId), { address: entry.address });
+  await upsertTelegramLink({ chatId: String(chatId), walletAddress: entry.address });
   linkCodes.delete(code);
   await sendMessage(
     chatId,
@@ -173,6 +185,90 @@ async function handleConfirm(deps, chatId) {
 }
 
 /**
+ * Confirms one Strategy Agents proposal, addressed explicitly by ID
+ * ("YES 42") rather than the bare "YES" handleConfirm uses — a strategy
+ * proposal lives in Postgres with its own 24h TTL (not the 5-minute
+ * in-memory pendingProposals map above), and a chat could plausibly have
+ * more than one strategy proposal outstanding at once, so an unqualified
+ * "YES" would be ambiguous. getProposal's own wallet-ownership check
+ * (id + walletAddress) is what stops a linked chat from confirming a
+ * proposal that isn't actually its wallet's. Mirrors handleConfirm's
+ * build → sign (Privy walletApi) → execute sequence, then performs the
+ * exact same three effects /api/strategies/proposals/:id/report-execution
+ * does on the web path (markProposalConfirmed, logActivity as kind:"swap"
+ * so it counts toward referral volume, touchStrategyEvaluated) so a trade
+ * confirmed via Telegram is indistinguishable, downstream, from one
+ * confirmed in the app.
+ */
+async function handleStrategyConfirm(deps, chatId, proposalId) {
+  const link = await getTelegramLinkForChat(String(chatId));
+  if (!link) return; // webhook handler already gates on `link` before calling this
+  const proposal = await deps.getProposal(proposalId, link.address);
+  if (!proposal) { await sendMessage(chatId, `No pending proposal #${proposalId} for your wallet.`); return; }
+  if (proposal.status !== "pending") { await sendMessage(chatId, `Proposal #${proposalId} is already ${proposal.status}.`); return; }
+  if (new Date(proposal.expires_at) < new Date()) { await sendMessage(chatId, `Proposal #${proposalId} has expired.`); return; }
+
+  const leg = proposal.legs[0];
+  if (!leg || leg.domain !== "spot") {
+    await sendMessage(chatId, "This proposal type isn't supported via Telegram yet — confirm it in the app.");
+    return;
+  }
+  if (!deps.privyClient) {
+    await sendMessage(chatId, "Bot trading isn't configured on the server yet (missing Privy credentials). Contact the app owner.");
+    return;
+  }
+
+  await sendMessage(chatId, "Executing…");
+  try {
+    const order = await deps.buildOrder({
+      inputMint: leg.inputMint, outputMint: leg.outputMint,
+      amount: String(leg.amount), taker: link.address,
+    });
+    const tx = VersionedTransaction.deserialize(Buffer.from(order.transaction, "base64"));
+    const { signedTransaction } = await deps.privyClient.walletApi.solana.signTransaction({
+      address: link.address, chainType: "solana", transaction: tx,
+    });
+    const signedB64 = Buffer.from(signedTransaction.serialize()).toString("base64");
+
+    const result = await deps.executeSignedOrder({
+      signedTransaction: signedB64,
+      requestId: order.requestId, sponsored: order._sponsored,
+      swapV1: order._swapV1, isSell: order._isSell,
+    });
+    if (result.status && result.status !== "Success") {
+      await sendMessage(chatId, `❌ ${proposal.summary} failed: ${result.error || result.status}`);
+      return;
+    }
+
+    await deps.markProposalConfirmed(proposalId, [result.signature]);
+    deps.logActivity({
+      walletAddress: link.address, kind: "swap",
+      symbol: leg.symbol, side: leg.side, usdValue: leg.usd, signature: result.signature,
+      details: { inputMint: leg.inputMint, outputMint: leg.outputMint, amount: leg.amount, feeBps: order.feeBps ?? null, strategyId: proposal.strategy_id, proposalId: proposal.id },
+    });
+    await deps.touchStrategyEvaluated(proposal.strategy_id, { state: { lastExecutedAt: new Date().toISOString() } });
+
+    await sendMessage(chatId, `✅ ${proposal.summary} — https://solscan.io/tx/${result.signature}`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[telegram/strategy-confirm] leg failed for ${link.address}:`, e?.response?.data || e?.cause || e);
+    await sendMessage(chatId, `❌ ${proposal.summary} failed: ${msg}`);
+  }
+}
+
+async function handleStrategyReject(deps, chatId, proposalId) {
+  const link = await getTelegramLinkForChat(String(chatId));
+  if (!link) return;
+  const proposal = await deps.getProposal(proposalId, link.address);
+  if (!proposal || proposal.status !== "pending") {
+    await sendMessage(chatId, `No pending proposal #${proposalId} for your wallet.`);
+    return;
+  }
+  await deps.markProposalRejected(proposalId);
+  await sendMessage(chatId, `Rejected proposal #${proposalId}.`);
+}
+
+/**
  * Mounts the webhook route on the given Express app. `deps` carries the
  * pieces already defined in index.js (registry, holdings/prices, order
  * building/execution, and the Privy client) so this module doesn't need a
@@ -204,14 +300,26 @@ export function mountTelegramRoutes(app, deps) {
         return;
       }
 
-      const link = links.get(String(chatId));
+      const link = await getTelegramLinkForChat(String(chatId));
       if (!link) {
         await sendMessage(chatId, "Your Telegram isn't linked to a wallet yet. Get a code from My Profile → Settings in the app, then send /link <code>.");
         return;
       }
 
-      if (/^(yes|y|confirm)$/i.test(text)) { await handleConfirm(deps, chatId); return; }
-      if (/^(no|n|cancel)$/i.test(text)) {
+      // Bare YES/NO stays scoped to the freeform trade flow above
+      // (pendingProposals, 5-min TTL) — "YES 42"/"NO 42" targets a
+      // specific Strategy Agents proposal ID instead, since a chat can
+      // have more than one of those outstanding (each with its own 24h
+      // TTL in Postgres) and an unqualified reply would be ambiguous.
+      const yesMatch = text.match(/^(?:yes|y|confirm)\s*(\d+)?$/i);
+      const noMatch = text.match(/^(?:no|n|cancel)\s*(\d+)?$/i);
+      if (yesMatch) {
+        if (yesMatch[1]) await handleStrategyConfirm(deps, chatId, yesMatch[1]);
+        else await handleConfirm(deps, chatId);
+        return;
+      }
+      if (noMatch) {
+        if (noMatch[1]) { await handleStrategyReject(deps, chatId, noMatch[1]); return; }
         pendingProposals.delete(String(chatId));
         await sendMessage(chatId, "Cancelled.");
         return;
