@@ -11,6 +11,8 @@ import {
 } from "@solana/web3.js";
 import { getRegistry, USDC, USDY, JUP_BASE, jupHeaders, NON_XSTOCK_SYMBOLS } from "./tokens.js";
 import { generateLinkCode, mountTelegramRoutes } from "./telegram.js";
+import { mountStrategyRoutes } from "./strategyRoutes.js";
+import { startStrategyEvaluator } from "./strategyAgents/evaluator.js";
 import { getMarketInfo, getMarketChart } from "./marketdata.js";
 import { ensureArbitrumGas, depositToHyperliquid, getArbitrumSponsorStatus } from "./arbitrumSponsor.js";
 import { checkAndRelayCctpDeposit, checkAndRelayCctpWithdraw } from "./cctp.js";
@@ -22,6 +24,10 @@ import {
   getOrCreateReferralCode, findReferralCodeOwner, attributeReferral,
   getReferralsFor, getEquitiesStatsForWallet, getKaminoFeeStatsForWallet, getKaminoFeeTotals,
   createKaminoFeeObligation, getUnpaidKaminoFeeObligation, markKaminoFeeObligationPaid,
+  createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
+  setStrategyStatus, touchStrategyEvaluated,
+  listPendingProposalsForWallet, getProposal,
+  markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
 } from "./db.js";
 import { getPerpsPositions } from "./hyperliquid.js";
 import { sendEmail } from "./email.js";
@@ -130,6 +136,14 @@ const kaminoLimiter = rateLimit({
 const bridgeGasLimiter = rateLimit({
   windowMs: 60_000,
   max: Number(process.env.RATE_LIMIT_BRIDGE_GAS || 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateKey,
+  skip: skipForQaBypass,
+});
+const strategyLimiter = rateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.RATE_LIMIT_STRATEGY || 20),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateKey,
@@ -2563,11 +2577,27 @@ mountTelegramRoutes(app, {
   privyClient,
 });
 
+mountStrategyRoutes(app, {
+  requireAuth, requireAllowedGeo, requireActiveAccount, strategyLimiter,
+  getRegistry, buildOrder, logActivity,
+  createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
+  setStrategyStatus, touchStrategyEvaluated,
+  listPendingProposalsForWallet, getProposal,
+  markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
+});
+
 app.listen(PORT, () => {
   console.log(`Longview server on http://localhost:${PORT}`);
   console.log(`Gas sponsorship: ${sponsor ? "ON — " + sponsor.publicKey.toBase58() : "off (users pay SOL fees)"}`);
   getRegistry().catch((e) => console.warn("[tokens] preload failed:", e.message));
-  initSchema().catch((e) => console.error("[db] schema init failed:", e.message));
   startMarketHealthMonitor();
   startPredictionMarketsMonitor();
+  // The evaluator's first tick queries strategies/strategy_proposals directly —
+  // it must not fire until those tables actually exist, so it's chained after
+  // initSchema resolves rather than started in parallel with it (a real race
+  // caught by testing against a fresh database: the very first tick could
+  // hit "relation does not exist" before CREATE TABLE had finished).
+  initSchema()
+    .then(() => startStrategyEvaluator({ getHoldingsForAddress, getPricesForMints, privyClient }))
+    .catch((e) => console.error("[db] schema init failed:", e.message));
 });

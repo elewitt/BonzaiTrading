@@ -63,6 +63,15 @@ export const api = {
   kaminoRepay:       (body)            => post("/api/kamino/repay", body),
   kaminoWithdraw:    (body)            => post("/api/kamino/withdraw", body),
   kaminoFee:         (body)            => post("/api/kamino/fee", body),
+  createStrategy:    (body)            => post("/api/strategies", body),
+  listStrategies:    (wallet)          => get(`/api/strategies?wallet=${encodeURIComponent(wallet)}`),
+  pauseStrategy:     (id, walletAddress)  => post(`/api/strategies/${id}/pause`, { walletAddress }),
+  resumeStrategy:    (id, walletAddress)  => post(`/api/strategies/${id}/resume`, { walletAddress }),
+  cancelStrategy:    (id, walletAddress)  => post(`/api/strategies/${id}/cancel`, { walletAddress }),
+  listStrategyProposals: (wallet)      => get(`/api/strategies/proposals?wallet=${encodeURIComponent(wallet)}`),
+  rejectStrategyProposal: (id, walletAddress) => post(`/api/strategies/proposals/${id}/reject`, { walletAddress }),
+  buildStrategyProposal:  (id, walletAddress) => post(`/api/strategies/proposals/${id}/build`, { walletAddress }),
+  reportStrategyProposalExecution: (id, body) => post(`/api/strategies/proposals/${id}/report-execution`, body),
 };
 
 /** Send any SPL token directly to a Solana address (no swap involved). */
@@ -232,6 +241,48 @@ export async function executeSwap({ inputMint, outputMint, amount, taker, signWi
     throw new Error(result.error || `swap failed (${result.status})`);
   onStatus?.("confirmed");
   return result; // includes .signature
+}
+
+/**
+ * Execute a confirmed Strategy Agents proposal end to end: a fresh order
+ * via .../build (never the order snapshot from when the proposal was
+ * created — Ultra RFQ TTLs are ~52s) → sign with the Privy embedded wallet
+ * → /api/execute → report the result via .../report-execution.
+ *
+ * logMeta is deliberately omitted from the /api/execute call below —
+ * report-execution already calls logActivity itself with the proposal's
+ * own symbol/usd/feeBps context, so passing logMeta here too would log the
+ * same trade twice and double-count it toward referral fee volume.
+ */
+export async function executeStrategyProposal({ proposalId, taker, signWithWallet, onStatus }) {
+  onStatus?.("routing");
+  const order = await api.buildStrategyProposal(proposalId, taker);
+  if (!order.transaction) throw new Error("no route available for this pair right now");
+
+  onStatus?.("signing");
+  const tx = VersionedTransaction.deserialize(
+    Uint8Array.from(atob(order.transaction), (c) => c.charCodeAt(0))
+  );
+  const signed = await signWithWallet(tx);
+  const signedB64 = btoa(String.fromCharCode(...signed.serialize()));
+
+  onStatus?.("executing");
+  const result = await api.execute({
+    signedTransaction: signedB64,
+    requestId: order.requestId,
+    sponsored: order._sponsored,
+    swapV1: order._swapV1,
+    isSell: order._isSell,
+  });
+  if (result.status && result.status !== "Success")
+    throw new Error(result.error || `execution failed (${result.status})`);
+  onStatus?.("confirmed");
+
+  await api.reportStrategyProposalExecution(proposalId, {
+    walletAddress: taker,
+    legResults: [{ signature: result.signature, feeBps: order.feeBps ?? null }],
+  });
+  return result;
 }
 
 const DUST_USD = 0.01; // positions worth less than $0.01 are treated as dust (always hidden)

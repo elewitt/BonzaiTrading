@@ -9,6 +9,7 @@ import { liquidationPrice } from "./perps/hl/margin.js";
 import { DEFAULT_CONFIG, EQUITY_DEX } from "./perps/config.js";
 import TimeSeriesChart, { priceLabel } from "./components/TimeSeriesChart.jsx";
 import MarketsExplorer from "./components/MarketsExplorer.jsx";
+import TradingAgentApp from "./agents/TradingAgentApp.jsx";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
 import NewsPanel from "./components/NewsPanel.jsx";
 import HistoryScreen from "./components/HistoryScreen.jsx";
@@ -1785,6 +1786,7 @@ export default function App() {
     : view === "predictions" ? "predictions"
     : view === "perps" ? "perps"
     : view === "borrow" ? "borrow"
+    : view === "agents" ? "agents"
     : view === "referrals" ? "referrals"
     : "dash";
 
@@ -1815,6 +1817,9 @@ export default function App() {
             )}
             {screen !== "borrow" && (
               <button className="head-nav-btn" onClick={() => setView("borrow")}>Borrow / Lend Markets</button>
+            )}
+            {screen !== "agents" && (
+              <button className="head-nav-btn" onClick={() => setView("agents")}>Trading Agent</button>
             )}
             <div className="profile-wrap" ref={profileRef}>
               <button className="head-nav-btn profile-btn" onClick={() => setProfileOpen((o) => !o)}>
@@ -2139,6 +2144,10 @@ export default function App() {
 
       {screen === "borrow" && (
         <BorrowApp solanaAddress={address} solBalance={holdings?.sol ?? 0} portfolioRows={portfolio?.rows ?? []} onBack={() => setView("auto")} />
+      )}
+
+      {screen === "agents" && (
+        <TradingAgentApp registry={registry} solanaAddress={address} signWithWallet={signWithWallet} onBack={() => setView("auto")} />
       )}
 
       {screen === "referrals" && (

@@ -64,6 +64,56 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS kamino_fee_obligations_wallet_idx
       ON kamino_fee_obligations (wallet_address, paid_at);
   `);
+  // ————— Strategy Agents — persistent, user-defined recurring/conditional
+  // strategies (DCA, delta-neutral funding harvest) that a background
+  // evaluator (server/src/strategyAgents/evaluator.js) checks on a
+  // schedule. Execution is never autonomous: when a strategy is due or
+  // triggered, the evaluator writes a `strategy_proposals` row instead of
+  // signing anything — the user reviews and confirms every proposal in
+  // the app with their own wallet, same trust model as every other
+  // trade in this codebase. `state` on `strategies` carries whatever
+  // per-type bookkeeping the evaluator needs across ticks (e.g. DCA's
+  // lastExecutedAt) — kept separate from `params` (the user's own
+  // configuration, never mutated by the evaluator). —————
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS strategies (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      wallet_address TEXT NOT NULL,
+      evm_address TEXT,
+      privy_user_id TEXT,
+      type TEXT NOT NULL CHECK (type IN ('dca', 'delta_neutral')),
+      params JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'paused', 'cancelled', 'completed')),
+      state JSONB NOT NULL DEFAULT '{}',
+      last_evaluated_at TIMESTAMPTZ,
+      last_proposed_at TIMESTAMPTZ
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS strategies_wallet_idx ON strategies (wallet_address, status);
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS strategy_proposals (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      strategy_id BIGINT NOT NULL REFERENCES strategies(id),
+      wallet_address TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      legs JSONB NOT NULL,
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'confirmed', 'rejected', 'expired')),
+      expires_at TIMESTAMPTZ NOT NULL,
+      resolved_at TIMESTAMPTZ,
+      executed_signatures JSONB
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS strategy_proposals_wallet_idx
+      ON strategy_proposals (wallet_address, status, created_at DESC);
+  `);
   // ————— Referral system — 50% fee-share flywheel —————
   // One code per user (lazily created on first dashboard/attribute call),
   // and one attribution row per REFERRED user (never per referrer) so a
@@ -363,4 +413,164 @@ export async function getCustomerStatusDetail(privyUserId) {
   return row
     ? { status: row.status, reason: row.reason, updatedAt: row.updated_at }
     : { status: "active", reason: null, updatedAt: null };
+}
+
+/* ————— Strategy Agents — persistent DCA / delta-neutral strategies plus
+ * the proposals a background evaluator (server/src/strategyAgents/) writes
+ * when one is due. Execution is never autonomous: creating a strategy only
+ * ever produces a `strategy_proposals` row here; nothing in this file signs
+ * or moves funds — the user confirms every proposal with their own wallet,
+ * same trust model as every other trade in this codebase. —————
+ */
+
+export async function createStrategy({ walletAddress, evmAddress, privyUserId, type, params }) {
+  if (!pool) throw new Error("database not configured");
+  const { rows } = await pool.query(
+    `INSERT INTO strategies (wallet_address, evm_address, privy_user_id, type, params)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [walletAddress, evmAddress ?? null, privyUserId ?? null, type, JSON.stringify(params)],
+  );
+  return rows[0].id;
+}
+
+export async function listStrategiesForWallet(walletAddress) {
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM strategies WHERE wallet_address = $1 ORDER BY created_at DESC`,
+    [walletAddress],
+  );
+  return rows;
+}
+
+/** Full scan of every active strategy across every wallet — the evaluator's
+ * per-tick worklist. Only ever called from the background job, never from a
+ * request handler. */
+export async function listActiveStrategies() {
+  if (!pool) return [];
+  const { rows } = await pool.query(`SELECT * FROM strategies WHERE status = 'active'`);
+  return rows;
+}
+
+/** Gates strategy creation at MAX_ACTIVE_STRATEGIES_PER_WALLET (see
+ * strategyRoutes.js) so one wallet can't unboundedly grow the evaluator's
+ * per-tick workload. */
+export async function countActiveStrategiesForWallet(walletAddress) {
+  if (!pool) return 0;
+  const { rows } = await pool.query(
+    `SELECT count(*) FROM strategies WHERE wallet_address = $1 AND status = 'active'`,
+    [walletAddress],
+  );
+  return Number(rows[0].count);
+}
+
+/** Ownership-checked: the WHERE clause requires the row's own
+ * wallet_address, so this can't be used to pause/cancel someone else's
+ * strategy by guessing an id. Returns the updated row, or null if the id
+ * doesn't exist or belongs to a different wallet. */
+export async function setStrategyStatus(id, walletAddress, status) {
+  if (!pool) throw new Error("database not configured");
+  const { rows } = await pool.query(
+    `UPDATE strategies SET status = $3 WHERE id = $1 AND wallet_address = $2 RETURNING *`,
+    [id, walletAddress, status],
+  );
+  return rows[0] ?? null;
+}
+
+/** Called every eval tick regardless of whether the strategy turned out to
+ * be due — `state` is the type module's own bookkeeping (e.g. DCA's
+ * lastExecutedAt), kept separate from `params` so the evaluator never
+ * mutates what the user actually configured. */
+export async function touchStrategyEvaluated(id, { state }) {
+  if (!pool) return;
+  await pool.query(
+    `UPDATE strategies SET last_evaluated_at = now(), state = $2 WHERE id = $1`,
+    [id, JSON.stringify(state)],
+  );
+}
+
+export async function markStrategyProposed(id) {
+  if (!pool) return;
+  await pool.query(`UPDATE strategies SET last_proposed_at = now() WHERE id = $1`, [id]);
+}
+
+export async function createProposal({ strategyId, walletAddress, kind, legs, summary, expiresAt }) {
+  if (!pool) throw new Error("database not configured");
+  const { rows } = await pool.query(
+    `INSERT INTO strategy_proposals (strategy_id, wallet_address, kind, legs, summary, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [strategyId, walletAddress, kind, JSON.stringify(legs), summary, expiresAt],
+  );
+  return rows[0];
+}
+
+export async function listPendingProposalsForWallet(walletAddress) {
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM strategy_proposals WHERE wallet_address = $1 AND status = 'pending' ORDER BY created_at DESC`,
+    [walletAddress],
+  );
+  return rows;
+}
+
+/** Ownership-checked the same way setStrategyStatus is — used before
+ * building or confirming a proposal so a wallet can't act on one that
+ * isn't theirs. */
+export async function getProposal(id, walletAddress) {
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT * FROM strategy_proposals WHERE id = $1 AND wallet_address = $2`,
+    [id, walletAddress],
+  );
+  return rows[0] ?? null;
+}
+
+/** Dedupe gate the evaluator checks before proposing again — same shape as
+ * getUnpaidKaminoFeeObligation: a strategy with a still-pending proposal is
+ * skipped rather than piling up a second one on the next tick. */
+export async function hasPendingProposalForStrategy(strategyId) {
+  if (!pool) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM strategy_proposals WHERE strategy_id = $1 AND status = 'pending' LIMIT 1`,
+    [strategyId],
+  );
+  return rows.length > 0;
+}
+
+export async function markProposalConfirmed(id, executedSignatures) {
+  if (!pool) throw new Error("database not configured");
+  await pool.query(
+    `UPDATE strategy_proposals SET status = 'confirmed', resolved_at = now(), executed_signatures = $2 WHERE id = $1`,
+    [id, executedSignatures ? JSON.stringify(executedSignatures) : null],
+  );
+}
+
+export async function markProposalRejected(id) {
+  if (!pool) throw new Error("database not configured");
+  await pool.query(
+    `UPDATE strategy_proposals SET status = 'rejected', resolved_at = now() WHERE id = $1`,
+    [id],
+  );
+}
+
+/** Bulk-expires anything the user never acted on — called at the top of
+ * every eval tick so a stale pending proposal doesn't block
+ * hasPendingProposalForStrategy forever if it's just being ignored. */
+export async function expireStalePendingProposals() {
+  if (!pool) return;
+  await pool.query(
+    `UPDATE strategy_proposals SET status = 'expired', resolved_at = now()
+     WHERE status = 'pending' AND expires_at < now()`,
+  );
+}
+
+/** Called from cancel so a cancelled strategy doesn't leave an orphaned
+ * pending proposal a user could still confirm after the strategy itself is
+ * gone. */
+export async function expireProposalsForStrategy(strategyId) {
+  if (!pool) return;
+  await pool.query(
+    `UPDATE strategy_proposals SET status = 'expired', resolved_at = now()
+     WHERE strategy_id = $1 AND status = 'pending'`,
+    [strategyId],
+  );
 }
