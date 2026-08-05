@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { usePortfolioStats } from "./useHyperliquid.js";
+import { usePortfolioStats, useAssetCandles } from "./useHyperliquid.js";
 import { PositionRow } from "./PerpsPanel.jsx";
 
 // Hand-rolled SVG chart, matching the pattern already used in
@@ -16,19 +16,27 @@ const PERIODS = [
   { key: "perpAllTime", label: "All" },
 ];
 
-function yLabel(v) {
+// P&L is a signed delta from a meaningful zero (breakeven) — always show
+// the sign, round to whole $ once the number gets big enough that cents
+// stop being the interesting digit.
+function deltaLabel(v) {
   const sign = v < 0 ? "-" : "";
   const abs = Math.abs(v);
   if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(1)}k`;
   if (abs >= 10) return `${sign}$${abs.toFixed(0)}`;
   return `${sign}$${abs.toFixed(2)}`;
 }
-
-// Full precision for the tooltip readout — the axis can round to "nice"
-// numbers, but the value someone is actively pointing at should never be.
-function yLabelExact(v) {
+function deltaLabelExact(v) {
   const sign = v < 0 ? "-" : v > 0 ? "+" : "";
   return `${sign}$${Math.abs(v).toFixed(2)}`;
+}
+
+// Price is just a value, never a signed delta — and needs more precision
+// at the low end (a sub-$1 token) than a $60k+ BTC print does.
+function priceLabel(v) {
+  if (v >= 1000) return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  if (v >= 1) return `$${v.toFixed(2)}`;
+  return `$${v.toFixed(4)}`;
 }
 
 function timeAgo(ts) {
@@ -83,11 +91,10 @@ function niceTicks(min, max, targetCount = 5) {
 
 // Splits the mapped [x,y] polyline into runs that share a sign, inserting
 // an exact interpolated point at every zero-crossing — this is what lets
-// the line/fill read as green-above/red-below-breakeven instead of one
+// a PnL line/fill read as green-above/red-below-breakeven instead of one
 // color for the whole chart picked off whatever the LAST point happens to
-// be (the old behavior: a month spent mostly in profit that dipped
-// negative on the final tick rendered entirely red, which misrepresents
-// the period it's supposed to summarize).
+// be. Only meaningful when zero is an actual reference point (PnL mode) —
+// a price series has no "sign" to split on, so it stays a single run.
 function splitAtZero(mapped, values, zeroY) {
   const runs = [];
   let current = null;
@@ -114,11 +121,11 @@ function pathFor(points) {
   return points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
 }
 
-function areaFor(points, zeroY) {
+function areaFor(points, baseY) {
   const line = pathFor(points);
   const [lastX] = points[points.length - 1];
   const [firstX] = points[0];
-  return `${line} L${lastX.toFixed(1)},${zeroY.toFixed(1)} L${firstX.toFixed(1)},${zeroY.toFixed(1)} Z`;
+  return `${line} L${lastX.toFixed(1)},${baseY.toFixed(1)} L${firstX.toFixed(1)},${baseY.toFixed(1)} Z`;
 }
 
 // Converts a client (viewport) pointer position into the SVG's own
@@ -145,24 +152,43 @@ function svgToClientPoint(svgEl, x, y) {
   return { x: p.x, y: p.y };
 }
 
-function PnlChart({ points, period, loading }) {
+/**
+ * One shared chart for two genuinely different jobs:
+ *   - mode="pnl"   (Unrealized / Realized): a signed delta from a
+ *     meaningful zero — forces zero into the y-range, draws a dashed
+ *     breakeven line, and splits the line/fill color at every zero
+ *     crossing so a mostly-green period that dipped red at the very end
+ *     doesn't render as if the whole thing were a loss.
+ *   - mode="price" (Asset): a plain value with no meaningful zero — no
+ *     forced zero, no breakeven line, one color for the whole line based
+ *     on whether it's up or down over the shown window (same convention
+ *     AssetInfoModal.jsx already uses for its own price chart).
+ * Everything else (nice-number ticks, the crosshair/tooltip hover layer,
+ * x-axis time labels, the live-value pulse, loading/empty states) is
+ * identical between the two, which is the whole reason this is one
+ * component instead of two near-duplicates.
+ */
+function TimeSeriesChart({ points, period, loading, mode = "pnl", emptyText }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null); // { idx, tipX, tipY, side }
+  const isPnl = mode === "pnl";
+  const label = isPnl ? deltaLabel : priceLabel;
+  const labelExact = isPnl ? deltaLabelExact : priceLabel;
 
   if (loading) {
     return <div className="lvp-pnl-skeleton" aria-hidden="true" />;
   }
   if (!points || points.length < 2) {
-    return <p className="lvp-muted lvp-pnl-chart-empty">Not enough history yet — check back after your next trade.</p>;
+    return <p className="lvp-muted lvp-pnl-chart-empty">{emptyText || "Not enough history yet."}</p>;
   }
 
-  // Always include 0 in range — PnL can be negative, and the zero line is
-  // the meaningful reference point (unlike a pure equity chart where 0 is
-  // never in range anyway).
-  const vMin = Math.min(0, ...points.map((p) => p.v));
-  const vMax = Math.max(0, ...points.map((p) => p.v));
-  const vPad = (vMax - vMin) * 0.12 || 1;
+  // PnL always includes 0 (the meaningful breakeven reference); price
+  // never forces it in — a sub-cent-precision chart of a token that never
+  // goes near $0 shouldn't get padded down to a huge, mostly-empty range.
+  const vMin = isPnl ? Math.min(0, ...points.map((p) => p.v)) : Math.min(...points.map((p) => p.v));
+  const vMax = isPnl ? Math.max(0, ...points.map((p) => p.v)) : Math.max(...points.map((p) => p.v));
+  const vPad = (vMax - vMin) * 0.12 || Math.max(Math.abs(vMax), 1) * 0.05;
   const { ticks: yTicks, niceMin, niceMax } = niceTicks(vMin - vPad, vMax + vPad, 5);
   const vLo = niceMin, vHi = niceMax;
   const tMin = points[0].ts, tMax = points[points.length - 1].ts;
@@ -173,13 +199,15 @@ function PnlChart({ points, period, loading }) {
   const sx = (ts) => PAD.left + ((ts - tMin) / tRange) * inner.w;
   const sy = (v) => PAD.top + inner.h - ((v - vLo) / vRange) * inner.h;
 
+  const first = points[0].v;
   const last = points[points.length - 1].v;
-  const isGain = last >= 0;
+  const isGain = isPnl ? last >= 0 : last >= first;
 
   const mapped = points.map((p) => [sx(p.ts), sy(p.v)]);
   const values = points.map((p) => p.v);
   const zeroY = sy(0);
-  const runs = splitAtZero(mapped, values, zeroY);
+  const baseY = isPnl ? zeroY : PAD.top + inner.h; // price fill anchors to the chart floor, not a meaningless "zero"
+  const runs = isPnl ? splitAtZero(mapped, values, zeroY) : [{ sign: isGain ? 1 : -1, points: mapped }];
   const [cx, cy] = mapped[mapped.length - 1];
 
   const high = Math.max(...points.map((p) => p.v));
@@ -220,6 +248,7 @@ function PnlChart({ points, period, loading }) {
 
   const clearHover = () => setHover(null);
   const hoverPoint = hover ? points[hover.idx] : null;
+  const colorFor = (v) => (isPnl ? (v >= 0 ? "var(--gain)" : "var(--loss)") : (isGain ? "var(--gain)" : "var(--loss)"));
 
   return (
     <div
@@ -243,7 +272,7 @@ function PnlChart({ points, period, loading }) {
       }}
       tabIndex={0}
       role="img"
-      aria-label={`Unrealized P&L over the selected period, currently ${yLabelExact(last)}, ranging from ${yLabelExact(low)} to ${yLabelExact(high)}. Use arrow keys to inspect individual points.`}
+      aria-label={`${isPnl ? "P&L" : "Price"} over the selected period, currently ${labelExact(last)}, ranging from ${labelExact(low)} to ${labelExact(high)}. Use arrow keys to inspect individual points.`}
     >
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="lvp-pnl-svg" preserveAspectRatio="xMidYMid meet">
         <defs>
@@ -264,12 +293,14 @@ function PnlChart({ points, period, loading }) {
           <line key={i} x1={PAD.left} y1={sy(v).toFixed(1)} x2={W - PAD.right} y2={sy(v).toFixed(1)}
             stroke="var(--line)" strokeWidth="1" opacity="0.6" />
         ))}
-        <line x1={PAD.left} y1={zeroY.toFixed(1)} x2={W - PAD.right} y2={zeroY.toFixed(1)}
-          stroke="var(--moss)" strokeWidth="1" strokeDasharray="3 3" />
+        {isPnl && (
+          <line x1={PAD.left} y1={zeroY.toFixed(1)} x2={W - PAD.right} y2={zeroY.toFixed(1)}
+            stroke="var(--moss)" strokeWidth="1" strokeDasharray="3 3" />
+        )}
 
         <g clipPath="url(#perpsPnlClip)">
           {runs.map((run, i) => (
-            <path key={`area-${i}`} d={areaFor(run.points, zeroY)}
+            <path key={`area-${i}`} d={areaFor(run.points, baseY)}
               fill={`url(#${run.sign > 0 ? "perpsPnlGainGrad" : "perpsPnlLossGrad"})`} />
           ))}
           {runs.map((run, i) => (
@@ -296,7 +327,7 @@ function PnlChart({ points, period, loading }) {
         {yTicks.map((v, i) => (
           <text key={i} x={PAD.left - 10} y={sy(v) + 3} textAnchor="end"
             fontSize="11" fontFamily="IBM Plex Mono,monospace" fill="var(--moss)">
-            {yLabel(v)}
+            {label(v)}
           </text>
         ))}
 
@@ -306,44 +337,73 @@ function PnlChart({ points, period, loading }) {
             <line x1={mapped[hover.idx][0]} y1={PAD.top} x2={mapped[hover.idx][0]} y2={PAD.top + inner.h}
               stroke="var(--moss)" strokeWidth="1" strokeDasharray="2 2" opacity="0.7" />
             <circle cx={mapped[hover.idx][0]} cy={mapped[hover.idx][1]} r="5"
-              fill={values[hover.idx] >= 0 ? "var(--gain)" : "var(--loss)"} stroke="var(--card)" strokeWidth="2" />
+              fill={colorFor(values[hover.idx])} stroke="var(--card)" strokeWidth="2" />
           </g>
         )}
       </svg>
 
       {hoverPoint && (
         <div className={`lvp-pnl-tooltip ${hover.side}`} style={{ left: hover.tipX, top: hover.tipY }}>
-          <span className={`mono lvp-pnl-tooltip-value ${hoverPoint.v >= 0 ? "gain" : "loss"}`}>
-            {yLabelExact(hoverPoint.v)}
+          <span className={`mono lvp-pnl-tooltip-value ${isPnl ? (hoverPoint.v >= 0 ? "gain" : "loss") : (isGain ? "gain" : "loss")}`}>
+            {labelExact(hoverPoint.v)}
           </span>
           <span className="tiny muted">{tooltipTimeLabel(hoverPoint.ts, period)}</span>
         </div>
       )}
 
       <div className="lvp-pnl-hilo">
-        <span className="lvp-muted">High <strong className="mono">{yLabel(high)}</strong></span>
-        <span className="lvp-muted">Low <strong className="mono">{yLabel(low)}</strong></span>
+        <span className="lvp-muted">High <strong className="mono">{label(high)}</strong></span>
+        <span className="lvp-muted">Low <strong className="mono">{label(low)}</strong></span>
       </div>
     </div>
   );
 }
 
-export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions }) {
+const PERIOD_LOOKBACK_MS = {
+  perpDay: 24 * 60 * 60 * 1000,
+  perpWeek: 7 * 24 * 60 * 60 * 1000,
+  perpMonth: 30 * 24 * 60 * 60 * 1000,
+  perpAllTime: Infinity,
+};
+
+export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions, asset }) {
   const [period, setPeriod] = useState("perpDay");
+  const [metric, setMetric] = useState("unrealized"); // "unrealized" | "realized" | "asset"
   const [view, setView] = useState("positions"); // "positions" | "history"
   const [search, setSearch] = useState("");
   const { pnlHistory, fills, volume, stats } = usePortfolioStats(hl, user);
+  const { points: candlePoints, loading: candlesLoading } = useAssetCandles(hl, asset?.name, period);
 
   const unrealizedPnl = useMemo(
     () => (positions || []).reduce((sum, p) => sum + (p.unrealizedPnl || 0), 0),
     [positions],
   );
-  const isGain = unrealizedPnl >= 0;
   // pnlHistory starts as {} before the first poll resolves — distinct from
   // "polled fine, this period genuinely has under 2 points," which the
   // chart itself already messages differently (its own empty-state copy).
   const historyLoading = Object.keys(pnlHistory).length === 0;
-  const points = (pnlHistory[period] || []).map(([ts, v]) => ({ ts, v: Number(v) }));
+  const unrealizedPoints = (pnlHistory[period] || []).map(([ts, v]) => ({ ts, v: Number(v) }));
+
+  // Realized P&L has no ready-made per-period series from Hyperliquid the
+  // way unrealized does — built here instead from the same fills already
+  // being fetched for the trade-history tab below, scoped to the selected
+  // period and cumulatively summed so it resets to 0 at the start of the
+  // window, same convention as the unrealized chart's own period scoping.
+  const realizedPoints = useMemo(() => {
+    const lookback = PERIOD_LOOKBACK_MS[period] ?? Infinity;
+    const cutoff = Number.isFinite(lookback) ? Date.now() - lookback : -Infinity;
+    const scoped = fills
+      .filter((f) => f.time >= cutoff && f.closedPnl !== 0)
+      .sort((a, b) => a.time - b.time);
+    let running = 0;
+    return scoped.map((f) => { running += f.closedPnl; return { ts: f.time, v: running }; });
+  }, [fills, period]);
+  const realizedTotal = realizedPoints.length ? realizedPoints[realizedPoints.length - 1].v : 0;
+
+  const assetPoints = candlePoints.map((p) => ({ ts: p.ts, v: p.price }));
+  const assetLast = assetPoints.length ? assetPoints[assetPoints.length - 1].v : null;
+  const assetFirst = assetPoints.length ? assetPoints[0].v : null;
+  const assetPctChange = assetFirst ? ((assetLast - assetFirst) / assetFirst) * 100 : null;
 
   const isRealizedGain = stats.realizedPnl >= 0;
   const statTiles = [
@@ -366,16 +426,50 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
   const HISTORY_LIMIT = 100;
   const shownFills = filteredFills.slice(0, HISTORY_LIMIT);
 
+  const METRICS = [
+    { key: "unrealized", label: "Unrealized" },
+    { key: "realized", label: "Realized" },
+    { key: "asset", label: asset?.displayName || "Asset", disabled: !asset },
+  ];
+
   return (
     <div className="lvp-dashboard">
       <div className="lvp-card lvp-pnl-card-full">
         <div className="lvp-pnl-header-row">
-          <div>
-            <p className="lvp-muted" style={{ marginBottom: 2 }}>Unrealized P&L</p>
-            <p className={`lvp-pnl-focal ${isGain ? "gain" : "loss"}`}>
-              {isGain ? "+" : "−"}${Math.abs(unrealizedPnl).toFixed(2)}
-            </p>
-          </div>
+          {metric === "asset" ? (
+            <div>
+              <p className="lvp-muted" style={{ marginBottom: 2 }}>
+                {asset ? `${asset.displayName} Price` : "Select an asset"}
+              </p>
+              {assetLast != null ? (
+                <p className="lvp-pnl-focal">
+                  {priceLabel(assetLast)}
+                  {assetPctChange != null && (
+                    <span className={`lvp-pnl-focal-chip mono ${assetPctChange >= 0 ? "gain" : "loss"}`}>
+                      {assetPctChange >= 0 ? "+" : ""}{assetPctChange.toFixed(2)}%
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p className="lvp-pnl-focal lvp-muted" style={{ fontSize: 28 }}>—</p>
+              )}
+            </div>
+          ) : (
+            <div>
+              <p className="lvp-muted" style={{ marginBottom: 2 }}>
+                {metric === "unrealized" ? "Unrealized P&L" : "Realized P&L"}
+              </p>
+              {(() => {
+                const v = metric === "unrealized" ? unrealizedPnl : realizedTotal;
+                const g = v >= 0;
+                return (
+                  <p className={`lvp-pnl-focal ${g ? "gain" : "loss"}`}>
+                    {g ? "+" : "−"}${Math.abs(v).toFixed(2)}
+                  </p>
+                );
+              })()}
+            </div>
+          )}
           <div className="lvp-pnl-periods">
             {PERIODS.map((p) => (
               <button key={p.key} className={`lvp-pct-btn ${period === p.key ? "sel" : ""}`} onClick={() => setPeriod(p.key)}>
@@ -384,7 +478,28 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
             ))}
           </div>
         </div>
-        <PnlChart key={period} points={points} period={period} loading={historyLoading} />
+
+        <div className="lvp-metric-tabs">
+          {METRICS.map((m) => (
+            <button key={m.key} className={`lvp-metric-tab ${metric === m.key ? "sel" : ""}`}
+              disabled={m.disabled} onClick={() => setMetric(m.key)}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {metric === "unrealized" && (
+          <TimeSeriesChart key={`u-${period}`} points={unrealizedPoints} period={period} loading={historyLoading} mode="pnl"
+            emptyText="Not enough history yet — check back after your next trade." />
+        )}
+        {metric === "realized" && (
+          <TimeSeriesChart key={`r-${period}`} points={realizedPoints} period={period} loading={historyLoading} mode="pnl"
+            emptyText="No closed trades in this period yet." />
+        )}
+        {metric === "asset" && (
+          <TimeSeriesChart key={`a-${period}-${asset?.name}`} points={assetPoints} period={period} loading={candlesLoading} mode="price"
+            emptyText={asset ? "No price history available for this asset." : "Select an asset from the Trade tab to see its chart."} />
+        )}
       </div>
 
       <div className="lvp-stats-row">

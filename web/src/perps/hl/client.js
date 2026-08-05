@@ -196,6 +196,18 @@ export class LongviewHl {
     return this.info.userFills({ user });
   }
 
+  /**
+   * OHLC candles for one coin — powers the dashboard's per-asset price
+   * chart. `coin` must be Hyperliquid's own identifier exactly as stored
+   * on asset/position objects elsewhere in this app (plain "BTC" for the
+   * main dex, dex-prefixed "xyz:AAPL" for equities — confirmed directly
+   * against a live candleSnapshot call for both shapes before relying on
+   * this; a bare "AAPL" silently returns zero candles instead of erroring,
+   * which would be a much harder bug to notice).
+   */
+  candleSnapshot(coin, interval, startTime) {
+    return this.info.candleSnapshot({ coin, interval, startTime });
+  }
 }
 
 export class BuilderApprovalRequiredError extends Error {

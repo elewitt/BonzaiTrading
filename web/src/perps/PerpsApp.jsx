@@ -573,7 +573,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
           </div>
 
           <div style={ticketHeight ? { maxHeight: ticketHeight, overflowY: "auto" } : undefined}>
-            <PerpsDashboard hl={hl} cfg={DEFAULT_CONFIG} user={evmAddress} tradingWallet={viemAccount} positions={positions} />
+            <PerpsDashboard hl={hl} cfg={DEFAULT_CONFIG} user={evmAddress} tradingWallet={viemAccount} positions={positions} asset={asset} />
           </div>
         </div>
       )}

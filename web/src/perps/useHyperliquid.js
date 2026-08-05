@@ -222,6 +222,54 @@ export function usePortfolioStats(hl, user, pollMs = 15000) {
   return { pnlHistory, accountValueHistory, fills, volume, stats };
 }
 
+// Interval + lookback window per period — sized for a reasonable point
+// count per range (roughly 150-300 candles), not a Hyperliquid spec value.
+// "All" doesn't have a natural meaning for a live-traded asset's PRICE the
+// way it does for one account's PnL history (there's no "since I started
+// trading" anchor) — a year of daily candles is a judgment call: enough
+// real trend context without fetching an asset's entire listing history.
+const CANDLE_CONFIG = {
+  perpDay:     { interval: "5m", lookbackMs: 24 * 60 * 60 * 1000 },
+  perpWeek:    { interval: "1h", lookbackMs: 7 * 24 * 60 * 60 * 1000 },
+  perpMonth:   { interval: "4h", lookbackMs: 30 * 24 * 60 * 60 * 1000 },
+  perpAllTime: { interval: "1d", lookbackMs: 365 * 24 * 60 * 60 * 1000 },
+};
+
+/**
+ * Live OHLC price history for one asset — powers the dashboard's "Asset"
+ * chart tab. `coin` must be Hyperliquid's own identifier (asset.name /
+ * p.coin elsewhere in this app — plain "BTC" or dex-prefixed "xyz:AAPL",
+ * see LongviewHl.candleSnapshot's comment), not a display symbol.
+ */
+export function useAssetCandles(hl, coin, period, pollMs = 30000) {
+  const [points, setPoints] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!coin) { setPoints([]); setLoading(false); return; }
+    let stop = false;
+    setLoading(true);
+
+    const tick = async () => {
+      try {
+        const { interval, lookbackMs } = CANDLE_CONFIG[period] || CANDLE_CONFIG.perpDay;
+        const candles = await hl.candleSnapshot(coin, interval, Date.now() - lookbackMs);
+        if (stop) return;
+        setPoints((candles || []).map((c) => ({ ts: c.t, price: Number(c.c) })));
+        setLoading(false);
+      } catch {
+        if (!stop) setLoading(false);
+      }
+    };
+
+    void tick();
+    const h = setInterval(() => void tick(), pollMs);
+    return () => { stop = true; clearInterval(h); };
+  }, [hl, coin, period, pollMs]);
+
+  return { points, loading };
+}
+
 export function usePlaceOrder(hl, wallet, user) {
   const [pending, setPending] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
