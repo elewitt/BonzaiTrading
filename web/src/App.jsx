@@ -55,6 +55,14 @@ const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 // authorized signer on the user's wallet.
 const BOT_SESSION_SIGNER_ID = "km6qux413cpcb5n4ug8ujqp7";
 
+// The Telegram Trading Bot's public @username (matches TELEGRAM_BOT_TOKEN
+// on the server — confirmed live via the Bot API's getMe). The linking
+// instructions below previously told users to "message the bot" without
+// ever saying which one, or linking to it — there was no way to actually
+// find/open the chat from the app.
+const TELEGRAM_BOT_USERNAME = "EliTrading23BOT";
+const TELEGRAM_BOT_URL = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+
 // Same period-key vocabulary as the perps dashboard's own period selector
 // (see perps/PerpsDashboard.jsx) — reused here for the brokerage "Portfolio
 // Stats" panel so both charts behave identically, not because this is
@@ -1937,18 +1945,23 @@ export default function App() {
 
               <div style={{ marginBottom: 14 }}>
                 <p className="tiny muted" style={{ marginBottom: 6 }}>
-                  1. Get a code, then message it to the bot on Telegram as <span className="mono">/link 123456</span>.
+                  1. Open the bot on Telegram, get a code, then message it as <span className="mono">/link 123456</span>.
                 </p>
-                {telegramCode ? (
-                  <div className="account-row">
-                    <span className="mono">{telegramCode.code}</span>
-                    <span className="tiny muted">expires in {Math.round(telegramCode.expiresIn / 60)} min</span>
-                  </div>
-                ) : (
-                  <button className="btn ghost" disabled={telegramCodeBusy} onClick={getTelegramLinkCode}>
-                    {telegramCodeBusy ? "Generating…" : "Get linking code"}
-                  </button>
-                )}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <a className="btn ghost" href={TELEGRAM_BOT_URL} target="_blank" rel="noopener noreferrer">
+                    Open @{TELEGRAM_BOT_USERNAME} →
+                  </a>
+                  {telegramCode ? (
+                    <div className="account-row">
+                      <span className="mono">{telegramCode.code}</span>
+                      <span className="tiny muted">expires in {Math.round(telegramCode.expiresIn / 60)} min</span>
+                    </div>
+                  ) : (
+                    <button className="btn ghost" disabled={telegramCodeBusy} onClick={getTelegramLinkCode}>
+                      {telegramCodeBusy ? "Generating…" : "Get linking code"}
+                    </button>
+                  )}
+                </div>
                 {telegramCodeErr && <p className="tiny warn" style={{ marginTop: 4 }}>{telegramCodeErr}</p>}
               </div>
 
