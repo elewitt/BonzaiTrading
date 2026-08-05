@@ -7,7 +7,8 @@ import { useLongviewHl, usePositions, useAssets } from "./perps/useHyperliquid.j
 import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
 import { liquidationPrice } from "./perps/hl/margin.js";
 import { DEFAULT_CONFIG, EQUITY_DEX } from "./perps/config.js";
-import PerformanceChart from "./components/PerformanceChart.jsx";
+import TimeSeriesChart, { priceLabel } from "./components/TimeSeriesChart.jsx";
+import MarketsExplorer from "./components/MarketsExplorer.jsx";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
 import NewsPanel from "./components/NewsPanel.jsx";
 import HistoryScreen from "./components/HistoryScreen.jsx";
@@ -52,6 +53,17 @@ const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 // signerId is what actually registers our authorization key as an
 // authorized signer on the user's wallet.
 const BOT_SESSION_SIGNER_ID = "km6qux413cpcb5n4ug8ujqp7";
+
+// Same period-key vocabulary as the perps dashboard's own period selector
+// (see perps/PerpsDashboard.jsx) — reused here for the brokerage "Portfolio
+// Stats" panel so both charts behave identically, not because this is
+// perps data.
+const DASH_STATS_PERIODS = [
+  { key: "perpDay", label: "Day" },
+  { key: "perpWeek", label: "Week" },
+  { key: "perpMonth", label: "Month" },
+  { key: "perpAllTime", label: "All" },
+];
 
 // Single-position sell popup for the main dashboard's brokerage Positions
 // table — mirrors EquitiesMarketsApp.jsx's BuyPopup exactly (same $/units
@@ -371,7 +383,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [investPct, setInvestPct] = useState(100);
   const [statsFlipped, setStatsFlipped] = useState(false);
-  const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow"
+  const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow" | "markets"
   const [newsSearchInput, setNewsSearchInput] = useState("");
   const [newsSearchSymbol, setNewsSearchSymbol] = useState(null);
   const runNewsSearch = (e) => {
@@ -382,6 +394,11 @@ export default function App() {
   const clearNewsSearch = () => { setNewsSearchInput(""); setNewsSearchSymbol(null); };
   const [borrowDashTabKey, setBorrowDashTabKey] = useState(null);
   const [history, setHistory] = useState([]);
+  // Same period-key vocabulary ("perpDay" etc.) TimeSeriesChart's own
+  // date-formatting switches on, reused here even though this panel isn't
+  // perps data — keeps one shared chart component's label logic instead of
+  // adding a second vocabulary just for this call site.
+  const [statsPeriod, setStatsPeriod] = useState("perpAllTime");
   const [yieldMode, setYieldMode] = useState(() => localStorage.getItem("lv_yield_mode") === "true");
   const [hideDustAmounts, setHideDustAmounts] = useState(() => localStorage.getItem("lv_hide_dust") === "true");
   const [answer, setAnswer] = useState(null); // { text, sources, mentionedSymbols }
@@ -499,6 +516,22 @@ export default function App() {
     () => (registry && holdings ? derivePortfolio(holdings, prices, registry, { yieldMode }) : null),
     [registry, holdings, prices, yieldMode]
   );
+
+  // Period-filtered view of the portfolio-value history for the "Portfolio
+  // Stats" chart — the underlying `history` array holds the full ~2000-
+  // point local snapshot log unfiltered, same shape TimeSeriesChart wants
+  // ({ts, v}) already, just needs windowing by whichever range is active.
+  // Falls back to the full series if the window has under 2 points (e.g. a
+  // new account with only a day of history but "Week" selected) rather
+  // than showing an empty chart when there's real data to show.
+  const STATS_PERIOD_MS = { perpDay: 86400000, perpWeek: 7 * 86400000, perpMonth: 30 * 86400000, perpAllTime: Infinity };
+  const statsPoints = useMemo(() => {
+    if (!history.length) return [];
+    const lookback = STATS_PERIOD_MS[statsPeriod] ?? Infinity;
+    const cutoff = Number.isFinite(lookback) ? Date.now() - lookback : -Infinity;
+    const inRange = history.filter((p) => p.ts >= cutoff);
+    return inRange.length >= 2 ? inRange : history;
+  }, [history, statsPeriod]);
 
   /* ——— portfolio history: load from localStorage when address changes ——— */
   useEffect(() => {
@@ -2205,6 +2238,10 @@ export default function App() {
                 onClick={() => setDashProduct("borrow")}>
                 Borrow / Lend
               </button>
+              <button className={`dash-product-tab ${dashProduct === "markets" ? "active" : ""}`}
+                onClick={() => setDashProduct("markets")}>
+                View Markets
+              </button>
             </div>
           </div>
           <form className="news-search-row" onSubmit={runNewsSearch}>
@@ -2295,7 +2332,37 @@ export default function App() {
                     ← Allocation
                   </button>
                 </div>
-                <PerformanceChart history={history} />
+                <div className="lvp-pnl-header-row">
+                  <div>
+                    <p className="lvp-muted" style={{ marginBottom: 2 }}>Portfolio Value</p>
+                    {statsPoints.length >= 2 ? (() => {
+                      const first = statsPoints[0].v, last = statsPoints[statsPoints.length - 1].v;
+                      const pct = first > 0 ? ((last - first) / first) * 100 : null;
+                      return (
+                        <p className="lvp-pnl-focal">
+                          {priceLabel(last)}
+                          {pct != null && (
+                            <span className={`lvp-pnl-focal-chip mono ${pct >= 0 ? "gain" : "loss"}`}>
+                              {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                            </span>
+                          )}
+                        </p>
+                      );
+                    })() : (
+                      <p className="lvp-pnl-focal lvp-muted" style={{ fontSize: 28 }}>—</p>
+                    )}
+                  </div>
+                  <div className="lvp-pnl-periods">
+                    {DASH_STATS_PERIODS.map((p) => (
+                      <button key={p.key} className={`lvp-pct-btn ${statsPeriod === p.key ? "sel" : ""}`}
+                        onClick={() => setStatsPeriod(p.key)}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <TimeSeriesChart key={statsPeriod} points={statsPoints} period={statsPeriod} loading={false} mode="price"
+                  emptyText="History builds up over time — check back soon." />
               </div>
             </div>
           </div>
@@ -2363,6 +2430,8 @@ export default function App() {
             })()}
           </div>
           )}
+
+          {dashProduct === "markets" && <MarketsExplorer registry={registry} />}
 
           {dashProduct === "brokerage" && (
           <section className="card table-card card-pop">

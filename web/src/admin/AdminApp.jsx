@@ -736,7 +736,7 @@ function TradeVolumeChart({ trades }) {
   const yTicks = Array.from({ length: TICK_COUNT }, (_, i) => (vMax * i) / (TICK_COUNT - 1));
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="lvp-pnl-svg" preserveAspectRatio="xMidYMid meet">
+    <svg viewBox={`0 0 ${W} ${H}`} className="ts-chart-svg" preserveAspectRatio="xMidYMid meet">
       <defs>
         <linearGradient id="adminVolGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--pine)" stopOpacity="0.22" />

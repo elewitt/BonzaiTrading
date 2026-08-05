@@ -1303,6 +1303,14 @@ a.trow { color: inherit; text-decoration: none; }
 .perps-asset-price { font-size: 12px; color: var(--moss); }
 .perps-asset-link { color: inherit; text-decoration: none; }
 .perps-asset-link:hover { text-decoration: underline; color: var(--pine); }
+/* Markets explorer (components/MarketsExplorer.jsx) — the "Spot" /
+   "Crypto Perp" / "Equity Perp" tag on each search row, distinguishing
+   which of the two underlying data sources (registry vs Hyperliquid) a
+   result will chart from. */
+.markets-list-source {
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 8px; flex-shrink: 0; white-space: nowrap;
+}
 
 .perps-ticket-col { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
 .perps-market-header {
@@ -1514,55 +1522,59 @@ a.trow { color: inherit; text-decoration: none; }
   border-radius: 10px; letter-spacing: .01em;
 }
 .lvp-pnl-periods .lvp-pct-btn.sel { box-shadow: 0 2px 8px rgba(26,68,51,.28); }
-/* Remounted (React `key={period}`) on every Day/Week/Month/All switch, so
-   this fade-in replays each time instead of needing to animate between two
-   different datasets — much simpler than morphing SVG paths, and reads as
-   an intentional transition rather than an abrupt swap. */
-.lvp-pnl-wrap {
+
+/* ——— TimeSeriesChart (components/TimeSeriesChart.jsx) — shared by the
+   perps dashboard, the brokerage "Portfolio Stats" panel, and the Markets
+   explorer. "ts-chart-" prefix (not "lvp-") since it's no longer perps-only. ——— */
+/* Remounted (React `key`) on every period switch, so this fade-in replays
+   each time instead of needing to animate between two different datasets —
+   much simpler than morphing SVG paths, and reads as an intentional
+   transition rather than an abrupt swap. */
+.ts-chart-wrap {
   position: relative;
   outline: none;
-  animation: lvp-pnl-fade-in .25s ease;
+  animation: ts-chart-fade-in .25s ease;
 }
-@keyframes lvp-pnl-fade-in {
+@keyframes ts-chart-fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.lvp-pnl-svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: none; cursor: crosshair; }
-.lvp-pnl-chart-empty { text-align: center; padding: 60px 0; font-size: 12px; }
-.lvp-pnl-hilo { display: flex; gap: 24px; margin-top: 12px; font-size: 12px; }
-.lvp-pnl-hilo strong { color: var(--ink); font-weight: 500; }
+.ts-chart-svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: none; cursor: crosshair; }
+.ts-chart-empty { text-align: center; padding: 60px 0; font-size: 12px; }
+.ts-chart-hilo { display: flex; gap: 24px; margin-top: 12px; font-size: 12px; }
+.ts-chart-hilo strong { color: var(--ink); font-weight: 500; }
 
-/* Loading skeleton — shown only before the FIRST poll resolves (see
-   historyLoading in PerpsDashboard), not for a genuinely sparse period,
-   which gets its own distinct "not enough history" copy instead. */
-.lvp-pnl-skeleton {
+/* Loading skeleton — shown only before the FIRST poll resolves, not for a
+   genuinely sparse period, which gets its own distinct "not enough
+   history" copy instead. */
+.ts-chart-skeleton {
   height: 236px; border-radius: 10px; margin-bottom: 12px;
   background: linear-gradient(90deg, var(--paper) 25%, var(--card) 50%, var(--paper) 75%);
   background-size: 200% 100%;
-  animation: lvp-pnl-shimmer 1.4s ease-in-out infinite;
+  animation: ts-chart-shimmer 1.4s ease-in-out infinite;
 }
-@keyframes lvp-pnl-shimmer {
+@keyframes ts-chart-shimmer {
   from { background-position: 200% 0; }
   to   { background-position: -200% 0; }
 }
 
 /* Soft halo pulsing behind the live end-of-line dot — "this number is
    moving right now," the same visual language a live ticker uses. */
-.lvp-pnl-live-pulse {
+.ts-chart-live-pulse {
   transform-box: fill-box; transform-origin: center;
-  animation: lvp-pnl-pulse 2.2s ease-in-out infinite;
+  animation: ts-chart-pulse 2.2s ease-in-out infinite;
 }
-@keyframes lvp-pnl-pulse {
+@keyframes ts-chart-pulse {
   0%, 100% { transform: scale(0.85); opacity: 0.22; }
   50%      { transform: scale(1.35); opacity: 0.05; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lvp-pnl-wrap { animation: none; }
-  .lvp-pnl-live-pulse { animation: none; }
-  .lvp-pnl-skeleton { animation: none; }
+  .ts-chart-wrap { animation: none; }
+  .ts-chart-live-pulse { animation: none; }
+  .ts-chart-skeleton { animation: none; }
 }
 
-.lvp-pnl-tooltip {
+.ts-chart-tooltip {
   position: absolute; transform: translateY(-100%) translateY(-10px);
   display: flex; flex-direction: column; gap: 2px;
   background: var(--ink); color: var(--paper);
@@ -1570,8 +1582,8 @@ a.trow { color: inherit; text-decoration: none; }
   box-shadow: 0 6px 16px rgba(10,24,18,.24);
   pointer-events: none; white-space: nowrap; z-index: 2;
 }
-.lvp-pnl-tooltip.right { transform: translateY(-100%) translateY(-10px) translateX(-6px); }
-.lvp-pnl-tooltip.left  { transform: translateY(-100%) translateY(-10px) translateX(calc(-100% + 6px)); }
+.ts-chart-tooltip.right { transform: translateY(-100%) translateY(-10px) translateX(-6px); }
+.ts-chart-tooltip.left  { transform: translateY(-100%) translateY(-10px) translateX(calc(-100% + 6px)); }
 /* Distinct from --gain/--loss (which are tuned for text on the app's LIGHT
    surface) — the tooltip has a fixed dark background regardless of the
    rest of the page, so its gain/loss text needed its own pair validated
@@ -1580,11 +1592,11 @@ a.trow { color: inherit; text-decoration: none; }
    from the dataviz skill directory to reproduce — passes lightness band,
    chroma floor, contrast, and CVD separation (6.8, the legal-with-
    secondary-encoding floor band; the tooltip already leads with an
-   explicit +/− sign via yLabelExact, not color alone). */
-.lvp-pnl-tooltip-value { font-size: 14px; font-weight: 600; }
-.lvp-pnl-tooltip-value.gain { color: #1FA971; }
-.lvp-pnl-tooltip-value.loss { color: #DB5A3C; }
-.lvp-pnl-tooltip .muted { color: var(--paper); opacity: .65; }
+   explicit +/− sign via deltaLabelExact/priceLabel, not color alone). */
+.ts-chart-tooltip-value { font-size: 14px; font-weight: 600; }
+.ts-chart-tooltip-value.gain { color: #1FA971; }
+.ts-chart-tooltip-value.loss { color: #DB5A3C; }
+.ts-chart-tooltip .muted { color: var(--paper); opacity: .65; }
 
 .lvp-stats-row {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

@@ -26,11 +26,11 @@ function fmtBig(n) {
   return `$${n.toFixed(0)}`;
 }
 
-// Adapted from PerformanceChart.jsx's hand-rolled SVG line chart (no
-// charting library in this app) — different data shape ({ts, price} here
-// vs {ts, v} there) and gradient/clipPath ids are namespaced ("asset...")
-// since this modal can render on top of the dashboard while a
-// PerformanceChart is also mounted underneath, and duplicate SVG ids would
+// Hand-rolled SVG line chart (no charting library in this app — see also
+// the shared components/TimeSeriesChart.jsx used elsewhere) — different
+// data shape ({ts, price} here) and gradient/clipPath ids are namespaced
+// ("asset...") since this modal can render on top of the dashboard while
+// another chart is also mounted underneath, and duplicate SVG ids would
 // collide.
 function AssetChart({ points, range }) {
   if (!points || points.length < 2) {
