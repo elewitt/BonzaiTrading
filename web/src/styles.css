@@ -1344,6 +1344,40 @@ a.trow { color: inherit; text-decoration: none; }
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
   white-space: nowrap; flex-shrink: 0;
 }
+/* "How it works" — a 4-step diagram replacing what used to be a long
+   explainer paragraph, so the mechanic (set it up → agent watches → you
+   confirm → it executes) reads at a glance instead of requiring the
+   paragraph to be read in full. */
+.agents-how-it-works {
+  display: flex; align-items: flex-start; gap: 6px;
+  overflow-x: auto; padding-bottom: 2px; /* safety net on very narrow viewports, never triggers at normal widths */
+}
+.agents-step {
+  flex: 1; min-width: 110px; display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 8px; padding: 6px 4px; border-radius: 12px;
+  transition: background .15s;
+}
+.agents-step:hover { background: rgba(26,68,51,.04); }
+.agents-step-icon {
+  width: 42px; height: 42px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(26,68,51,.07); color: var(--pine);
+  transition: transform .15s, background .15s;
+}
+.agents-step:hover .agents-step-icon { background: var(--pine); color: #fff; transform: translateY(-2px); }
+.agents-step-icon svg { width: 19px; height: 19px; }
+.agents-step-label { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.agents-step-sub { margin: 0; font-size: 11.5px; color: var(--moss); }
+.agents-step-arrow { color: var(--line); flex-shrink: 0; margin-top: 21px; }
+@media (prefers-reduced-motion: reduce) { .agents-step-icon { transition: none; } .agents-step:hover .agents-step-icon { transform: none; } }
+@media (max-width: 640px) {
+  .agents-how-it-works { flex-direction: column; align-items: stretch; gap: 2px; }
+  .agents-step { flex-direction: row; align-items: center; text-align: left; min-width: 0; }
+  .agents-step-icon { flex-shrink: 0; }
+  .agents-step-text { display: flex; flex-direction: column; gap: 2px; }
+  .agents-step-arrow { display: none; }
+}
+
 /* Pending proposals are the one thing on this page that need action —
    a left accent bar (same --gold the perps network badge already uses
    for a "worth noticing" signal) sets it apart from the two passive
