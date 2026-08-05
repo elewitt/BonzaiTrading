@@ -51,6 +51,7 @@ export const api = {
   withdraw: (body)               => post("/api/withdraw", body),
   ask:      (prompt)             => post("/api/ask", { prompt }),
   telegramLinkCode: (address)    => post("/api/telegram/link-code", { address }),
+  telegramStatus: (address)      => get(`/api/telegram/status?wallet=${encodeURIComponent(address)}`),
   setDiscoverable: (enabled)     => post("/api/users/discoverable", { enabled }),
   lookupUserByEmail: (email)     => get(`/api/users/lookup?email=${encodeURIComponent(email)}`),
   marketInfo:  (symbol)          => get(`/api/market/${symbol}`),

@@ -1,5 +1,7 @@
-import { Fragment } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import StrategiesPanel from "./StrategiesPanel.jsx";
+import { api } from "../lib/api.js";
+import { TELEGRAM_BOT_USERNAME, TELEGRAM_BOT_URL } from "../lib/telegram.js";
 
 // Hand-rolled line icons, matching the stroke-based style already used
 // elsewhere in the app (e.g. the "Share" icon on the brokerage dashboard,
@@ -69,6 +71,103 @@ function HowItWorks() {
 }
 
 /**
+ * Connect/manage Telegram right on the Trading Agent page — previously
+ * this only existed buried in My Profile → Settings, with no indication
+ * from the page that actually generates proposals that Telegram was even
+ * an option. Polls telegram/status briefly after a code is generated so
+ * "Connected" flips on by itself once the user sends /link in the bot,
+ * without requiring a manual refresh.
+ */
+function TelegramConnectCard({
+  solanaAddress, telegramCode, telegramCodeBusy, telegramCodeErr, getTelegramLinkCode,
+  botTradingEnabled, botTradingBusy, toggleBotTrading,
+}) {
+  const [linked, setLinked] = useState(null); // null = still loading
+
+  const refreshLinked = useCallback(async () => {
+    if (!solanaAddress) return;
+    try {
+      const { linked } = await api.telegramStatus(solanaAddress);
+      setLinked(linked);
+    } catch {
+      setLinked(false);
+    }
+  }, [solanaAddress]);
+
+  useEffect(() => { refreshLinked(); }, [refreshLinked]);
+
+  // Once a code has been generated, poll for a few minutes so linking
+  // completes without the user needing to come back and refresh — stops
+  // as soon as it's confirmed linked, or the code itself would expire.
+  useEffect(() => {
+    if (!telegramCode || linked) return;
+    const t = setInterval(refreshLinked, 4000);
+    return () => clearInterval(t);
+  }, [telegramCode, linked, refreshLinked]);
+
+  if (linked === null) return null; // avoid a flash of "not connected" before the first check resolves
+
+  if (linked) {
+    return (
+      <div className="lvp-card agents-telegram-card" style={{ marginBottom: 24 }}>
+        <div className="card-toprow">
+          <p className="table-card-title">Telegram</p>
+          <span className="tiny agents-telegram-status connected">✓ Connected</span>
+        </div>
+        <p className="lvp-muted" style={{ margin: "2px 0 0" }}>
+          You'll get a message the moment a proposal is ready — reply "YES &lt;id&gt;" right in the chat to confirm it.
+        </p>
+        {!botTradingEnabled && (
+          <div className="agents-telegram-bot-trading-row">
+            <p className="tiny muted" style={{ margin: 0 }}>
+              Enable Bot Trading to confirm from Telegram — linking alone only turns on notifications.
+            </p>
+            <label className="switch">
+              <input type="checkbox" checked={botTradingEnabled} disabled={botTradingBusy}
+                onChange={(e) => toggleBotTrading(e.target.checked)} />
+              <span className="switch-track"><span className="switch-thumb" /></span>
+            </label>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="lvp-card agents-telegram-card" style={{ marginBottom: 24 }}>
+      <div className="card-toprow">
+        <p className="table-card-title">Connect Telegram</p>
+        <span className="tiny muted agents-telegram-status">Not connected</span>
+      </div>
+      <p className="lvp-muted" style={{ margin: "2px 0 14px" }}>
+        Get notified the moment a strategy proposal is ready, and confirm it right from the chat — no need to open the app.
+      </p>
+      <div className="agents-telegram-actions">
+        <a className="btn ghost" href={TELEGRAM_BOT_URL} target="_blank" rel="noopener noreferrer">
+          Open @{TELEGRAM_BOT_USERNAME} →
+        </a>
+        {telegramCode ? (
+          <div className="account-row">
+            <span className="mono">{telegramCode.code}</span>
+            <span className="tiny muted">expires in {Math.round(telegramCode.expiresIn / 60)} min</span>
+          </div>
+        ) : (
+          <button className="btn primary" disabled={telegramCodeBusy} onClick={getTelegramLinkCode}>
+            {telegramCodeBusy ? "Generating…" : "Get linking code"}
+          </button>
+        )}
+      </div>
+      {telegramCodeErr && <p className="err tiny" style={{ marginTop: 8 }}>{telegramCodeErr}</p>}
+      {telegramCode && (
+        <p className="tiny muted" style={{ marginTop: 8 }}>
+          Message it to the bot as <span className="mono">/link {telegramCode.code}</span> — this updates automatically once you do.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * Trading Agent — a standalone top-level page (own nav button, own screen),
  * not a tab nested inside the brokerage dashboard. Same shell pattern as
  * PredictionMarketsApp.jsx: a back button + an intro card explaining the
@@ -77,7 +176,11 @@ function HowItWorks() {
  * paragraph, so it reads at a glance. The actual strategy creation/
  * management UI lives in StrategiesPanel.jsx — this file is just chrome.
  */
-export default function TradingAgentApp({ registry, solanaAddress, signWithWallet, onBack }) {
+export default function TradingAgentApp({
+  registry, solanaAddress, signWithWallet, onBack,
+  telegramCode, telegramCodeBusy, telegramCodeErr, getTelegramLinkCode,
+  botTradingEnabled, botTradingBusy, toggleBotTrading,
+}) {
   return (
     <div className="stage wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
@@ -92,6 +195,10 @@ export default function TradingAgentApp({ registry, solanaAddress, signWithWalle
         </p>
         <HowItWorks />
       </div>
+
+      <TelegramConnectCard solanaAddress={solanaAddress}
+        telegramCode={telegramCode} telegramCodeBusy={telegramCodeBusy} telegramCodeErr={telegramCodeErr} getTelegramLinkCode={getTelegramLinkCode}
+        botTradingEnabled={botTradingEnabled} botTradingBusy={botTradingBusy} toggleBotTrading={toggleBotTrading} />
 
       <StrategiesPanel registry={registry} address={solanaAddress} signWithWallet={signWithWallet} />
     </div>

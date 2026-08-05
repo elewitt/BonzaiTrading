@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG, EQUITY_DEX } from "./perps/config.js";
 import TimeSeriesChart, { priceLabel } from "./components/TimeSeriesChart.jsx";
 import MarketsExplorer from "./components/MarketsExplorer.jsx";
 import TradingAgentApp from "./agents/TradingAgentApp.jsx";
+import { TELEGRAM_BOT_USERNAME, TELEGRAM_BOT_URL } from "./lib/telegram.js";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
 import NewsPanel from "./components/NewsPanel.jsx";
 import HistoryScreen from "./components/HistoryScreen.jsx";
@@ -54,14 +55,6 @@ const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 // signerId is what actually registers our authorization key as an
 // authorized signer on the user's wallet.
 const BOT_SESSION_SIGNER_ID = "km6qux413cpcb5n4ug8ujqp7";
-
-// The Telegram Trading Bot's public @username (matches TELEGRAM_BOT_TOKEN
-// on the server — confirmed live via the Bot API's getMe). The linking
-// instructions below previously told users to "message the bot" without
-// ever saying which one, or linking to it — there was no way to actually
-// find/open the chat from the app.
-const TELEGRAM_BOT_USERNAME = "EliTrading23BOT";
-const TELEGRAM_BOT_URL = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
 
 // Same period-key vocabulary as the perps dashboard's own period selector
 // (see perps/PerpsDashboard.jsx) — reused here for the brokerage "Portfolio
@@ -2160,7 +2153,9 @@ export default function App() {
       )}
 
       {screen === "agents" && (
-        <TradingAgentApp registry={registry} solanaAddress={address} signWithWallet={signWithWallet} onBack={() => setView("auto")} />
+        <TradingAgentApp registry={registry} solanaAddress={address} signWithWallet={signWithWallet} onBack={() => setView("auto")}
+          telegramCode={telegramCode} telegramCodeBusy={telegramCodeBusy} telegramCodeErr={telegramCodeErr} getTelegramLinkCode={getTelegramLinkCode}
+          botTradingEnabled={botTradingEnabled} botTradingBusy={botTradingBusy} toggleBotTrading={toggleBotTrading} />
       )}
 
       {screen === "referrals" && (

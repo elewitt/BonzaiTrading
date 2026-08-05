@@ -28,6 +28,7 @@ import {
   setStrategyStatus, touchStrategyEvaluated,
   listPendingProposalsForWallet, getProposal,
   markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
+  getTelegramLinksForWallet,
 } from "./db.js";
 import { getPerpsPositions } from "./hyperliquid.js";
 import { sendEmail } from "./email.js";
@@ -2565,6 +2566,21 @@ app.post("/api/telegram/link-code", requireAuth, (req, res) => {
   const { address } = req.body || {};
   if (!address) return res.status(400).json({ error: "address required" });
   res.json(generateLinkCode(address));
+});
+
+/** Whether this wallet has at least one linked Telegram chat — lets the UI
+ * show a real "Connected" state instead of just "a code was generated at
+ * some point in this browser session" (telegramCode's own state doesn't
+ * know whether the user actually finished sending /link to the bot). */
+app.get("/api/telegram/status", requireAuth, async (req, res) => {
+  try {
+    const wallet = String(req.query.wallet || "");
+    if (!wallet) return res.status(400).json({ error: "wallet required" });
+    const chatIds = await getTelegramLinksForWallet(wallet);
+    res.json({ linked: chatIds.length > 0 });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
 });
 
 mountTelegramRoutes(app, {

@@ -1344,6 +1344,14 @@ a.trow { color: inherit; text-decoration: none; }
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
   white-space: nowrap; flex-shrink: 0;
 }
+/* Connect Telegram card (agents/TradingAgentApp.jsx) */
+.agents-telegram-status { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; white-space: nowrap; flex-shrink: 0; }
+.agents-telegram-status.connected { color: var(--gain); border-color: var(--gain); background: rgba(21,96,64,.06); }
+.agents-telegram-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.agents-telegram-bot-trading-row {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
 /* "How it works" — a 4-step diagram replacing what used to be a long
    explainer paragraph, so the mechanic (set it up → agent watches → you
    confirm → it executes) reads at a glance instead of requiring the
