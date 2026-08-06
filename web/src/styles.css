@@ -365,6 +365,32 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   transition: border-color .15s, box-shadow .15s;
 }
 .field:focus { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(26,68,51,.1); }
+
+/* ——— Global mobile rescale ———
+   The mobile work up to this point (bottom nav, bottom sheets, card-stack
+   tables, touch targets) fixed known trouble spots but never touched the
+   base scale itself, so the app still read as a shrunk-down desktop
+   layout: full desktop padding on .stage/.card eating width mobile can't
+   spare, and desktop-sized display numbers that don't balance against a
+   375px viewport. This is the base-scale pass everything else sits on. */
+@media (max-width: 600px) {
+  .stage { padding: 24px 18px 32px; }
+  .card, .lvp-card { padding: 18px; border-radius: 14px; }
+  .table-card { padding: 16px 16px 4px; }
+  .display { font-size: 32px; }
+  .display.sm { font-size: 24px; }
+  .value-serif { font-size: 36px; }
+  .lede { font-size: 14.5px; margin-bottom: 20px; line-height: 1.6; }
+
+  /* Below 16px, mobile Safari zooms the whole page in on focus — jarring,
+     and reads as broken rather than just small. .field/.perps-asset-search/
+     .hist-search are the three text-input base classes covering every
+     form in the app (amounts, search, the delta-neutral form, etc.), all
+     sized for a mouse at 13-15px. */
+  .field { font-size: 16px; padding: 12px 14px; }
+  .perps-asset-search { font-size: 16px; padding: 11px 12px; }
+  .hist-search { font-size: 16px; padding: 10px 14px 10px 36px; }
+}
 .field.num { width: 76px; text-align: right; padding: 7px 10px; }
 
 /* ——— Buttons ——— */
