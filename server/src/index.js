@@ -13,6 +13,7 @@ import { getRegistry, USDC, USDY, JUP_BASE, jupHeaders, NON_XSTOCK_SYMBOLS } fro
 import { generateLinkCode, mountTelegramRoutes } from "./telegram.js";
 import { mountStrategyRoutes } from "./strategyRoutes.js";
 import { startStrategyEvaluator } from "./strategyAgents/evaluator.js";
+import { STRATEGY_TYPES } from "./strategyAgents/index.js";
 import { getMarketInfo, getMarketChart } from "./marketdata.js";
 import { ensureArbitrumGas, depositToHyperliquid, getArbitrumSponsorStatus } from "./arbitrumSponsor.js";
 import { checkAndRelayCctpDeposit, checkAndRelayCctpWithdraw } from "./cctp.js";
@@ -26,7 +27,7 @@ import {
   createKaminoFeeObligation, getUnpaidKaminoFeeObligation, markKaminoFeeObligationPaid,
   createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
   setStrategyStatus, touchStrategyEvaluated,
-  listPendingProposalsForWallet, getProposal,
+  listPendingProposalsForWallet, getProposal, listProposalsForStrategy,
   markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
   getTelegramLinksForWallet,
 } from "./db.js";
@@ -843,6 +844,97 @@ app.post("/api/parse-borrow", requireAuth, parseLimiter, async (req, res) => {
   try {
     const { prompt } = req.body || {};
     const result = await parseBorrowPrompt({ prompt });
+    res.json(result);
+  } catch (e) {
+    res.status(422).json({ error: String(e.message || e) });
+  }
+});
+
+/**
+ * Prompt → a recurring DCA (dollar-cost averaging) plan — the ONLY thing
+ * this parses. This is a deliberate scope boundary, not a limitation to
+ * paper over: Strategy Agents intentionally supports curated, reviewed
+ * mechanisms only (no freeform LLM-authored trade logic — a strategy
+ * "wish" that depends on a price condition, an event, or is a one-time
+ * trade must be explicitly rejected here (supported:false) rather than
+ * silently coerced into a schedule that ignores what was actually asked
+ * for. Claude only extracts intent (symbol/amount/frequency); real bounds
+ * (min/max $, min/max interval) are re-validated server-side afterward via
+ * the same STRATEGY_TYPES.dca.validateParams the manual creation path
+ * uses — never trusted from the model's output alone.
+ */
+async function parseStrategyPrompt({ prompt }) {
+  if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
+  if (!prompt) throw new Error("prompt required");
+  const { bySymbol } = await getRegistry();
+  const assets = Object.values(bySymbol)
+    .filter((t) => t.symbol !== "USDC")
+    .map((t) => `${t.symbol} — ${t.name}`)
+    .join("\n");
+
+  const system = `You extract a recurring dollar-cost-averaging (DCA) purchase plan from a plain-English request, for a product where a user sets up "buy $X of ASSET every N days" and it runs on a schedule.
+
+Assets available (symbol — name):
+${assets}
+
+Respond with ONLY a JSON object. No markdown, no backticks, no prose.
+
+If the request IS a plain recurring buy on a fixed schedule:
+{"supported":true,"symbol":"BTC","usdPerInterval":50,"intervalDays":7,"summary":"one short plain sentence"}
+
+If the request is NOT a plain recurring buy on a fixed schedule — e.g. it depends on a price/market condition ("buy the dip", "when it drops 5%"), a one-time trade, or anything else this can't express as "$X every N days":
+{"supported":false,"reason":"one short plain sentence explaining why, noting only a fixed recurring schedule is supported right now"}
+
+Rules:
+- Map company/index/crypto names to symbols the same way you would for a portfolio instruction (Apple→AAPLx, S&P 500→SPYx, bitcoin→BTC, etc). Use only the listed symbols.
+- Map generic yield/treasury requests (no country named) to USDY. Only map to a Foreign Sovereign Bond (KTB/CETES/TESOURO/GILTS) when that specific country/currency is named.
+- intervalDays: "daily"→1, "weekly"→7, "every 2 weeks"/"biweekly"/"fortnightly"→14, "monthly"→30, or an explicit number of days if one is given. Must be a whole number.
+- usdPerInterval: NEVER invent or estimate a dollar amount — only extract what the user actually said. If no amount is given at all, that's unsupported (missing what's needed for a plan), not a guess.
+- If the asset named isn't in the list above, that's unsupported — say so in "reason".`;
+
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 300,
+      system,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message);
+  const raw_text = (data.content || [])
+    .filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Claude returned no JSON");
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  if (!parsed.supported) {
+    throw new Error(parsed.reason || "That doesn't look like a recurring buy on a fixed schedule — try something like \"buy $50 of bitcoin every week\".");
+  }
+
+  const symbol = String(parsed.symbol || "").trim();
+  const token = bySymbol[symbol];
+  if (!token || token.symbol === "USDC") {
+    throw new Error(`"${symbol || "that asset"}" isn't available on this platform.`);
+  }
+
+  const params = { symbol: token.symbol, usdPerInterval: Number(parsed.usdPerInterval), intervalDays: Number(parsed.intervalDays) };
+  const paramError = STRATEGY_TYPES.dca.validateParams(params);
+  if (paramError) throw new Error(paramError);
+
+  return { symbol: token.symbol, name: token.name, mint: token.mint, usdPerInterval: params.usdPerInterval, intervalDays: params.intervalDays, summary: parsed.summary || "" };
+}
+
+app.post("/api/parse-strategy", requireAuth, parseLimiter, async (req, res) => {
+  try {
+    const { prompt } = req.body || {};
+    const result = await parseStrategyPrompt({ prompt });
     res.json(result);
   } catch (e) {
     res.status(422).json({ error: String(e.message || e) });
@@ -2601,7 +2693,7 @@ mountStrategyRoutes(app, {
   getRegistry, buildOrder, logActivity,
   createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
   setStrategyStatus, touchStrategyEvaluated,
-  listPendingProposalsForWallet, getProposal,
+  listPendingProposalsForWallet, getProposal, listProposalsForStrategy,
   markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
 });
 

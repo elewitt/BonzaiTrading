@@ -530,6 +530,19 @@ export async function listPendingProposalsForWallet(walletAddress) {
   return rows;
 }
 
+/** Every proposal a strategy has ever had (any status) — the "history of
+ * past purchases" view. Ownership-checked the same way getProposal is
+ * (id + walletAddress together), so this can't be used to read another
+ * wallet's strategy history by guessing an id. */
+export async function listProposalsForStrategy(strategyId, walletAddress) {
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM strategy_proposals WHERE strategy_id = $1 AND wallet_address = $2 ORDER BY created_at DESC`,
+    [strategyId, walletAddress],
+  );
+  return rows;
+}
+
 /** Ownership-checked the same way setStrategyStatus is — used before
  * building or confirming a proposal so a wallet can't act on one that
  * isn't theirs. */

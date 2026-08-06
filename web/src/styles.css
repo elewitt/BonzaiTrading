@@ -1388,32 +1388,41 @@ a.trow { color: inherit; text-decoration: none; }
 
 /* Pending proposals are the one thing on this page that need action —
    a left accent bar (same --gold the perps network badge already uses
-   for a "worth noticing" signal) sets it apart from the two passive
-   cards below without a heavier banner treatment. */
+   for a "worth noticing" signal) sets it apart from the passive cards
+   below without a heavier banner treatment. */
 .agents-proposals-card { border-left: 3px solid var(--gold); }
-/* Equal-width columns, stretched to match height — a fixed 380px/1fr split
-   left the form card cramped (not enough room for the Frequency pills,
-   see .strategy-freq-picker below) while stretching "Your Strategies" far
-   wider than its content ever needs, especially when empty. Stretching
-   both to the same height (instead of each sizing to its own content)
-   keeps the two cards visually paired rather than one towering over a
-   half-empty other. */
-.agents-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }
-@media (max-width: 768px) { .agents-layout { grid-template-columns: 1fr; } }
-.agents-strategies-card { display: flex; flex-direction: column; }
-.agents-empty-state { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; margin: 0; padding: 24px 0; }
 
-/* Frequency picker (Daily / Weekly / Every 2 weeks / Monthly) — its own
-   sizing rather than reusing .lvp-pnl-periods .lvp-pct-btn (tuned for
-   short 3-5 char labels like "Day"/"Week" on the perps chart): "Every 2
-   weeks" needs more room than that padding/font-size budget allows, which
-   was overflowing the card at narrower widths. Tighter padding buys most
-   of that room back; flex-wrap is the guarantee that no combination of
-   viewport width and label length can ever clip a button — it wraps to a
-   second row (growing the card, not the button past its edge) instead. */
-.strategy-freq-picker { display: flex; flex-wrap: wrap; gap: 8px; }
-.strategy-freq-picker .lvp-pct-btn { flex: 0 0 auto; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 10px; }
-.strategy-freq-picker .lvp-pct-btn.sel { box-shadow: 0 2px 8px rgba(26,68,51,.28); }
+/* New-strategy prompt bar reuses .prompt-wrap/.prompt-box as-is (same
+   input the main dashboard's "What would you like to do?" bar uses) —
+   the parsed-intent preview below it is this page's own. */
+.agents-parsed-preview {
+  margin-top: 14px; padding: 14px; border-radius: 10px;
+  background: rgba(26,68,51,.04); border: 1px solid var(--line);
+}
+/* .wfoot's sticky-bottom + opaque background is a modal-scrolling
+   affordance (see its own comment) that doesn't apply here — without this
+   override it paints a stray opaque bar over this card's tinted
+   background. */
+.agents-parsed-preview .wfoot { position: static; background: transparent; }
+
+.agents-strategy-card { display: flex; flex-direction: column; gap: 14px; }
+.agents-schedule-row { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.agents-schedule-dates { display: flex; flex-wrap: wrap; gap: 6px; }
+.agents-schedule-chip {
+  font-size: 12px; font-family: 'IBM Plex Mono', monospace;
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--moss);
+}
+.agents-history-section { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.agents-history-list { display: flex; flex-direction: column; gap: 6px; }
+.agents-history-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 0;
+}
+.agents-history-status { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 2px 9px; flex-shrink: 0; }
+.agents-history-status-confirmed { color: var(--gain); background: rgba(21,96,64,.08); }
+.agents-history-status-rejected { color: var(--loss); background: rgba(150,54,38,.08); }
+.agents-history-status-expired { color: var(--moss); background: rgba(90,108,98,.08); }
+.agents-history-row a { color: var(--pine); margin-left: auto; }
 
 .perps-ticket-col { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
 .perps-market-header {

@@ -21,7 +21,7 @@ export function mountStrategyRoutes(app, deps) {
     getRegistry, buildOrder, logActivity,
     createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
     setStrategyStatus, touchStrategyEvaluated,
-    listPendingProposalsForWallet, getProposal,
+    listPendingProposalsForWallet, getProposal, listProposalsForStrategy,
     markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
   } = deps;
   const stack = [requireAuth, requireAllowedGeo, requireActiveAccount];
@@ -72,6 +72,21 @@ export function mountStrategyRoutes(app, deps) {
       const wallet = String(req.query.wallet || "");
       if (!wallet) return res.status(400).json({ error: "wallet required" });
       res.json({ strategies: await listStrategiesForWallet(wallet) });
+    } catch (e) {
+      res.status(502).json({ error: String(e.message || e) });
+    }
+  });
+
+  /** Every proposal a strategy has ever had — "history of past purchases"
+   * on the Trading Agent page. Every status is returned (not just
+   * confirmed) so the UI can distinguish an executed buy from one that
+   * was rejected or expired unconfirmed, rather than the history silently
+   * looking sparser than what actually happened. */
+  app.get("/api/strategies/:id/history", ...stack, async (req, res) => {
+    try {
+      const wallet = String(req.query.wallet || "");
+      if (!wallet) return res.status(400).json({ error: "wallet required" });
+      res.json({ proposals: await listProposalsForStrategy(req.params.id, wallet) });
     } catch (e) {
       res.status(502).json({ error: String(e.message || e) });
     }
