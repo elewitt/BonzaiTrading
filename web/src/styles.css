@@ -604,6 +604,25 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .alloc-bar-track { flex: 1; height: 3px; background: var(--line); border-radius: 99px; overflow: hidden; min-width: 30px; }
 .alloc-bar-fill  { height: 100%; border-radius: 99px; transition: width .4s ease; opacity: .8; }
 .lg-pct { color: var(--moss); width: 38px; text-align: right; flex-shrink: 0; }
+/* Mobile: 5 cramped columns (Price/Value/Allocation all fighting for
+   space next to an already-ellipsis-truncated name) become a 2-row card
+   per asset instead — name+value prominent on row 1, price+allocation
+   demoted to row 2. Every field stays visible (nothing dropped, just
+   reorganized), and this reuses the exact same DOM Donut.jsx already
+   renders via grid-template-areas — no JSX changes needed. */
+@media (max-width: 600px) {
+  .legend-header { display: none; }
+  .legend-row {
+    grid-template-columns: 14px 1fr auto;
+    grid-template-areas: "dot identity value" "dot price alloc";
+    row-gap: 6px; column-gap: 10px; padding: 12px 10px;
+  }
+  .legend-row .dot { grid-area: dot; margin-top: 4px; }
+  .lg-identity { grid-area: identity; }
+  .lg-val { grid-area: value; }
+  .lg-price { grid-area: price; text-align: left; }
+  .lg-alloc { grid-area: alloc; }
+}
 
 /* ——— Holdings table ——— */
 .table-card { padding: 20px 20px 6px; margin-bottom: 26px; }
@@ -1841,9 +1860,28 @@ a.trow { color: inherit; text-decoration: none; }
 @media (max-width: 768px) {
   .perps-trade-layout { grid-template-columns: 1fr; }
   .perps-deposit-layout { grid-template-columns: 1fr; }
-  .perps-topbar { padding: 12px 16px; }
+  /* auto/1fr/auto (was 1fr/auto/1fr) so the fixed-content back-button and
+     badge columns take exactly their own width, and the wordmark — the
+     one genuinely variable-length piece ("Bonzai Trading Perps"/"Borrow")
+     — gets the flexible, truncatable track instead of just overflowing
+     it uncontained. */
+  .perps-topbar { padding: 12px 16px; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
+  .perps-wordmark { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
   .perps-tabs { padding: 0 16px; }
   .perps-trade-layout, .perps-deposit-layout, .perps-account-layout { padding: 16px; }
+
+  /* Balance bar: 3 stat pairs + a Deposit/Withdraw button pair, all in
+     one non-wrapping row today — wraps the stats and moves the buttons
+     to their own full-width row so nothing overflows. !important is the
+     standard, correct way to override the inline marginLeft:auto style
+     PerpsApp.jsx sets on the button-group span (an ordinary specificity
+     rule can never beat an inline style; only !important can). */
+  .perps-balance-bar { flex-wrap: wrap; gap: 14px 24px; padding: 12px 16px; }
+  .perps-balance-bar > span:last-child {
+    margin-left: 0 !important; width: 100%; margin-top: 2px;
+    flex-direction: row !important; gap: 10px !important;
+  }
+  .perps-balance-bar > span:last-child .lvp-btn { flex: 1; }
 }
 
 /* ═══════════════════════════════════════════════
@@ -2303,6 +2341,14 @@ a.trow { color: inherit; text-decoration: none; }
 }
 
 .borrow-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); background: var(--card); padding: 0 28px; }
+@media (max-width: 600px) {
+  /* 3 tabs at desktop padding don't quite overflow at 375px the way the
+     balance bar/topbar did, but they're tight — scroll rather than wrap
+     (an underlined tab strip wrapping to a second line looks broken) so
+     it degrades to a swipeable strip in the worst case instead. */
+  .borrow-tabs { padding: 0 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .borrow-tab { padding: 12px 14px; font-size: 13px; flex-shrink: 0; white-space: nowrap; }
+}
 .borrow-tab {
   background: none; border: none; border-bottom: 2px solid transparent;
   padding: 14px 20px; font-family: inherit; font-size: 14px; font-weight: 500;
