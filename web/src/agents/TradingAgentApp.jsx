@@ -177,9 +177,10 @@ function TelegramConnectCard({
  * management UI lives in StrategiesPanel.jsx — this file is just chrome.
  */
 export default function TradingAgentApp({
-  registry, solanaAddress, signWithWallet, onBack,
+  solanaAddress, signWithWallet, onBack,
   telegramCode, telegramCodeBusy, telegramCodeErr, getTelegramLinkCode,
   botTradingEnabled, botTradingBusy, toggleBotTrading,
+  evmAddress, hlCtx,
 }) {
   return (
     <div className="stage wide">
@@ -200,7 +201,7 @@ export default function TradingAgentApp({
         telegramCode={telegramCode} telegramCodeBusy={telegramCodeBusy} telegramCodeErr={telegramCodeErr} getTelegramLinkCode={getTelegramLinkCode}
         botTradingEnabled={botTradingEnabled} botTradingBusy={botTradingBusy} toggleBotTrading={toggleBotTrading} />
 
-      <StrategiesPanel registry={registry} address={solanaAddress} signWithWallet={signWithWallet} />
+      <StrategiesPanel address={solanaAddress} signWithWallet={signWithWallet} evmAddress={evmAddress} hlCtx={hlCtx} />
     </div>
   );
 }

@@ -31,7 +31,7 @@ import {
   markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
   getTelegramLinksForWallet,
 } from "./db.js";
-import { getPerpsPositions } from "./hyperliquid.js";
+import { getPerpsPositions, getDeltaNeutralEligibleAssets } from "./hyperliquid.js";
 import { sendEmail } from "./email.js";
 import {
   ensureReferralAccount, ensureTokenAccount, claimAllFees,
@@ -2722,7 +2722,8 @@ mountTelegramRoutes(app, {
 
 mountStrategyRoutes(app, {
   requireAuth, requireAllowedGeo, requireActiveAccount, strategyLimiter,
-  getRegistry, buildOrder, logActivity,
+  getRegistry, buildOrder, logActivity, getHoldingsForAddress, getPricesForMints,
+  getDeltaNeutralEligibleAssets,
   createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
   setStrategyStatus, touchStrategyEvaluated,
   listPendingProposalsForWallet, getProposal, listProposalsForStrategy,

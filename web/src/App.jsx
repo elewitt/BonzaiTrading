@@ -2153,9 +2153,10 @@ export default function App() {
       )}
 
       {screen === "agents" && (
-        <TradingAgentApp registry={registry} solanaAddress={address} signWithWallet={signWithWallet} onBack={() => setView("auto")}
+        <TradingAgentApp solanaAddress={address} signWithWallet={signWithWallet} onBack={() => setView("auto")}
           telegramCode={telegramCode} telegramCodeBusy={telegramCodeBusy} telegramCodeErr={telegramCodeErr} getTelegramLinkCode={getTelegramLinkCode}
-          botTradingEnabled={botTradingEnabled} botTradingBusy={botTradingBusy} toggleBotTrading={toggleBotTrading} />
+          botTradingEnabled={botTradingEnabled} botTradingBusy={botTradingBusy} toggleBotTrading={toggleBotTrading}
+          evmAddress={evmAddress} hlCtx={{ hl, perpsWallet, evmAddress, hlAssets: perpAssets, markPrices: perpMarkPrices }} />
       )}
 
       {screen === "referrals" && (

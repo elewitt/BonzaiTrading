@@ -1,6 +1,7 @@
 import { STRATEGY_TYPES } from "./index.js";
 import { sendEmail } from "../email.js";
 import { notifyStrategyProposal as sendTelegramProposal } from "../telegram.js";
+import { getPerpsPositions } from "../hyperliquid.js";
 import {
   listActiveStrategies, hasPendingProposalForStrategy, touchStrategyEvaluated,
   createProposal, markStrategyProposed, expireStalePendingProposals,
@@ -19,6 +20,9 @@ const EVAL_INTERVAL_MS = Number(process.env.STRATEGY_EVAL_INTERVAL_MS || 30 * 60
 const DEFAULT_PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000; // matches kamino_fee_obligations' 24h precedent
 const PROPOSAL_TTL_MS = {
   dca_buy: 24 * 60 * 60 * 1000,
+  delta_neutral_open: 24 * 60 * 60 * 1000,
+  delta_neutral_exit: 4 * 60 * 60 * 1000, // shorter — the condition driving this can shift faster than a day
+  delta_neutral_rebalance: 4 * 60 * 60 * 1000,
 };
 
 function groupByWallet(strategies) {
@@ -31,17 +35,18 @@ function groupByWallet(strategies) {
 }
 
 /** Holdings + prices fetched ONCE per wallet per tick, shared across every
- * strategy that wallet owns — cheap even at Phase A's single-DCA-type
- * scale, and the multi-leg Phase B types will need the same holdings read
- * anyway (e.g. rebalance-drift's spotValueUsd). Fails soft: a wallet whose
- * holdings can't be read right now just evaluates with `holdings: null` —
- * DCA doesn't use it at all, and no strategy type should ever hard-fail a
- * whole tick because one RPC call had a bad moment. */
-async function buildContext(wallet, deps) {
+ * strategy that wallet owns. Also fetches live Hyperliquid perp positions
+ * when at least one of the wallet's strategies has an evm_address on file
+ * (only delta-neutral strategies set one — DCA never touches perps) —
+ * needed for rebalance-drift's perpValueUsd. Fails soft throughout: a
+ * wallet whose holdings/positions can't be read right now just evaluates
+ * with empty data rather than hard-failing the whole tick. */
+async function buildContext(wallet, evmAddress, deps) {
   const holdings = await deps.getHoldingsForAddress(wallet).catch(() => null);
   const mints = (holdings?.tokens || []).map((t) => t.mint);
   const prices = mints.length ? await deps.getPricesForMints(mints).catch(() => ({})) : {};
-  return { holdings, prices };
+  const perps = evmAddress ? await getPerpsPositions(evmAddress).catch(() => ({ positions: [] })) : { positions: [] };
+  return { holdings, prices, perpPositions: perps.positions };
 }
 
 /** Best-effort nudges on every channel the wallet has connected — a
@@ -80,13 +85,17 @@ async function notifyProposal(strategy, proposal, deps) {
 
 async function evaluateStrategy(strategy, ctx, deps) {
   const type = STRATEGY_TYPES[strategy.type];
-  if (!type) return; // unknown/not-yet-implemented type (e.g. delta_neutral before Phase B ships) — skip, don't crash the tick
+  if (!type) return; // unknown/not-yet-implemented type — skip, don't crash the tick
 
   if (await hasPendingProposalForStrategy(strategy.id)) return; // don't pile up duplicates while one's still awaiting confirmation
 
   const result = await type.evaluate(strategy, ctx);
-  await touchStrategyEvaluated(strategy.id, { state: strategy.state });
-  if (!result) return;
+  // `newState` is how a type persists its own per-tick bookkeeping (e.g.
+  // delta-neutral's lastFundingCheckedAt) independent of whether anything
+  // was actually due — falls back to the strategy's existing state
+  // unchanged when a type doesn't use it (DCA never does).
+  await touchStrategyEvaluated(strategy.id, { state: result?.newState ?? strategy.state });
+  if (!result?.kind) return; // nothing due this tick
 
   const ttlMs = PROPOSAL_TTL_MS[result.kind] ?? DEFAULT_PROPOSAL_TTL_MS;
   const proposal = await createProposal({
@@ -105,7 +114,8 @@ async function tick(deps) {
 
   const byWallet = groupByWallet(strategies);
   for (const [wallet, walletStrategies] of byWallet) {
-    const ctx = await buildContext(wallet, deps);
+    const evmAddress = walletStrategies.find((s) => s.evm_address)?.evm_address ?? null;
+    const ctx = await buildContext(wallet, evmAddress, deps);
     for (const strategy of walletStrategies) {
       try {
         await evaluateStrategy(strategy, ctx, deps);
