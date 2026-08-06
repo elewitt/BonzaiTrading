@@ -95,6 +95,37 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .profile-menu-item.danger { color: var(--loss); }
 .profile-menu-divider { height: 1px; background: var(--line); margin: 6px 4px; }
 
+/* ——— Bottom tab bar (components/BottomTabBar.jsx) — mobile-only primary
+   nav, replacing the header's 5-button row + profile dropdown (.lv-head
+   has no wrap/collapse of its own, confirmed to overflow at phone
+   widths). display:none by default; the @media block below is the ONLY
+   thing that ever shows it, so there's no JS-timing-dependent flash on
+   resize the way a useIsMobile()-gated render could have. The desktop
+   header's own nav row is hidden the same CSS-only way, via the
+   .head-right-authed class (added specifically so this rule can't also
+   catch the unauthenticated "Log in" button, which reuses .head-nav-btn
+   too but lives in a separate, un-classed .head-right div). ——— */
+.bottom-tab-bar { display: none; }
+@media (max-width: 768px) {
+  .head-right-authed { display: none; }
+  .lv-root { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+  .bottom-tab-bar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 250;
+    background: var(--card); border-top: 1px solid var(--line);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    box-shadow: 0 -2px 12px rgba(10,24,18,.06);
+  }
+  .bottom-tab-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    border: none; background: none; padding: 6px 2px; border-radius: 10px;
+    font-family: inherit; color: var(--moss); cursor: pointer; transition: color .15s;
+  }
+  .bottom-tab-btn.active { color: var(--pine); }
+  .bottom-tab-icon { width: 22px; height: 22px; display: block; }
+  .bottom-tab-icon svg { width: 100%; height: 100%; }
+  .bottom-tab-label { font-size: 10.5px; font-weight: 500; }
+}
+
 /* ——— My Account modal ——— */
 .account-rows { display: flex; flex-direction: column; gap: 2px; }
 .account-row {

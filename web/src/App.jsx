@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG, EQUITY_DEX } from "./perps/config.js";
 import TimeSeriesChart, { priceLabel } from "./components/TimeSeriesChart.jsx";
 import MarketsExplorer from "./components/MarketsExplorer.jsx";
 import TradingAgentApp from "./agents/TradingAgentApp.jsx";
+import BottomTabBar from "./components/BottomTabBar.jsx";
 import { TELEGRAM_BOT_USERNAME, TELEGRAM_BOT_URL } from "./lib/telegram.js";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
 import NewsPanel from "./components/NewsPanel.jsx";
@@ -1820,7 +1821,7 @@ export default function App() {
           </div>
         )}
         {address && (
-          <div className="head-right">
+          <div className="head-right head-right-authed">
             {screen !== "equities" && (
               <button className="head-nav-btn" onClick={() => setView("equities")}>Equities Markets</button>
             )}
@@ -1857,6 +1858,10 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {address && (
+        <BottomTabBar screen={screen} setView={setView} setProfileModal={setProfileModal} logout={logout} />
+      )}
 
       {wantsQaBypass && !qaBypassDone && address && (
         <div className="perps-notice">
