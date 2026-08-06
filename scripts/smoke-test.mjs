@@ -43,29 +43,36 @@ function walk(dir) {
   return out;
 }
 
+// A full "/api/..." path, where each segment is either a literal path
+// component, a `${...}` template interpolation, or a ":param"-style
+// placeholder (used in a few doc comments that describe a route's shape
+// Express-style, e.g. "/api/admin/customer/:query/trading-history") — not
+// just the static prefix up to the first interpolation. Matters for
+// routes like `/api/strategies/${id}/pause`, where the dynamic id is
+// followed by more static path: stopping at the first "$" (an earlier
+// version of this regex did) would extract only "/api/strategies/", which
+// tests a path Express has no route for at all (the real route needs the
+// "/pause" suffix too) — a false "BROKEN" on a route that works fine.
+const API_PATH_RE = /\/api\/(?:[A-Za-z0-9_-]+|:[A-Za-z0-9_]+|\$\{[^}]*\})(?:\/(?:[A-Za-z0-9_-]+|:[A-Za-z0-9_]+|\$\{[^}]*\}))*/g;
+
 function extractApiPaths() {
   const paths = new Set();
   for (const file of walk(WEB_SRC)) {
     const src = readFileSync(file, "utf8");
-    // Static prefix of every "/api/..." string literal — stops at the
-    // first char outside a URL path (backtick, quote, `$` from a
-    // template interpolation, `?` before a query string, etc.), so a
-    // dynamic route like `/api/kamino/obligations/${address}` yields the
-    // static prefix "/api/kamino/obligations/" rather than the whole
-    // template literal.
-    for (const m of src.matchAll(/\/api\/[A-Za-z0-9_\-/]*/g)) {
+    for (const m of src.matchAll(API_PATH_RE)) {
       if (m[0].length > 5) paths.add(m[0]); // drop bare "/api/" noise
     }
   }
   return [...paths].sort();
 }
 
-// A truncated dynamic prefix (ends in "/") isn't itself a real route —
-// give it a synthetic segment so Express matches the underlying
-// parameterized route (":address" etc.) and runs real handler logic,
-// rather than 404ing purely because the path is incomplete.
+// Every `${...}` interpolation or ":param" placeholder (an id, address,
+// etc.) becomes a synthetic value so Express matches the underlying
+// parameterized route and runs real handler logic, rather than 404ing
+// purely because a template literal's raw source text (or a comment's
+// route-shape notation) isn't itself a real path.
 function toTestablePath(path) {
-  return path.endsWith("/") ? `${path}smoketest123` : path;
+  return path.replace(/\$\{[^}]*\}|:[A-Za-z0-9_]+/g, "smoketest123");
 }
 
 // Method isn't tracked by the extraction above (get()/post()/adminFetch
