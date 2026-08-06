@@ -863,6 +863,19 @@ app.post("/api/parse-borrow", requireAuth, parseLimiter, async (req, res) => {
  * the same STRATEGY_TYPES.dca.validateParams the manual creation path
  * uses — never trusted from the model's output alone.
  */
+const MAX_STRATEGY_PLANS_PER_PROMPT = 10; // matches MAX_ACTIVE_STRATEGIES_PER_WALLET — a batch bigger than the cap can never fully succeed anyway
+
+/**
+ * One request can expand into several DCA plans ("DCA $1/day into all the
+ * FAANG stocks" → 5 separate plans, one per asset) — each named asset gets
+ * the SAME amount/schedule the user gave (per-asset amounts aren't
+ * parsed; that's a real scope boundary, not an oversight: keeping one
+ * request → one amount/schedule pair means the confirm step can show it
+ * as "one thing," not N independently-configured ones to review). This is
+ * still curated-DCA-only: a basket request just becomes N ordinary DCA
+ * strategies, the exact same audited mechanism as a single-asset one —
+ * not a new kind of trade logic.
+ */
 async function parseStrategyPrompt({ prompt }) {
   if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
   if (!prompt) throw new Error("prompt required");
@@ -872,25 +885,27 @@ async function parseStrategyPrompt({ prompt }) {
     .map((t) => `${t.symbol} — ${t.name}`)
     .join("\n");
 
-  const system = `You extract a recurring dollar-cost-averaging (DCA) purchase plan from a plain-English request, for a product where a user sets up "buy $X of ASSET every N days" and it runs on a schedule.
+  const system = `You extract one or more recurring dollar-cost-averaging (DCA) purchase plans from a plain-English request, for a product where a user sets up "buy $X of ASSET every N days" and it runs on a schedule. A request can name a single asset, or a group of assets that all get the SAME dollar amount and SAME schedule (e.g. "DCA $10/week into FAANG stocks" → one plan per FAANG stock, each $10 weekly).
 
 Assets available (symbol — name):
 ${assets}
 
 Respond with ONLY a JSON object. No markdown, no backticks, no prose.
 
-If the request IS a plain recurring buy on a fixed schedule:
-{"supported":true,"symbol":"BTC","usdPerInterval":50,"intervalDays":7,"summary":"one short plain sentence"}
+If the request IS one or more plain recurring buys on a fixed schedule, all sharing the same amount and interval:
+{"supported":true,"plans":[{"symbol":"AAPLx"},{"symbol":"METAx"}],"usdPerInterval":10,"intervalDays":7,"summary":"one short plain sentence, e.g. naming the group (\\"the FAANG stocks\\") rather than listing every symbol"}
 
-If the request is NOT a plain recurring buy on a fixed schedule — e.g. it depends on a price/market condition ("buy the dip", "when it drops 5%"), a one-time trade, or anything else this can't express as "$X every N days":
-{"supported":false,"reason":"one short plain sentence explaining why, noting only a fixed recurring schedule is supported right now"}
+If the request is NOT a plain recurring buy on a fixed schedule — e.g. it depends on a price/market condition ("buy the dip", "when it drops 5%"), a one-time trade, DIFFERENT amounts/schedules per asset, more than ${MAX_STRATEGY_PLANS_PER_PROMPT} assets, or anything else this can't express as "$X every N days" per asset:
+{"supported":false,"reason":"one short plain sentence explaining why, noting only a fixed recurring schedule (same amount/interval per asset) is supported right now"}
 
 Rules:
 - Map company/index/crypto names to symbols the same way you would for a portfolio instruction (Apple→AAPLx, S&P 500→SPYx, bitcoin→BTC, etc). Use only the listed symbols.
+- Common named groups: FAANG → METAx, AAPLx, AMZNx, NFLXx, GOOGLx. "Magnificent Seven"/"Mag 7" → AAPLx, MSFTx, GOOGLx, AMZNx, METAx, NVDAx, TSLAx. Expand any other named group (sector, index constituents, etc.) using only symbols from the list above; if you can't confidently expand a named group from what's listed, that's unsupported.
 - Map generic yield/treasury requests (no country named) to USDY. Only map to a Foreign Sovereign Bond (KTB/CETES/TESOURO/GILTS) when that specific country/currency is named.
-- intervalDays: "daily"→1, "weekly"→7, "every 2 weeks"/"biweekly"/"fortnightly"→14, "monthly"→30, or an explicit number of days if one is given. Must be a whole number.
-- usdPerInterval: NEVER invent or estimate a dollar amount — only extract what the user actually said. If no amount is given at all, that's unsupported (missing what's needed for a plan), not a guess.
-- If the asset named isn't in the list above, that's unsupported — say so in "reason".`;
+- intervalDays: "daily"→1, "weekly"→7, "every 2 weeks"/"biweekly"/"fortnightly"→14, "monthly"→30, or an explicit number of days if one is given. Must be a whole number, and the SAME for every plan.
+- usdPerInterval: NEVER invent or estimate a dollar amount — only extract what the user actually said. Must be the SAME for every plan. If no amount is given at all, that's unsupported.
+- If an asset named isn't in the list above, drop it from "plans" but mention it was skipped in "summary" — don't make the whole request unsupported just because one name didn't match, unless NONE of them do.
+- Never list the same symbol twice in "plans".`;
 
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -901,7 +916,7 @@ Rules:
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 300,
+      max_tokens: 500,
       system,
       messages: [{ role: "user", content: prompt }],
     }),
@@ -918,17 +933,34 @@ Rules:
     throw new Error(parsed.reason || "That doesn't look like a recurring buy on a fixed schedule — try something like \"buy $50 of bitcoin every week\".");
   }
 
-  const symbol = String(parsed.symbol || "").trim();
-  const token = bySymbol[symbol];
-  if (!token || token.symbol === "USDC") {
-    throw new Error(`"${symbol || "that asset"}" isn't available on this platform.`);
+  const rawPlans = Array.isArray(parsed.plans) ? parsed.plans : [];
+  const usdPerInterval = Number(parsed.usdPerInterval);
+  const intervalDays = Number(parsed.intervalDays);
+
+  // Resolve + de-dupe against the live registry — Claude's symbol output
+  // is never trusted directly, same as every other parse endpoint here.
+  const seen = new Set();
+  const resolved = [];
+  for (const p of rawPlans) {
+    const symbol = String(p?.symbol || "").trim();
+    const token = bySymbol[symbol];
+    if (!token || token.symbol === "USDC" || seen.has(token.symbol)) continue;
+    seen.add(token.symbol);
+    resolved.push(token);
+  }
+  if (resolved.length === 0) throw new Error("None of the requested assets are available on this platform.");
+  if (resolved.length > MAX_STRATEGY_PLANS_PER_PROMPT) {
+    throw new Error(`That's ${resolved.length} assets in one request — try ${MAX_STRATEGY_PLANS_PER_PROMPT} or fewer at a time.`);
   }
 
-  const params = { symbol: token.symbol, usdPerInterval: Number(parsed.usdPerInterval), intervalDays: Number(parsed.intervalDays) };
-  const paramError = STRATEGY_TYPES.dca.validateParams(params);
-  if (paramError) throw new Error(paramError);
+  const plans = resolved.map((token) => {
+    const params = { symbol: token.symbol, usdPerInterval, intervalDays };
+    const paramError = STRATEGY_TYPES.dca.validateParams(params);
+    if (paramError) throw new Error(paramError); // same amount/interval for every plan, so one failure means all fail
+    return { symbol: token.symbol, name: token.name, mint: token.mint, usdPerInterval, intervalDays };
+  });
 
-  return { symbol: token.symbol, name: token.name, mint: token.mint, usdPerInterval: params.usdPerInterval, intervalDays: params.intervalDays, summary: parsed.summary || "" };
+  return { plans, summary: parsed.summary || "" };
 }
 
 app.post("/api/parse-strategy", requireAuth, parseLimiter, async (req, res) => {

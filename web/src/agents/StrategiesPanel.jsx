@@ -178,23 +178,33 @@ export default function StrategiesPanel({ registry: _registry, address, signWith
     }
   };
 
+  // Sequential, not Promise.all — the server enforces MAX_ACTIVE_STRATEGIES_PER_WALLET
+  // by counting existing active strategies at request time, so creating a
+  // batch in parallel could race that check (several requests all seeing
+  // the same "count so far" and all succeeding past the real cap).
+  // Sequential keeps each check accurate as the previous create lands.
   const confirmCreate = async () => {
     if (!parsed || !address || creating) return;
     setCreating(true);
     setError("");
-    try {
-      await api.createStrategy({
-        walletAddress: address,
-        type: "dca",
-        params: { symbol: parsed.symbol, usdPerInterval: parsed.usdPerInterval, intervalDays: parsed.intervalDays },
-      });
-      setParsed(null); setPrompt("");
-      await refresh();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setCreating(false);
+    const failures = [];
+    for (const plan of parsed.plans) {
+      try {
+        await api.createStrategy({
+          walletAddress: address,
+          type: "dca",
+          params: { symbol: plan.symbol, usdPerInterval: plan.usdPerInterval, intervalDays: plan.intervalDays },
+        });
+      } catch (e) {
+        failures.push(`${plan.symbol}: ${e.message}`);
+      }
     }
+    setParsed(null); setPrompt("");
+    await refresh();
+    if (failures.length > 0) {
+      setError(`Created ${parsed.plans.length - failures.length} of ${parsed.plans.length}. ${failures.join("; ")}`);
+    }
+    setCreating(false);
   };
 
   const transition = async (id, action) => {
@@ -275,12 +285,19 @@ export default function StrategiesPanel({ registry: _registry, address, signWith
         {parsed && (
           <div className="agents-parsed-preview">
             <p style={{ margin: 0 }}>
-              {fmtUsd(parsed.usdPerInterval)} of {parsed.name} ({parsed.symbol}) {formatInterval(parsed.intervalDays)}
+              {parsed.plans.length === 1
+                ? `${fmtUsd(parsed.plans[0].usdPerInterval)} of ${parsed.plans[0].name} (${parsed.plans[0].symbol}) ${formatInterval(parsed.plans[0].intervalDays)}`
+                : parsed.summary}
             </p>
+            {parsed.plans.length > 1 && (
+              <div className="agents-schedule-dates" style={{ marginTop: 8 }}>
+                {parsed.plans.map((p) => <span key={p.symbol} className="agents-schedule-chip">{p.symbol}</span>)}
+              </div>
+            )}
             <div className="wfoot" style={{ marginTop: 10 }}>
               <button className="btn ghost" disabled={creating} onClick={() => setParsed(null)}>Never mind</button>
               <button className="btn primary" disabled={creating} onClick={confirmCreate}>
-                {creating ? "Creating…" : "Looks good, create it"}
+                {creating ? "Creating…" : parsed.plans.length > 1 ? `Looks good, create ${parsed.plans.length} strategies` : "Looks good, create it"}
               </button>
             </div>
           </div>
