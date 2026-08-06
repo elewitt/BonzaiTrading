@@ -94,6 +94,14 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .profile-menu-item:hover { background: var(--paper); }
 .profile-menu-item.danger { color: var(--loss); }
 .profile-menu-divider { height: 1px; background: var(--line); margin: 6px 4px; }
+/* Same markup also renders inside BottomTabBar's "More" bottom sheet
+   (components/BottomTabBar.jsx) — sized here for a mouse-driven dropdown,
+   too tight for a finger, so bump it specifically in that context (a
+   .modal-box ancestor) rather than the base rule, which stays as-is for
+   the desktop dropdown. */
+@media (max-width: 768px) {
+  .modal-box .profile-menu-item { padding: 13px 12px; font-size: 14.5px; }
+}
 
 /* ——— Bottom tab bar (components/BottomTabBar.jsx) — mobile-only primary
    nav, replacing the header's 5-button row + profile dropdown (.lv-head
@@ -121,9 +129,13 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
     font-family: inherit; color: var(--moss); cursor: pointer; transition: color .15s;
   }
   .bottom-tab-btn.active { color: var(--pine); }
-  .bottom-tab-icon { width: 22px; height: 22px; display: block; }
+  .bottom-tab-icon { width: 22px; height: 22px; display: block; transition: transform .12s; }
   .bottom-tab-icon svg { width: 100%; height: 100%; }
   .bottom-tab-label { font-size: 10.5px; font-weight: 500; }
+  .bottom-tab-btn:active .bottom-tab-icon { transform: scale(.88); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bottom-tab-btn:active .bottom-tab-icon { transform: none; }
 }
 
 /* ——— My Account modal ——— */
@@ -387,6 +399,20 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .btn.ghost:hover:not(:disabled) { border-color: var(--ink); background: rgba(15,31,24,.04); }
 .btn:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
+@media (max-width: 768px) {
+  /* Touch-target audit: base .btn/.lvp-pct-btn sizes (39px/23px tall) are
+     fine for a mouse but tight for a finger. Bumped here rather than at
+     the base rule so desktop is untouched; existing dense-context
+     overrides (.alloc-actions .btn, .perps-category-toggle .lvp-pct-btn,
+     etc.) are all higher-specificity and win over this unchanged, so
+     deliberately-compact chip rows don't balloon in height. */
+  .btn { padding: 13px 20px; }
+  .lvp-pct-btn { padding: 9px 0; font-size: 12px; }
+  .btn.ghost:active:not(:disabled) { transform: scale(.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.ghost:active:not(:disabled) { transform: none; }
+}
 .linkish {
   background: none; border: none; color: var(--pine); cursor: pointer;
   font-size: 13px; padding: 6px 0; font-family: inherit;
@@ -798,6 +824,15 @@ a.trow { color: inherit; text-decoration: none; }
     padding: 12px 14px; margin-bottom: 8px;
   }
   .trow-referrals:not(.thead):last-child { margin-bottom: 0; }
+  /* Press feedback on the tappable cards (Equities rows are links, so this
+     also covers the standard :active affordance a native list gives a
+     tapped row). transition kept short/subtle per the reduced-motion
+     idiom used elsewhere (agents-step-icon, bottom-tab-icon above). */
+  .trow-equities:not(.thead), .trow-predictions:not(.thead) { transition: background .1s; }
+  .trow-equities:not(.thead):active, .trow-predictions:not(.thead):active { background: var(--line); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trow-equities:not(.thead), .trow-predictions:not(.thead) { transition: none; }
 }
 /* MarketsTable.jsx had no overflow-x fallback at all (unlike the
    dashboard's own positions-table, which wraps in .positions-table-wrap)
@@ -1198,6 +1233,8 @@ a.trow { color: inherit; text-decoration: none; }
   .hist-legs { padding: 0 14px 14px; }
   .hist-group-left, .hist-item-left { gap: 10px; }
   .hist-group-right, .hist-item-right { gap: 8px; }
+  .hist-tab { padding: 11px 16px 12px; }
+  .hist-group-header:active { background: rgba(15,31,24,.05); }
 }
 
 /* Empty states */

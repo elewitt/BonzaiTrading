@@ -25,6 +25,7 @@ import { PrivyProvider } from "@privy-io/react-auth";
 import App from "./App.jsx";
 import AdminApp from "./admin/AdminApp.jsx";
 import "./styles.css";
+import "./lib/swipeToDismissSheet.js";
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
