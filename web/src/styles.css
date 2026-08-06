@@ -753,18 +753,51 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .trow-equities { grid-template-columns: 3fr 1fr 1fr .5fr auto; }
 @media (max-width: 600px) {
-  .trow-equities { grid-template-columns: 2fr 1fr auto; }
+  /* Card-stack treatment: each row becomes its own rounded, tinted card
+     with the buy button reflowed into its own area rather than a 3rd
+     column — the column header row is dropped entirely (Asset + Price is
+     unambiguous without it) rather than kept as a redundant label row. */
+  .trow-equities.thead { display: none; }
+  .trow-equities:not(.thead) {
+    grid-template-columns: 1fr auto; grid-template-areas: "identity buy" "price buy";
+    row-gap: 6px; background: var(--paper); border-radius: 12px; border-bottom: none;
+    padding: 14px; margin-bottom: 8px;
+  }
+  .trow-equities:not(.thead):last-child { margin-bottom: 0; }
   .trow-equities span:nth-child(2), .trow-equities span:nth-child(4) { display: none; }
+  .trow-equities:not(.thead) span:nth-child(1) { grid-area: identity; }
+  .trow-equities:not(.thead) span:nth-child(3) { grid-area: price; color: var(--moss); font-size: 13px; }
+  .trow-equities:not(.thead) span:nth-child(5) { grid-area: buy; align-self: center; }
 }
 .trow-predictions { grid-template-columns: 3fr .8fr .8fr .8fr .6fr; }
 @media (max-width: 600px) {
-  .trow-predictions { grid-template-columns: 2.2fr .8fr .8fr; }
+  /* Title gets its own full-width line (was fighting the Yes/No columns
+     for space) with the two outcome pills below it — same card-stack
+     treatment as Equities above. */
+  .trow-predictions.thead { display: none; }
+  .trow-predictions:not(.thead) {
+    grid-template-columns: 1fr 1fr; grid-template-areas: "title title" "yes no";
+    row-gap: 8px; background: var(--paper); border-radius: 12px; border-bottom: none;
+    padding: 14px; margin-bottom: 8px;
+  }
+  .trow-predictions:not(.thead):last-child { margin-bottom: 0; }
   .trow-predictions span:nth-child(4), .trow-predictions span:nth-child(5) { display: none; }
+  .trow-predictions:not(.thead) span:nth-child(1) { grid-area: title; }
+  .trow-predictions:not(.thead) span:nth-child(2) { grid-area: yes; }
+  .trow-predictions:not(.thead) span:nth-child(3) { grid-area: no; }
 }
 .trow-referrals { grid-template-columns: 1.2fr .8fr .8fr .8fr .8fr 1fr; }
 @media (max-width: 600px) {
-  .trow-referrals { grid-template-columns: 1.4fr .8fr 1fr; }
+  .trow-referrals { grid-template-columns: 1.2fr .8fr 1fr; }
   .trow-referrals span:nth-child(3), .trow-referrals span:nth-child(4), .trow-referrals span:nth-child(5) { display: none; }
+  /* Header kept (unlike Equities/Predictions) — "Fees generated" isn't
+     self-evident from a bare dollar figure the way price/Yes-No are. */
+  .trow-referrals.thead { font-size: 10px; padding: 0 14px 8px; }
+  .trow-referrals:not(.thead) {
+    background: var(--paper); border-radius: 12px; border-bottom: none;
+    padding: 12px 14px; margin-bottom: 8px;
+  }
+  .trow-referrals:not(.thead):last-child { margin-bottom: 0; }
 }
 /* MarketsTable.jsx had no overflow-x fallback at all (unlike the
    dashboard's own positions-table, which wraps in .positions-table-wrap)
@@ -1155,6 +1188,18 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .hist-solscan-btn:hover { border-color: var(--pine); background: rgba(26,68,51,.04); }
 
+@media (max-width: 600px) {
+  .hist-stage { padding-top: 20px; }
+  .hist-header { gap: 12px; margin-bottom: 20px; }
+  .hist-title { font-size: 21px; }
+  .hist-controls { gap: 12px; }
+  .hist-search-wrap { flex-basis: 100%; }
+  .hist-group-header, .hist-item-row { padding: 14px; gap: 10px; }
+  .hist-legs { padding: 0 14px 14px; }
+  .hist-group-left, .hist-item-left { gap: 10px; }
+  .hist-group-right, .hist-item-right { gap: 8px; }
+}
+
 /* Empty states */
 .hist-empty {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -1455,6 +1500,10 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .strategy-row:first-child { border-top: none; padding-top: 0; }
 .strategy-row-actions { display: flex; gap: 8px; flex-shrink: 0; }
+@media (max-width: 600px) {
+  .strategy-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .strategy-row-actions { justify-content: flex-end; }
+}
 .strategy-status { text-transform: capitalize; font-weight: 600; }
 .strategy-status-active { color: var(--gain); }
 .strategy-status-paused { color: var(--moss); }
@@ -1473,6 +1522,9 @@ a.trow { color: inherit; text-decoration: none; }
 .agents-telegram-bot-trading-row {
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+@media (max-width: 600px) {
+  .agents-telegram-bot-trading-row { flex-direction: column; align-items: stretch; gap: 10px; }
 }
 /* "How it works" — a 4-step diagram replacing what used to be a long
    explainer paragraph, so the mechanic (set it up → agent watches → you
