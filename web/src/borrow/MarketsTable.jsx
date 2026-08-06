@@ -17,14 +17,14 @@ function fmtUsd(x) {
  */
 export default function MarketsTable({ reserves }) {
   const sorted = [...reserves].sort((a, b) => Number(b.totalSupplyUsd) - Number(a.totalSupplyUsd));
-  const cols = "1.3fr 1fr 1fr 1fr 1fr 1fr";
 
   return (
     <div className="card table-card">
       <div className="card-toprow">
         <p className="table-card-title">Kamino xStocks Market Rates</p>
       </div>
-      <div className="trow thead tiny label" style={{ gridTemplateColumns: cols }}>
+      <div className="trow-kamino-rates-wrap">
+      <div className="trow trow-kamino-rates thead tiny label">
         <span>Asset</span>
         <span>Supply APY</span>
         <span>Borrow APY</span>
@@ -38,7 +38,7 @@ export default function MarketsTable({ reserves }) {
         const util = supplyUsd > 0 ? borrowUsd / supplyUsd : 0;
         const borrowable = r.liquidityToken === "USDC";
         return (
-          <div className="trow" key={r.reserve} style={{ gridTemplateColumns: cols }}>
+          <div className="trow trow-kamino-rates" key={r.reserve}>
             <span className="asset">
               <span className="serif">{r.liquidityToken}</span>
               {borrowable && <span className="mono tiny muted">Borrowable here</span>}
@@ -51,6 +51,7 @@ export default function MarketsTable({ reserves }) {
           </div>
         );
       })}
+      </div>
       <p className="tiny muted" style={{ marginTop: 14 }}>
         Depositing an xStock as collateral also earns its Supply APY automatically —
         posting collateral and supplying liquidity are the same action in this market.

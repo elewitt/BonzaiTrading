@@ -184,7 +184,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
         <p className="muted">Loading…</p>
       ) : (
         <div className="card table-card">
-          <div className="trow thead tiny label" style={{ gridTemplateColumns: "3fr 1fr 1fr .5fr auto" }}>
+          <div className="trow trow-equities thead tiny label">
             <span>Asset</span>
             <span>Category</span>
             <span>Price</span>
@@ -196,7 +196,6 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
             const price = prices[r.mint];
             const url = externalUrl(r.symbol, r.category);
             const buyable = onQuickBuy && !NOT_DIRECTLY_BUYABLE.has(r.symbol);
-            const rowStyle = { gridTemplateColumns: "3fr 1fr 1fr .5fr auto" };
             const buyBtn = buyable && (
               <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); setBuyTarget(r); }}>
@@ -216,11 +215,11 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
               </>
             );
             return url ? (
-              <a key={r.symbol} className="trow asset-row-clickable equities-row" style={rowStyle} href={url} target="_blank" rel="noopener noreferrer">
+              <a key={r.symbol} className="trow trow-equities asset-row-clickable equities-row" href={url} target="_blank" rel="noopener noreferrer">
                 {content}
               </a>
             ) : (
-              <div key={r.symbol} className="trow equities-row" style={rowStyle}>{content}</div>
+              <div key={r.symbol} className="trow trow-equities equities-row">{content}</div>
             );
           })}
         </div>

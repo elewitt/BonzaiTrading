@@ -38,7 +38,7 @@ function MarketRow({ m }) {
   const yes = centsPrice(m.yesAsk ?? m.yesBid);
   const no = centsPrice(m.noAsk ?? m.noBid);
   return (
-    <div className="trow pm-row" style={{ gridTemplateColumns: "3fr .8fr .8fr .8fr .6fr" }}>
+    <div className="trow trow-predictions pm-row">
       <span className="asset">
         <span className="serif">{m.title}</span>
         <span className="tiny muted">{m.category}{m.eventTitle && m.eventTitle !== m.title ? ` · ${m.eventTitle}` : ""}</span>
@@ -121,7 +121,7 @@ export default function PredictionMarketsApp({ onBack }) {
       {error && <p className="err" style={{ marginBottom: 12 }}>{error}</p>}
 
       <div className="card table-card">
-        <div className="trow thead tiny label" style={{ gridTemplateColumns: "3fr .8fr .8fr .8fr .6fr" }}>
+        <div className="trow trow-predictions thead tiny label">
           <span>Market</span>
           <span>Yes</span>
           <span>No</span>

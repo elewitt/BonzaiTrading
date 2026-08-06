@@ -7,8 +7,6 @@ import { api, usd, short } from "./lib/api.js";
 // rest of this app's own "self-contained sub-screen" tabs (BorrowApp.jsx,
 // EquitiesMarketsApp.jsx) rather than a small "My Account"-style modal —
 // a real stats dashboard needs the room.
-const COLS = "1.2fr .8fr .8fr .8fr .8fr 1fr";
-
 export default function ReferralsApp({ onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -70,7 +68,7 @@ export default function ReferralsApp({ onBack }) {
           </div>
 
           <div className="card table-card">
-            <div className="trow thead tiny label" style={{ gridTemplateColumns: COLS }}>
+            <div className="trow trow-referrals thead tiny label">
               <span>Referred wallet</span>
               <span>Joined</span>
               <span>Equities vol.</span>
@@ -82,7 +80,7 @@ export default function ReferralsApp({ onBack }) {
               <p className="muted" style={{ padding: "16px 0" }}>No referrals yet — share your link above.</p>
             )}
             {data.referrals.map((r, i) => (
-              <div className="trow" key={i} style={{ gridTemplateColumns: COLS }}>
+              <div className="trow trow-referrals" key={i}>
                 <span className="mono">{short(r.walletAddress)}</span>
                 <span className="tiny muted">{new Date(r.joinedAt).toLocaleDateString()}</span>
                 <span className="mono">${usd(r.equitiesVolume)}</span>
