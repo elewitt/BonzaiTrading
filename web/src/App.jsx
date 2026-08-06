@@ -741,7 +741,21 @@ export default function App() {
     setBotTradingErr(null);
     try {
       if (on) {
-        await addSessionSigners({ address, signers: [{ signerId: BOT_SESSION_SIGNER_ID }] });
+        try {
+          await addSessionSigners({ address, signers: [{ signerId: BOT_SESSION_SIGNER_ID }] });
+        } catch (e) {
+          // The toggle's on/off state is cached in localStorage, never
+          // re-verified against Privy's actual delegation state on load —
+          // so a wallet that's already delegated (a previous enable that
+          // succeeded server-side but whose localStorage write never
+          // landed, or state carried over from a different browser/
+          // device) shows this toggle as "off" even though it's already
+          // on. Privy's error for that exact case is unambiguous
+          // ("Duplicate signer(s) provided") — treat it as the success it
+          // already represents rather than surfacing a confusing error.
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!/duplicate signer/i.test(msg)) throw e;
+        }
       } else {
         await removeSessionSigners({ address });
       }
