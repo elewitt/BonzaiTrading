@@ -201,6 +201,16 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   // and bunch up during market hours) — spacing by index instead of time
   // put almost every label in the dense stretch and left long empty gaps
   // unlabeled, which read as broken rather than just imprecise.
+  //
+  // Snapping each target time to the nearest real point isn't enough on
+  // its own, though: when a stretch of the series is extremely sparse
+  // (the same overnight-gap shape above), two adjacent target times can
+  // snap to two DIFFERENT points that are still only minutes apart —
+  // different indices, so the by-index dedupe below doesn't catch it, but
+  // close enough in x/time that their labels render on top of each other
+  // (e.g. two "11 AM"s). The second filter drops any tick that lands too
+  // close to the one already kept, by actual rendered x-position.
+  const MIN_TICK_GAP = 56; // viewBox units — enough for a "12 PM"-width label plus breathing room
   const X_TICK_COUNT = 5;
   const xTickIdxs = Array.from({ length: X_TICK_COUNT }, (_, i) => {
     const targetT = tMin + (i / (X_TICK_COUNT - 1)) * tRange;
@@ -210,7 +220,13 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
       if (diff < bestDiff) { bestDiff = diff; best = j; }
     }
     return best;
-  }).filter((v, i, arr) => arr.indexOf(v) === i);
+  }).filter((v, i, arr) => arr.indexOf(v) === i)
+    .reduce((kept, idx) => {
+      const x = sx(points[idx].ts);
+      const lastX = kept.length ? sx(points[kept[kept.length - 1]].ts) : -Infinity;
+      if (x - lastX >= MIN_TICK_GAP) kept.push(idx);
+      return kept;
+    }, []);
 
   const updateHover = (clientX, clientY) => {
     const svg = svgRef.current;
