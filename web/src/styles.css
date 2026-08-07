@@ -641,6 +641,11 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .legend-row .dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .lg-identity { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .lg-name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+/* Opens the asset's price chart (AssetInfoModal) — a nested clickable
+   target inside the legend row's own button, which still does its normal
+   hover/click wedge-select job everywhere else in the row. */
+.lg-name-link { cursor: pointer; }
+.lg-name-link:hover { color: var(--pine); text-decoration: underline; }
 .lg-meta { display: flex; align-items: center; gap: 6px; }
 .cat-badge {
   display: inline-block; border: 1px solid var(--line); border-radius: 999px;
@@ -1423,13 +1428,8 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .asset-stats-grid p { margin: 3px 0 0; font-size: 13px; }
 .asset-description { margin-top: 16px; line-height: 1.55; }
-.asset-link { display: inline-block; margin-bottom: 12px; text-decoration: none; }
 .asset-row-clickable { cursor: pointer; transition: background .15s; }
 .asset-row-clickable:hover { background: var(--paper); }
-/* Equities Markets list — no hover fill/shadow, just the pointer cursor
-   already on .asset-row-clickable; the Brokerage Positions table keeps its
-   own hover highlight above, unaffected. */
-.equities-row:hover { background: none; box-shadow: none; }
 
 /* ——— Prediction Markets list ——— */
 .pm-row:hover { background: var(--paper); }

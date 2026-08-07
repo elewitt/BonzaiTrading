@@ -2326,7 +2326,7 @@ export default function App() {
                   <div className="loading-dots" style={{ margin: "24px 0" }}><span /><span /><span /></div>
                 ) : (
                 <>
-                <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} />
+                <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} onAssetClick={setAssetInfoSymbol} />
                 {activeAllocTab === "mine" && portfolio.total > 0 && (
                   <div className="alloc-actions">
                     {portfolio.rows.length >= 1 && (

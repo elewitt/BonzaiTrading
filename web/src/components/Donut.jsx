@@ -30,7 +30,7 @@ function shade(hex, percent) {
   return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }
 
-export default function Donut({ rows, cash, total, cashUsdy = 0 }) {
+export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick }) {
   const [active, setActive] = useState(null);
 
   const segs = useMemo(() => {
@@ -151,7 +151,14 @@ export default function Donut({ rows, cash, total, cashUsdy = 0 }) {
             onClick={() => setActive(active === s.key ? null : s.key)}>
             <span className="dot" style={{ background: s.color }} />
             <span className="lg-identity">
-              <span className="lg-name serif">{s.label}</span>
+              {onAssetClick && s.key !== "USDC" ? (
+                <span className="lg-name serif lg-name-link"
+                  onClick={(e) => { e.stopPropagation(); onAssetClick(s.sub); }}>
+                  {s.label}
+                </span>
+              ) : (
+                <span className="lg-name serif">{s.label}</span>
+              )}
               <span className="lg-meta mono tiny muted">
                 {s.sub}
                 <span className={`cat-badge ${s.cat === "Yield Activated" ? "yield" : ""}`}>{s.cat}</span>

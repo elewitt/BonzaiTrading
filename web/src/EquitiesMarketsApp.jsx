@@ -1,49 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, usd } from "./lib/api.js";
-import { COINGECKO_SLUGS } from "./perps/coingeckoSlugs.js";
-
-// Same split as PerpsApp.jsx's asset list (Yahoo for equities, CoinGecko for
-// crypto) — duplicated here rather than imported since these are a couple
-// of pure one-liners, not worth coupling two independent product pages over.
-function yahooFinanceUrl(ticker) {
-  return `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`;
-}
-function coingeckoUrl(ticker) {
-  const slug = COINGECKO_SLUGS[ticker];
-  if (slug) return `https://www.coingecko.com/en/coins/${slug}`;
-  return `https://www.coingecko.com/en/search?query=${encodeURIComponent(ticker)}`;
-}
-
-// xStocks tickers are always the real ticker + a trailing lowercase "x"
-// (AAPLx, SPYx, BRK.Bx, ...) — Yahoo Finance addresses the underlying
-// security directly by the ticker without that suffix.
-function underlyingTicker(symbol) {
-  return symbol.replace(/x$/, "");
-}
-
-// Etherfuse's Stablebond product-page slugs — confirmed live (app.etherfuse.
-// com/bonds/{slug} returns 200) for each of the 4 sovereign bonds, not
-// guessed. USDY has no equivalent listed-instrument page of its own.
-const ETHERFUSE_BOND_SLUGS = { KTB: "ktb", CETES: "cetes", TESOURO: "tesouro", GILTS: "gilts" };
+import AssetInfoModal from "./components/AssetInfoModal.jsx";
 
 function categoryOf(symbol, registry) {
   if (registry[symbol]?.category === "yield") return "Yield";
   if (symbol === "BTC") return "Crypto";
   if (symbol === "EURC") return "Currency";
   return registry[symbol]?.name?.includes("ETF") ? "ETF" : "Stock";
-}
-
-// Where "clicking the tile" should send someone — a real per-asset quote
-// page where one exists, never a guessed/invented URL. USDY has no
-// external security to point at (an on-chain yield token, not a listed
-// instrument), so it's shown but not clickable. The 4 Etherfuse bonds DO
-// have a real product page each (see ETHERFUSE_BOND_SLUGS above).
-function externalUrl(symbol, category) {
-  if (symbol === "USDY") return null;
-  if (ETHERFUSE_BOND_SLUGS[symbol]) return `https://app.etherfuse.com/bonds/${ETHERFUSE_BOND_SLUGS[symbol]}`;
-  if (symbol === "BTC") return coingeckoUrl("BTC");
-  if (symbol === "EURC") return "https://finance.yahoo.com/quote/EURUSD=X";
-  return yahooFinanceUrl(underlyingTicker(symbol));
 }
 
 const CATEGORIES = ["All", "Stock", "ETF", "Crypto", "Currency", "Yield"];
@@ -128,6 +91,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [buyTarget, setBuyTarget] = useState(null); // the row currently being bought, or null
+  const [chartSymbol, setChartSymbol] = useState(null); // the row currently showing its price chart, or null
 
   useEffect(() => {
     api.tokens().then((d) => setRegistry(d.tokens)).catch(() => {});
@@ -168,7 +132,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
         </div>
         <p className="lede sm">
           Every product tradeable on Bonzai Trading's brokerage — stocks, ETFs, and commodities via xStocks,
-          plus USDY, EURC, and Bitcoin. Click any row to open its market page, or buy directly.
+          plus USDY, EURC, and Bitcoin. Click any row to open its price chart, or buy directly.
         </p>
 
         <div className="perps-category-toggle" style={{ marginBottom: 12, flexWrap: "wrap" }}>
@@ -194,32 +158,25 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
           {filtered.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>No matches.</p>}
           {filtered.map((r) => {
             const price = prices[r.mint];
-            const url = externalUrl(r.symbol, r.category);
             const buyable = onQuickBuy && !NOT_DIRECTLY_BUYABLE.has(r.symbol);
             const buyBtn = buyable && (
               <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setBuyTarget(r); }}>
+                onClick={(e) => { e.stopPropagation(); setBuyTarget(r); }}>
                 Buy
               </button>
             );
-            const content = (
-              <>
+            return (
+              <div key={r.symbol} className="trow trow-equities asset-row-clickable"
+                onClick={() => setChartSymbol(r.symbol)}>
                 <span className="asset">
                   <span className="serif">{r.name}</span>
                   <span className="mono tiny muted">{r.symbol}</span>
                 </span>
                 <span className="tiny muted">{r.category}</span>
                 <span className="mono">{price ? `$${usd(price)}` : "—"}</span>
-                <span className="tiny muted">{url ? "↗" : ""}</span>
+                <span className="tiny muted">›</span>
                 <span onClick={(e) => e.stopPropagation()}>{buyBtn}</span>
-              </>
-            );
-            return url ? (
-              <a key={r.symbol} className="trow trow-equities asset-row-clickable equities-row" href={url} target="_blank" rel="noopener noreferrer">
-                {content}
-              </a>
-            ) : (
-              <div key={r.symbol} className="trow trow-equities equities-row">{content}</div>
+              </div>
             );
           })}
         </div>
@@ -238,6 +195,18 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
           }}
         />
       )}
+
+      {chartSymbol && (() => {
+        const row = rows.find((r) => r.symbol === chartSymbol);
+        return (
+          <AssetInfoModal
+            symbol={chartSymbol}
+            name={row?.name || chartSymbol}
+            category={row?.category || ""}
+            onClose={() => setChartSymbol(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
