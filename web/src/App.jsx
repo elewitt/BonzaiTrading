@@ -1822,21 +1822,11 @@ export default function App() {
         )}
         {address && (
           <div className="head-right head-right-authed">
-            {screen !== "equities" && (
-              <button className="head-nav-btn" onClick={() => setView("equities")}>Equities Markets</button>
-            )}
-            {screen !== "predictions" && (
-              <button className="head-nav-btn" onClick={() => setView("predictions")}>Prediction Markets</button>
-            )}
-            {screen !== "perps" && (
-              <button className="head-nav-btn" onClick={() => setView("perps")}>Perpetual Futures Markets</button>
-            )}
-            {screen !== "borrow" && (
-              <button className="head-nav-btn" onClick={() => setView("borrow")}>Borrow / Lend Markets</button>
-            )}
-            {screen !== "agents" && (
-              <button className="head-nav-btn" onClick={() => setView("agents")}>Trading Agent</button>
-            )}
+            <button className={`head-nav-btn ${screen === "equities" ? "active" : ""}`} onClick={() => setView("equities")}>Equities Markets</button>
+            <button className={`head-nav-btn ${screen === "predictions" ? "active" : ""}`} onClick={() => setView("predictions")}>Prediction Markets</button>
+            <button className={`head-nav-btn ${screen === "perps" ? "active" : ""}`} onClick={() => setView("perps")}>Perpetual Futures Markets</button>
+            <button className={`head-nav-btn ${screen === "borrow" ? "active" : ""}`} onClick={() => setView("borrow")}>Borrow / Lend Markets</button>
+            <button className={`head-nav-btn ${screen === "agents" ? "active" : ""}`} onClick={() => setView("agents")}>Trading Agent</button>
             <div className="profile-wrap" ref={profileRef}>
               <button className="head-nav-btn profile-btn" onClick={() => setProfileOpen((o) => !o)}>
                 My Profile

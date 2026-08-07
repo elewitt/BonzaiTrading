@@ -1450,6 +1450,13 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .head-nav-btn:hover { border-color: var(--moss); }
 .head-nav-btn:not(.profile-btn):hover { background: var(--pine); color: #fff; }
+/* Current screen — all 5 nav buttons always render, in fixed order, on
+   every screen (they used to individually disappear when their own
+   screen was active, which shifted every other button's position).
+   Tinted rather than fully filled so it's visually distinct from the
+   hover state instead of looking identical to "about to click." */
+.head-nav-btn.active { border-color: var(--pine); background: rgba(26,68,51,.08); color: var(--pine); font-weight: 500; }
+.head-nav-btn.active:hover { background: var(--pine); color: #fff; }
 
 /* ——— Perps Stage ——— */
 .perps-stage {
