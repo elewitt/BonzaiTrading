@@ -25,6 +25,7 @@ const PROPOSAL_TTL_MS = {
   delta_neutral_rebalance: 4 * 60 * 60 * 1000,
   twap_slice: 2 * 60 * 60 * 1000, // slices are only ~30min apart — a stale unconfirmed one defeats the point of a timed execution schedule
   vwap_slice: 2 * 60 * 60 * 1000,
+  trigger_fill: 6 * 60 * 60 * 1000, // the condition that fired it can un-fire just as fast — shorter than DCA's day-long window
 };
 
 function groupByWallet(strategies) {
@@ -42,10 +43,21 @@ function groupByWallet(strategies) {
  * (only delta-neutral strategies set one — DCA never touches perps) —
  * needed for rebalance-drift's perpValueUsd. Fails soft throughout: a
  * wallet whose holdings/positions can't be read right now just evaluates
- * with empty data rather than hard-failing the whole tick. */
-async function buildContext(wallet, evmAddress, deps) {
+ * with empty data rather than hard-failing the whole tick.
+ *
+ * Prices normally only cover currently-HELD mints (all the other types
+ * only ever need to price something already in the wallet). A trigger
+ * strategy watching an asset the wallet doesn't hold yet (e.g. "buy the
+ * dip" on something new) needs that mint priced too, so its target mints
+ * are folded into the same batched price fetch here rather than each
+ * trigger strategy fetching its own price independently every tick. */
+async function buildContext(wallet, evmAddress, walletStrategies, deps) {
   const holdings = await deps.getHoldingsForAddress(wallet).catch(() => null);
-  const mints = (holdings?.tokens || []).map((t) => t.mint);
+  const heldMints = (holdings?.tokens || []).map((t) => t.mint);
+  const triggerMints = walletStrategies
+    .filter((s) => s.type === "trigger" && s.params?.mint)
+    .map((s) => s.params.mint);
+  const mints = [...new Set([...heldMints, ...triggerMints])];
   const prices = mints.length ? await deps.getPricesForMints(mints).catch(() => ({})) : {};
   const perps = evmAddress ? await getPerpsPositions(evmAddress).catch(() => ({ positions: [] })) : { positions: [] };
   return { holdings, prices, perpPositions: perps.positions };
@@ -117,7 +129,7 @@ async function tick(deps) {
   const byWallet = groupByWallet(strategies);
   for (const [wallet, walletStrategies] of byWallet) {
     const evmAddress = walletStrategies.find((s) => s.evm_address)?.evm_address ?? null;
-    const ctx = await buildContext(wallet, evmAddress, deps);
+    const ctx = await buildContext(wallet, evmAddress, walletStrategies, deps);
     for (const strategy of walletStrategies) {
       try {
         await evaluateStrategy(strategy, ctx, deps);

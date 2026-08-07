@@ -27,7 +27,7 @@ import {
   getReferralsFor, getEquitiesStatsForWallet, getKaminoFeeStatsForWallet, getKaminoFeeTotals,
   createKaminoFeeObligation, getUnpaidKaminoFeeObligation, markKaminoFeeObligationPaid,
   createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
-  setStrategyStatus, touchStrategyEvaluated,
+  setStrategyStatus, touchStrategyEvaluated, getStrategyById,
   listPendingProposalsForWallet, getProposal, listProposalsForStrategy,
   markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
   getTelegramLinksForWallet,
@@ -892,16 +892,21 @@ async function parseStrategyPrompt({ prompt }) {
     .map((t) => `${t.symbol} — ${t.name}`)
     .join("\n");
 
-  const system = `You extract a trading strategy configuration from a plain-English request, for a product that supports four kinds of automated strategies. Identify which ONE type the request describes, then extract its params. A background process checks these on a schedule and creates a proposal for the user to review and confirm with their own wallet — nothing is ever executed automatically.
+  const system = `You extract a trading strategy configuration from a plain-English request, for a product that supports five kinds of automated strategies. Identify which ONE type the request describes, then extract its params. A background process checks these on a schedule and creates a proposal for the user to review and confirm with their own wallet — nothing is ever executed automatically.
 
 Assets available (symbol — name):
 ${assets}
 
-The four strategy types:
+The five strategy types:
 1. DCA (dollar-cost averaging) — a recurring fixed-size buy on a fixed schedule. e.g. "DCA $50 into bitcoin every week", "buy $10 of the S&P 500 monthly". Can name a GROUP of assets sharing the same amount/schedule (e.g. "DCA $10/week into FAANG stocks" → one plan per FAANG stock).
 2. Delta-neutral (funding-rate harvest) — long the spot asset, short an equal notional on its Hyperliquid perp, market-neutral. e.g. "go delta neutral on $1000 of AAPL at 2x leverage", "harvest funding on bitcoin with $500".
 3. TWAP (time-weighted average price) — a ONE-TIME total buy split into equal slices spread evenly over a time window, to reduce market impact. e.g. "TWAP buy $10,000 of AAPL over 4 hours", "buy $5000 of bitcoin via TWAP over 2 hours".
 4. VWAP (volume-weighted average price) — same idea as TWAP (a one-time total buy spread over a time window) but slice sizes are weighted toward when volume is typically higher, not equal. e.g. "VWAP $10,000 into TSLA over 6 hours".
+5. Trigger (conditional order) — a ONE-TIME buy or sell that fires once the live price crosses a threshold, then completes. This is the same mechanism for four common requests, which differ only in side/direction:
+   - Stop-loss: SELL when price drops BELOW a level. "sell my BTC if it drops below $80,000", "stop loss my TSLA position at $200".
+   - Take-profit: SELL when price rises ABOVE a level. "sell my ETH if it hits $5000", "take profit on AAPL at $250".
+   - Buy the dip: BUY when price drops BELOW a level or falls a percent. "buy $500 of AAPL if it drops 10%", "buy the dip on SOL if it falls below $150".
+   - Breakout buy: BUY when price rises ABOVE a level. "buy $1000 of NVDA if it breaks above $900".
 
 Respond with ONLY a JSON object. No markdown, no backticks, no prose.
 
@@ -917,16 +922,23 @@ If the request is a TWAP order:
 If the request is a VWAP order:
 {"supported":true,"type":"vwap","symbol":"AAPLx","totalUsd":10000,"durationHours":4,"summary":"one short plain sentence"}
 
-If the request is NOT any of these four — e.g. it depends on a price/market condition ("buy the dip", "when it drops 5%"), a plain one-time trade with no schedule/window at all, DIFFERENT amounts/schedules per asset in a DCA plan, more than ${MAX_STRATEGY_PLANS_PER_PROMPT} DCA assets, or anything else none of the four types above can express:
+If the request is a trigger (stop-loss / take-profit / buy-the-dip / breakout-buy):
+{"supported":true,"type":"trigger","symbol":"AAPLx","side":"buy","direction":"below","thresholdType":"price","thresholdValue":150,"usd":500,"summary":"one short plain sentence"}
+- side: "buy" or "sell". direction: "above" or "below" — the direction price must move to fire.
+- thresholdType: "price" for an absolute dollar level ("$80,000", "$150"), or "pct_change" for a percent move ("drops 10%", "rises 5%"). thresholdValue is always a positive number (the dollar level, or the percent — never signed).
+- usd: the dollar amount to trade. Required for a BUY. For a SELL, omit "usd" and set "sellAll":true instead when the user means their whole position (the common case for stop-loss/take-profit phrased as "sell my BTC" / "close my position") — only include "usd" for a sell when they name a specific partial dollar amount.
+
+If the request is NOT any of these five — e.g. a condition based on something other than price (an indicator, a date, "when volume spikes"), a plain one-time trade with no schedule/window/condition at all, DIFFERENT amounts/schedules per asset in a DCA plan, more than ${MAX_STRATEGY_PLANS_PER_PROMPT} DCA assets, or anything else none of the five types above can express:
 {"supported":false,"reason":"one short plain sentence explaining why"}
 
 Rules:
-- Map company/index/crypto names to symbols the same way you would for a portfolio instruction (Apple→AAPLx, S&P 500→SPYx, bitcoin→BTC, etc). Use only the listed symbols. For DCA, if a named asset isn't listed, drop just that one from "plans" and mention it was skipped in "summary" — don't make the whole request unsupported unless NONE of them match. For the other three types, an unlisted asset makes the request unsupported.
+- Map company/index/crypto names to symbols the same way you would for a portfolio instruction (Apple→AAPLx, S&P 500→SPYx, bitcoin→BTC, etc). Use only the listed symbols. For DCA, if a named asset isn't listed, drop just that one from "plans" and mention it was skipped in "summary" — don't make the whole request unsupported unless NONE of them match. For the other four types, an unlisted asset makes the request unsupported.
 - Common named groups (DCA only): FAANG → METAx, AAPLx, AMZNx, NFLXx, GOOGLx. "Magnificent Seven"/"Mag 7" → AAPLx, MSFTx, GOOGLx, AMZNx, METAx, NVDAx, TSLAx. Expand any other named group (sector, index constituents, etc.) using only symbols from the list above; if you can't confidently expand a named group from what's listed, that's unsupported.
 - Map generic yield/treasury requests (no country named) to USDY. Only map to a Foreign Sovereign Bond (KTB/CETES/TESOURO/GILTS) when that specific country/currency is named.
 - DCA intervalDays: "daily"→1, "weekly"→7, "every 2 weeks"/"biweekly"/"fortnightly"→14, "monthly"→30, or an explicit number of days if one is given. Must be a whole number, and the SAME for every plan.
-- Dollar amounts (usdPerInterval, notionalUsd, totalUsd): NEVER invent or estimate one — only extract what the user actually said. If no amount is given at all, that's unsupported.
+- Dollar amounts (usdPerInterval, notionalUsd, totalUsd, trigger's usd): NEVER invent or estimate one — only extract what the user actually said. If a BUY has no amount given at all, that's unsupported (a SELL trigger without an amount is fine — see sellAll above).
 - TWAP/VWAP durationHours: extract from phrases like "over 4 hours", "over 2 days" (→48). Must be a positive number of hours.
+- Trigger thresholdValue: NEVER invent one — only extract a level/percent the user actually stated.
 - Never list the same symbol twice in DCA "plans".`;
 
   const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1012,6 +1024,32 @@ Rules:
     };
     const paramError = STRATEGY_TYPES[parsed.type].validateParams(result);
     if (paramError) throw new Error(paramError);
+    return result;
+  }
+
+  if (parsed.type === "trigger") {
+    const token = bySymbol[String(parsed.symbol || "").trim()];
+    if (!token) throw new Error(`"${parsed.symbol}" isn't a supported asset.`);
+    const result = {
+      type: "trigger", symbol: token.symbol, name: token.name,
+      side: parsed.side, direction: parsed.direction, thresholdType: parsed.thresholdType,
+      thresholdValue: Number(parsed.thresholdValue),
+      sellAll: !!parsed.sellAll,
+      ...(parsed.usd != null ? { usd: Number(parsed.usd) } : {}),
+      summary: parsed.summary || "",
+    };
+    // pct_change needs a live referencePrice, which only strategyRoutes.js's
+    // resolveParams can supply (it has getPricesForMints in scope) — this
+    // endpoint only previews the strategy, so validateParams here just
+    // checks shape/bounds on what CAN be checked without a live price;
+    // the real reference-price fetch (and re-validation) happens at
+    // actual creation time.
+    if (result.thresholdType !== "pct_change") {
+      const paramError = STRATEGY_TYPES.trigger.validateParams(result);
+      if (paramError) throw new Error(paramError);
+    } else if (!Number.isFinite(result.thresholdValue) || result.thresholdValue <= 0) {
+      throw new Error("thresholdValue must be a positive number");
+    }
     return result;
   }
 
@@ -2810,13 +2848,13 @@ mountTelegramRoutes(app, {
   privyClient,
   // Strategy Agents proposal confirm/reject via "YES <id>"/"NO <id>" —
   // same DB effects as the web /report-execution route.
-  getProposal, markProposalConfirmed, markProposalRejected, touchStrategyEvaluated, setStrategyStatus, logActivity,
+  getProposal, markProposalConfirmed, markProposalRejected, touchStrategyEvaluated, setStrategyStatus, getStrategyById, logActivity,
 });
 
 mountStrategyRoutes(app, {
   requireAuth, requireAllowedGeo, requireActiveAccount, strategyLimiter,
   getRegistry, buildOrder, logActivity, getHoldingsForAddress, getPricesForMints,
-  getDeltaNeutralEligibleAssets,
+  getDeltaNeutralEligibleAssets, getStrategyById,
   createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
   setStrategyStatus, touchStrategyEvaluated,
   listPendingProposalsForWallet, getProposal, listProposalsForStrategy,

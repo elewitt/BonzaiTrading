@@ -82,7 +82,7 @@ export async function initSchema() {
       wallet_address TEXT NOT NULL,
       evm_address TEXT,
       privy_user_id TEXT,
-      type TEXT NOT NULL CHECK (type IN ('dca', 'delta_neutral', 'twap', 'vwap')),
+      type TEXT NOT NULL CHECK (type IN ('dca', 'delta_neutral', 'twap', 'vwap', 'trigger')),
       params JSONB NOT NULL,
       status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'paused', 'cancelled', 'completed')),
@@ -101,7 +101,7 @@ export async function initSchema() {
   // form (safe to run every boot); "strategies_type_check" is the default
   // name Postgres gives an inline CHECK with no explicit name.
   await pool.query(`ALTER TABLE strategies DROP CONSTRAINT IF EXISTS strategies_type_check;`);
-  await pool.query(`ALTER TABLE strategies ADD CONSTRAINT strategies_type_check CHECK (type IN ('dca', 'delta_neutral', 'twap', 'vwap'));`);
+  await pool.query(`ALTER TABLE strategies ADD CONSTRAINT strategies_type_check CHECK (type IN ('dca', 'delta_neutral', 'twap', 'vwap', 'trigger'));`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS strategy_proposals (
       id BIGSERIAL PRIMARY KEY,
@@ -487,6 +487,19 @@ export async function countActiveStrategiesForWallet(walletAddress) {
     [walletAddress],
   );
   return Number(rows[0].count);
+}
+
+/** Ownership-checked the same way getProposal is — used by
+ * applyStrategyExecutionState (strategyLegs.js) to read a strategy's
+ * CURRENT state before merging in an execution-quality fill record, since
+ * touchStrategyEvaluated replaces `state` wholesale rather than merging. */
+export async function getStrategyById(id, walletAddress) {
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT * FROM strategies WHERE id = $1 AND wallet_address = $2`,
+    [id, walletAddress],
+  );
+  return rows[0] ?? null;
 }
 
 /** Ownership-checked: the WHERE clause requires the row's own

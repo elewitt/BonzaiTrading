@@ -12,7 +12,12 @@ async function executeSpotLeg(order, taker, signWithWallet) {
     requestId: order.requestId, sponsored: order._sponsored, swapV1: order._swapV1, isSell: order._isSell,
   });
   if (result.status && result.status !== "Success") throw new Error(result.error || `execution failed (${result.status})`);
-  return { signature: result.signature, feeBps: order.feeBps ?? null };
+  // inAmount/outAmount are Jupiter's own raw order amounts, already in
+  // hand from /build — forwarded as-is so the server can compute this
+  // slice's real fill price for TWAP/VWAP execution-quality tracking
+  // (see strategyLegs.js) without the client needing to know token
+  // decimals or do any price math itself.
+  return { signature: result.signature, feeBps: order.feeBps ?? null, inAmount: order.inAmount, outAmount: order.outAmount };
 }
 
 /** Hyperliquid's exchange endpoint can return overall status "ok" while an

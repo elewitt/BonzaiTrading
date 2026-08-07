@@ -83,12 +83,36 @@ function StrategyHistory({ strategyId, address }) {
   );
 }
 
+/** USD-weighted average of a TWAP/VWAP strategy's recorded fills — each
+ * fill is a real slice's actual execution price (see strategyLegs.js's
+ * computeFillPrice), not the quoted/target price, so this reflects what
+ * actually happened, not what was supposed to. */
+function avgFillPrice(fills) {
+  if (!fills?.length) return null;
+  const totalUsd = fills.reduce((sum, f) => sum + f.usd, 0);
+  const totalQty = fills.reduce((sum, f) => sum + f.usd / f.price, 0);
+  return totalQty > 0 ? totalUsd / totalQty : null;
+}
+
+function triggerDescription(params) {
+  const verb = params.side === "buy" ? "Buy" : "Sell";
+  const amount = params.side === "sell" && params.sellAll ? "entire position" : fmtUsd(params.usd);
+  const move = params.direction === "below" ? "drops" : "rises";
+  const level = params.thresholdType === "price" ? `to $${params.thresholdValue.toLocaleString()}` : `${params.thresholdValue}%`;
+  return `${verb} ${amount} of ${params.symbol} if price ${move} ${level}`;
+}
+
 function StrategyCard({ strategy: s, address, busy, onTransition }) {
   const isDeltaNeutral = s.type === "delta_neutral";
   const isSliceExec = s.type === "twap" || s.type === "vwap";
-  const schedule = !isDeltaNeutral && !isSliceExec && s.status === "active" ? projectSchedule(s) : null;
+  const isTrigger = s.type === "trigger";
+  const schedule = !isDeltaNeutral && !isSliceExec && !isTrigger && s.status === "active" ? projectSchedule(s) : null;
   const totalSlices = isSliceExec ? sliceCount(s.params.durationHours) : null;
   const filledSlices = isSliceExec ? (s.state?.filledSlices || 0) : null;
+  const fills = isSliceExec ? (s.state?.fills || []) : [];
+  const avgFill = avgFillPrice(fills);
+  const startPrice = s.params.startPrice;
+  const pctVsLumpSum = avgFill != null && startPrice ? ((startPrice - avgFill) / startPrice) * 100 : null;
 
   return (
     <div className="lvp-card agents-strategy-card" style={{ marginBottom: 16 }}>
@@ -102,6 +126,8 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
             <p style={{ margin: 0, fontWeight: 600 }}>
               {fmtUsd(s.params.totalUsd)} {s.type.toUpperCase()} into {s.params.symbol} over {s.params.durationHours}h
             </p>
+          ) : isTrigger ? (
+            <p style={{ margin: 0, fontWeight: 600 }}>{triggerDescription(s.params)}</p>
           ) : (
             <p style={{ margin: 0, fontWeight: 600 }}>
               {fmtUsd(s.params.usdPerInterval)} of {s.params.symbol} {formatInterval(s.params.intervalDays)}
@@ -109,9 +135,10 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
           )}
           <p className="lvp-muted tiny" style={{ margin: "2px 0 0" }}>
             <span className={`strategy-status strategy-status-${s.status}`}>{s.status}</span>
-            {!isDeltaNeutral && !isSliceExec && s.state?.lastExecutedAt && ` · last bought ${new Date(s.state.lastExecutedAt).toLocaleDateString()}`}
+            {!isDeltaNeutral && !isSliceExec && !isTrigger && s.state?.lastExecutedAt && ` · last bought ${new Date(s.state.lastExecutedAt).toLocaleDateString()}`}
             {isDeltaNeutral && (s.state?.openedAt ? ` · opened ${new Date(s.state.openedAt).toLocaleDateString()}` : " · not yet opened")}
             {isSliceExec && ` · ${filledSlices}/${totalSlices} slices filled`}
+            {isTrigger && s.status === "active" && " · watching live price"}
           </p>
         </div>
         <div className="strategy-row-actions">
@@ -139,6 +166,21 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
           <div className="agents-schedule-dates">
             {schedule.map((d, i) => <span key={i} className="agents-schedule-chip">{fmtDate(d)}</span>)}
           </div>
+        </div>
+      )}
+
+      {isSliceExec && avgFill != null && (
+        <div className="agents-schedule-row">
+          <span className="tiny muted">Execution quality</span>
+          <p className="tiny" style={{ margin: 0 }}>
+            Avg fill <strong className="mono">${avgFill.toFixed(2)}</strong>
+            {startPrice != null && pctVsLumpSum != null && (
+              <>
+                {" "}vs <strong className="mono">${startPrice.toFixed(2)}</strong> lump-sum reference (
+                <span className={pctVsLumpSum >= 0 ? "gain" : "loss"}>{pctVsLumpSum >= 0 ? "+" : ""}{pctVsLumpSum.toFixed(2)}%</span>)
+              </>
+            )}
+          </p>
         </div>
       )}
 
@@ -250,6 +292,15 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
           walletAddress: address, type: parsed.type,
           params: { symbol: parsed.symbol, totalUsd: parsed.totalUsd, durationHours: parsed.durationHours },
         });
+      } else if (parsed.type === "trigger") {
+        await api.createStrategy({
+          walletAddress: address, type: "trigger",
+          params: {
+            symbol: parsed.symbol, side: parsed.side, direction: parsed.direction,
+            thresholdType: parsed.thresholdType, thresholdValue: parsed.thresholdValue,
+            sellAll: parsed.sellAll, usd: parsed.usd,
+          },
+        });
       }
       setParsed(null); setPrompt("");
       await refresh();
@@ -328,11 +379,12 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
         <p className="table-card-title" style={{ marginBottom: 12 }}>New Strategy</p>
         <p className="lvp-muted" style={{ marginTop: -6, marginBottom: 14 }}>
           Describe what you want — a recurring buy (DCA), a market-neutral funding harvest (delta-neutral),
-          or a large order split over time to reduce market impact (TWAP/VWAP).
+          a large order split over time to reduce market impact (TWAP/VWAP), or a conditional order that
+          fires when price crosses a level (stop-loss, take-profit, buy the dip).
         </p>
         <div className="prompt-wrap row">
           <input className="prompt-box oneline"
-            placeholder={'"DCA $50 into bitcoin every week" · "TWAP $10,000 into AAPL over 4 hours" · "go delta-neutral on $1,000 of TSLA"'}
+            placeholder={'"DCA $50 into bitcoin every week" · "TWAP $10,000 into AAPL over 4 hours" · "sell my BTC if it drops below $80,000"'}
             value={prompt} onChange={(e) => { setPrompt(e.target.value); setParsed(null); }}
             onKeyDown={(e) => e.key === "Enter" && runParse()} />
           <button className="btn primary" disabled={!prompt.trim() || parsing} onClick={runParse}>

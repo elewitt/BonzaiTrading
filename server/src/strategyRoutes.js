@@ -23,7 +23,7 @@ export function mountStrategyRoutes(app, deps) {
     getRegistry, buildOrder, logActivity, getHoldingsForAddress, getPricesForMints,
     getDeltaNeutralEligibleAssets,
     createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
-    setStrategyStatus, touchStrategyEvaluated,
+    setStrategyStatus, touchStrategyEvaluated, getStrategyById,
     listPendingProposalsForWallet, getProposal, listProposalsForStrategy,
     markProposalRejected, markProposalConfirmed, expireProposalsForStrategy,
   } = deps;
@@ -61,7 +61,40 @@ export function mountStrategyRoutes(app, deps) {
       if (!token || !token.mint || token.symbol === "USDC") {
         throw new Error(`unknown or unsupported symbol: ${params.symbol}`);
       }
-      return { symbol: token.symbol, mint: token.mint, totalUsd: Number(params.totalUsd), durationHours: Number(params.durationHours) };
+      const resolved = { symbol: token.symbol, mint: token.mint, totalUsd: Number(params.totalUsd), durationHours: Number(params.durationHours) };
+      // Lump-sum comparison baseline for the execution-quality display on
+      // the strategy card (see strategyLegs.js's fills tracking) — "what
+      // would the SAME total have cost bought all at once, right now,
+      // instead of split into slices." Best-effort: a missing live price
+      // just means that comparison can't be shown later, not a reason to
+      // block creating the strategy itself.
+      const prices = await getPricesForMints([token.mint]).catch(() => ({}));
+      if (prices[token.mint]) resolved.startPrice = prices[token.mint];
+      return resolved;
+    }
+    if (type === "trigger") {
+      const { bySymbol } = await getRegistry();
+      const token = bySymbol[params.symbol];
+      if (!token || !token.mint || token.symbol === "USDC") {
+        throw new Error(`unknown or unsupported symbol: ${params.symbol}`);
+      }
+      const resolved = {
+        symbol: token.symbol, mint: token.mint,
+        side: params.side, direction: params.direction, thresholdType: params.thresholdType,
+        thresholdValue: Number(params.thresholdValue),
+        sellAll: !!params.sellAll,
+        ...(params.usd != null ? { usd: Number(params.usd) } : {}),
+      };
+      // Never trust a client-supplied reference price — fetch it live,
+      // same "server computes the number, client never invents one"
+      // principle used everywhere else in this codebase.
+      if (params.thresholdType === "pct_change") {
+        const prices = await getPricesForMints([token.mint]);
+        const price = prices[token.mint];
+        if (!price) throw new Error(`No live price available for ${token.symbol} right now — try again shortly.`);
+        resolved.referencePrice = price;
+      }
+      return resolved;
     }
     return params;
   }
@@ -241,6 +274,7 @@ export function mountStrategyRoutes(app, deps) {
       await markProposalConfirmed(req.params.id, legResults.map((l) => l.signature).filter(Boolean));
 
       const spotLegIdx = proposal.legs.findIndex((l) => l.domain === "spot");
+      let spotFill = null;
       if (spotLegIdx !== -1 && legResults[spotLegIdx]?.signature) {
         const leg = proposal.legs[spotLegIdx];
         logActivity({
@@ -248,9 +282,16 @@ export function mountStrategyRoutes(app, deps) {
           symbol: leg.symbol, side: leg.side, usdValue: leg.usd ?? null, signature: legResults[spotLegIdx].signature,
           details: { inputMint: leg.inputMint, outputMint: leg.outputMint, feeBps: legResults[spotLegIdx].feeBps ?? null, strategyId: proposal.strategy_id, proposalId: proposal.id },
         });
+        // Raw Jupiter order amounts, forwarded as-is by the client from
+        // what /build returned it — powers TWAP/VWAP execution-quality
+        // tracking (see applyStrategyExecutionState). Absent for older
+        // clients or non-spot legs; that's fine, fill-price recording is
+        // best-effort.
+        const { inAmount, outAmount } = legResults[spotLegIdx];
+        if (inAmount && outAmount) spotFill = { inAmount, outAmount };
       }
 
-      await applyStrategyExecutionState(proposal, walletAddress, { touchStrategyEvaluated, setStrategyStatus });
+      await applyStrategyExecutionState(proposal, walletAddress, spotFill, { touchStrategyEvaluated, setStrategyStatus, getStrategyById, getRegistry });
 
       res.json({ ok: true });
     } catch (e) {

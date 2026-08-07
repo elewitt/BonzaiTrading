@@ -263,9 +263,17 @@ async function handleStrategyConfirm(deps, chatId, proposalId) {
     // Same kind-based state update the web /report-execution route uses —
     // NOT always "lastExecutedAt" (that's DCA-only; delta-neutral/TWAP/VWAP
     // each advance their own state differently, see strategyLegs.js).
-    await applyStrategyExecutionState(proposal, link.address, {
-      touchStrategyEvaluated: deps.touchStrategyEvaluated, setStrategyStatus: deps.setStrategyStatus,
-    });
+    // order.inAmount/outAmount (Jupiter's raw order response, already in
+    // scope here) power TWAP/VWAP execution-quality tracking the same way
+    // the web confirm path forwards them.
+    await applyStrategyExecutionState(
+      proposal, link.address,
+      order.inAmount && order.outAmount ? { inAmount: order.inAmount, outAmount: order.outAmount } : null,
+      {
+        touchStrategyEvaluated: deps.touchStrategyEvaluated, setStrategyStatus: deps.setStrategyStatus,
+        getStrategyById: deps.getStrategyById, getRegistry: deps.getRegistry,
+      },
+    );
 
     await sendMessage(chatId, `✅ ${proposal.summary} — https://solscan.io/tx/${result.signature}`);
   } catch (e) {
