@@ -1061,6 +1061,28 @@ async function safeJupJson(r) {
   }
 }
 
+/** Fetches from Jupiter with automatic retry-with-backoff on a 429. This
+ * server has no JUPITER_API_KEY configured (see tokens.js's jupHeaders) —
+ * every trade shares Jupiter's public, unauthenticated rate limit with
+ * all of its OTHER anonymous traffic, so a transient 429 here is common,
+ * not exceptional, and shouldn't fail a real user's trade on the very
+ * first one. Retries a few times with a short increasing delay before
+ * finally giving up with safeJupJson's clear rate-limit error. A real API
+ * key is what actually raises the limit (see the note there) — this only
+ * smooths over brief contention against the shared one. */
+async function jupFetch(url, options) {
+  const MAX_ATTEMPTS = 4;
+  const RETRY_DELAY_MS = 700;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await fetch(url, options);
+    if (r.status !== 429 || attempt === MAX_ATTEMPTS) {
+      return { r, data: await safeJupJson(r) };
+    }
+    console.log(`[jupiter] 429 rate-limited, retrying (attempt ${attempt}/${MAX_ATTEMPTS})…`);
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+  }
+}
+
 /**
  * Core Jupiter order-building logic, extracted so it can be called both from
  * the HTTP handler below and internally (e.g. by the Telegram bot flow,
@@ -1111,8 +1133,7 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
     //    before the client signs and submits.
     const params = new URLSearchParams({ inputMint, outputMint, amount, taker });
     applyReferralFee(params);
-    const r = await fetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-    const data = await safeJupJson(r);
+    const { r, data } = await jupFetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
 
     if (!r.ok || data.error) {
       const rfqError = data.error || `order HTTP ${r.status}`;
@@ -1143,8 +1164,7 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
         }
 
         const quoteParams = new URLSearchParams({ inputMint, outputMint, amount, slippageBps: "150" });
-        const qr = await fetch(`${JUP_BASE}/swap/v1/quote?${quoteParams}`, { headers: jupHeaders() });
-        const quote = await safeJupJson(qr);
+        const { r: qr, data: quote } = await jupFetch(`${JUP_BASE}/swap/v1/quote?${quoteParams}`, { headers: jupHeaders() });
         if (!qr.ok || quote.error) throw new Error(quote.error || "no AMM quote available");
 
         const ammImpactErr = priceImpactError(quote.priceImpactPct);
@@ -1153,7 +1173,7 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
           throw new OrderError(400, ammImpactErr);
         }
 
-        const swapR = await fetch(`${JUP_BASE}/swap/v1/swap`, {
+        const { r: swapR, data: swapData } = await jupFetch(`${JUP_BASE}/swap/v1/swap`, {
           method: "POST",
           headers: { "content-type": "application/json", ...jupHeaders() },
           body: JSON.stringify({
@@ -1163,7 +1183,6 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
             prioritizationFeeLamports: 500_000, // cap at 0.0005 SOL to keep cost predictable
           }),
         });
-        const swapData = await safeJupJson(swapR);
         if (!swapR.ok || swapData.error) throw new Error(swapData.error || "AMM swap build failed");
         if (!swapData.swapTransaction) throw new Error("AMM swap: no transaction returned");
 
@@ -1195,12 +1214,10 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
   const params = new URLSearchParams({ inputMint, outputMint, amount, taker });
   if (sponsor) params.set("payer", sponsor.publicKey.toBase58());
   applyReferralFee(params);
-  let r = await fetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-  let data = await safeJupJson(r);
+  let { r, data } = await jupFetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
   if ((!r.ok || data.error) && sponsor) {
     params.delete("payer");
-    r = await fetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-    data = await safeJupJson(r);
+    ({ r, data } = await jupFetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() }));
     data._sponsored = false;
   } else {
     data._sponsored = !!sponsor;
@@ -1284,12 +1301,11 @@ async function executeSignedOrder({ signedTransaction, requestId, sponsored, swa
     tx.sign([sponsor]);
     signedTransaction = Buffer.from(tx.serialize()).toString("base64");
   }
-  const r = await fetch(`${JUP_BASE}/ultra/v1/execute`, {
+  const { r, data } = await jupFetch(`${JUP_BASE}/ultra/v1/execute`, {
     method: "POST",
     headers: { "content-type": "application/json", ...jupHeaders() },
     body: JSON.stringify({ signedTransaction, requestId }),
   });
-  const data = await safeJupJson(r);
   const jupFailed = !r.ok || data.error || (data.status && data.status !== "Success");
   if (jupFailed) console.error("[execute] Jupiter error:", JSON.stringify(data));
 
