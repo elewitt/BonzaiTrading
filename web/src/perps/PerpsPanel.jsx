@@ -429,16 +429,16 @@ export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAd
                       </span>
                     </span>
                   </td>
-                  <td>${usd(p.entryPx)}</td>
-                  <td>{p.size}</td>
-                  <td className="pos-mark">${usd(p.markPx)}</td>
-                  <td className={p.health.status !== "healthy" ? `pos-liq-warn ${p.health.status}` : undefined}>
+                  <td data-label="Entry price">${usd(p.entryPx)}</td>
+                  <td data-label="Size">{p.size}</td>
+                  <td className="pos-mark" data-label="Mark price">${usd(p.markPx)}</td>
+                  <td data-label="Liq. price" className={p.health.status !== "healthy" ? `pos-liq-warn ${p.health.status}` : undefined}>
                     {p.health.liquidationPrice != null ? `$${usd(p.health.liquidationPrice)}` : "—"}
                   </td>
-                  <td className={`pos-pnl pos-pnl-lg ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>
+                  <td data-label="Unrealized PnL" className={`pos-pnl pos-pnl-lg ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>
                     {p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}
                   </td>
-                  <td><span className="pos-leverage-chip">{p.leverage}x</span></td>
+                  <td data-label="Leverage"><span className="pos-leverage-chip">{p.leverage}x</span></td>
                   <td className="pt-action">
                     <span className="pt-action-group">
                       <button className="lvp-add-btn" onClick={() => onAddToPosition?.(p)}>Add</button>

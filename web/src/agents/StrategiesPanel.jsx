@@ -103,6 +103,7 @@ function triggerDescription(params) {
 }
 
 function StrategyCard({ strategy: s, address, busy, onTransition }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const isDeltaNeutral = s.type === "delta_neutral";
   const isSliceExec = s.type === "twap" || s.type === "vwap";
   const isTrigger = s.type === "trigger";
@@ -185,8 +186,13 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
       )}
 
       <div className="agents-history-section">
-        <span className="tiny muted">History</span>
-        <StrategyHistory strategyId={s.id} address={address} />
+        <button type="button" className="agents-history-toggle" onClick={() => setHistoryOpen((o) => !o)}>
+          <span className="tiny muted">History</span>
+          <svg className={`hist-chevron ${historyOpen ? "open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {historyOpen && <StrategyHistory strategyId={s.id} address={address} />}
       </div>
     </div>
   );

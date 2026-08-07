@@ -760,9 +760,42 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   border: 1px solid var(--line); color: var(--ink);
 }
 .pos-pnl { font-weight: 600; }
-@media(max-width:600px) {
-  .positions-table th:nth-child(3), .positions-table td:nth-child(3),
-  .positions-table th:nth-child(7), .positions-table td:nth-child(7) { display: none; }
+/* Card-stack instead of a horizontally-scrolling table on mobile — the
+   one dense table left that never got the same treatment Equities/
+   Predictions/Referrals already have. Real <table> markup can't reflow
+   into a CSS-grid card the way a .trow div can, so this uses the
+   standard CSS-only responsive-table technique instead: hide the header
+   row, turn each <tr> into its own card, and each <td> into a label/value
+   line via a data-label attribute (already added at each call site) fed
+   through a ::before pseudo-element — no JS, and every existing handler/
+   prop on the row is untouched. Also means Size/Leverage (previously
+   just hidden below 600px) are visible again — a card has the room a
+   cramped table row didn't. */
+@media (max-width: 600px) {
+  .positions-table-wrap { overflow-x: visible; margin: 0; }
+  .positions-table, .positions-table tbody { display: block; width: 100%; }
+  .positions-table thead { display: none; }
+  .positions-table tr {
+    display: block; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 10px; background: var(--card);
+  }
+  .positions-table tbody tr:last-child { margin-bottom: 0; }
+  .positions-table td {
+    display: flex; justify-content: space-between; align-items: center;
+    border: none; padding: 6px 0; text-align: right;
+  }
+  .positions-table td[data-label]::before {
+    content: attr(data-label); color: var(--moss); font-size: 12px; text-align: left; margin-right: 12px;
+  }
+  .positions-table td.pt-asset {
+    display: block; text-align: left; padding: 0 0 10px; margin-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .positions-table td.pt-action {
+    display: block; padding: 10px 0 0; margin-top: 4px; border-top: 1px solid var(--line);
+    position: static; background: none;
+  }
+  .positions-table td.pt-action .pt-action-group { justify-content: flex-start; }
 }
 
 /* ——— "Open Positions" account-page table — a roomier, more decorated
@@ -1367,6 +1400,15 @@ a.trow { color: inherit; text-decoration: none; }
 .watch-tab-add { font-weight: 600; padding: 5px 11px; }
 .watch-tab-more { font-style: italic; }
 
+@media (max-width: 600px) {
+  /* Same "don't force it to fit, let it scroll" treatment as .borrow-tabs —
+     wrapping a pill-tab row to a second line pushes the whole dashboard
+     header down unpredictably as watched portfolios are added; a swipeable
+     single-line strip keeps header height stable instead. */
+  .watch-tabs-row { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .watch-tab, .watch-tab-add { flex: 0 0 auto; white-space: nowrap; }
+}
+
 .watch-readonly-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
@@ -1697,7 +1739,17 @@ a.trow { color: inherit; text-decoration: none; }
   border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--moss);
 }
 .agents-history-section { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
-.agents-history-list { display: flex; flex-direction: column; gap: 6px; }
+/* Collapsed by default (a strategy card can otherwise stack a title,
+   status line, execution-quality analytics, schedule chips, AND a full
+   history list all at once, at equal visual weight) — one tap/click
+   reveals it, same collapsible affordance HistoryScreen.jsx's day-groups
+   already use (.hist-chevron, reused as-is). */
+.agents-history-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; border: none; background: none; padding: 0; margin: 0;
+  cursor: pointer; font-family: inherit;
+}
+.agents-history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .agents-history-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 6px 0;

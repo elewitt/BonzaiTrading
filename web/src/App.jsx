@@ -2602,12 +2602,12 @@ export default function App() {
                             </span>
                           </span>
                         </td>
-                        <td>${usd(p.entryPx)}</td>
-                        <td>{p.size}</td>
-                        <td>${usd(p.markPx)}</td>
-                        <td>{p.health.liquidationPrice != null ? `$${usd(p.health.liquidationPrice)}` : "—"}</td>
-                        <td className={`pos-pnl ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>{p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}</td>
-                        <td><span className="pos-leverage-chip">{p.leverage}x</span></td>
+                        <td data-label="Entry price">${usd(p.entryPx)}</td>
+                        <td data-label="Size">{p.size}</td>
+                        <td data-label="Mark price">${usd(p.markPx)}</td>
+                        <td data-label="Liq. price">{p.health.liquidationPrice != null ? `$${usd(p.health.liquidationPrice)}` : "—"}</td>
+                        <td data-label="Unrealized PnL" className={`pos-pnl ${p.unrealizedPnl >= 0 ? "gain" : "warn"}`}>{p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}</td>
+                        <td data-label="Leverage"><span className="pos-leverage-chip">{p.leverage}x</span></td>
                         <td className="pt-action"><PerpsCloseCell p={p} hl={hl} user={evmAddress} tradingWallet={perpsWallet} /></td>
                       </tr>
                     ))}
@@ -2654,10 +2654,10 @@ export default function App() {
                               <span className="tiny muted">Borrowed {debtName}</span>
                             </span>
                           </td>
-                          <td>${usd(collateralVal)}</td>
-                          <td>${usd(debtVal)}</td>
-                          <td>{((Number(info.currentLtv) || 0) * 100).toFixed(1)}%</td>
-                          <td>{((Number(info.liquidationLtv) || 0) * 100).toFixed(1)}%</td>
+                          <td data-label="Collateral">${usd(collateralVal)}</td>
+                          <td data-label="Borrowed">${usd(debtVal)}</td>
+                          <td data-label="Current LTV">{((Number(info.currentLtv) || 0) * 100).toFixed(1)}%</td>
+                          <td data-label="Liquidation LTV">{((Number(info.liquidationLtv) || 0) * 100).toFixed(1)}%</td>
                         </tr>
                       );
                     })}
