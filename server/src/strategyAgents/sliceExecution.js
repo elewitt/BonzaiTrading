@@ -7,7 +7,7 @@ import { USDC } from "../tokens.js";
  * filled, the strategy is marked completed. —————
  */
 
-const MIN_TOTAL_USD = 50;
+const MIN_TOTAL_USD = 1;
 const MAX_TOTAL_USD = 100_000;
 const MIN_DURATION_HOURS = 1;
 const MAX_DURATION_HOURS = 72; // 3 days — beyond this it's DCA's job, not an execution algo's
