@@ -1039,6 +1039,28 @@ class OrderError extends Error {
   }
 }
 
+/** Jupiter's lite-api tier (unauthenticated — no JUPITER_API_KEY configured
+ * here) can return a 429 with a PLAIN-TEXT body, not JSON, when ITS OWN rate
+ * limit is hit. A raw `r.json()` on that throws an opaque "Unexpected token
+ * 'T', "Too Many R"... is not valid JSON" SyntaxError straight past every
+ * caller — confirmed via a real Telegram strategy-proposal confirmation
+ * (buildOrder → executeSignedOrder) surfacing exactly that message to the
+ * user. Reads the body as text first so a non-JSON response becomes one
+ * clear, expected OrderError instead of a raw parse crash. */
+async function safeJupJson(r) {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new OrderError(
+      r.status === 429 ? 429 : 502,
+      r.status === 429
+        ? "Jupiter is rate-limiting this server right now — please try again in a moment."
+        : `Unexpected response from Jupiter (HTTP ${r.status})`,
+    );
+  }
+}
+
 /**
  * Core Jupiter order-building logic, extracted so it can be called both from
  * the HTTP handler below and internally (e.g. by the Telegram bot flow,
@@ -1090,7 +1112,7 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
     const params = new URLSearchParams({ inputMint, outputMint, amount, taker });
     applyReferralFee(params);
     const r = await fetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-    const data = await r.json();
+    const data = await safeJupJson(r);
 
     if (!r.ok || data.error) {
       const rfqError = data.error || `order HTTP ${r.status}`;
@@ -1122,7 +1144,7 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
 
         const quoteParams = new URLSearchParams({ inputMint, outputMint, amount, slippageBps: "150" });
         const qr = await fetch(`${JUP_BASE}/swap/v1/quote?${quoteParams}`, { headers: jupHeaders() });
-        const quote = await qr.json();
+        const quote = await safeJupJson(qr);
         if (!qr.ok || quote.error) throw new Error(quote.error || "no AMM quote available");
 
         const ammImpactErr = priceImpactError(quote.priceImpactPct);
@@ -1141,7 +1163,7 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
             prioritizationFeeLamports: 500_000, // cap at 0.0005 SOL to keep cost predictable
           }),
         });
-        const swapData = await swapR.json();
+        const swapData = await safeJupJson(swapR);
         if (!swapR.ok || swapData.error) throw new Error(swapData.error || "AMM swap build failed");
         if (!swapData.swapTransaction) throw new Error("AMM swap: no transaction returned");
 
@@ -1174,11 +1196,11 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
   if (sponsor) params.set("payer", sponsor.publicKey.toBase58());
   applyReferralFee(params);
   let r = await fetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-  let data = await r.json();
+  let data = await safeJupJson(r);
   if ((!r.ok || data.error) && sponsor) {
     params.delete("payer");
     r = await fetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-    data = await r.json();
+    data = await safeJupJson(r);
     data._sponsored = false;
   } else {
     data._sponsored = !!sponsor;
@@ -1267,7 +1289,7 @@ async function executeSignedOrder({ signedTransaction, requestId, sponsored, swa
     headers: { "content-type": "application/json", ...jupHeaders() },
     body: JSON.stringify({ signedTransaction, requestId }),
   });
-  const data = await r.json();
+  const data = await safeJupJson(r);
   const jupFailed = !r.ok || data.error || (data.status && data.status !== "Success");
   if (jupFailed) console.error("[execute] Jupiter error:", JSON.stringify(data));
 
