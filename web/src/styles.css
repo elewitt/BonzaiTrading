@@ -1765,6 +1765,12 @@ a.trow { color: inherit; text-decoration: none; }
   display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
   padding-bottom: 4px;
 }
+/* Real size/weight hierarchy instead of ad hoc inline fontSize overrides —
+   the live price is what a trader glances at repeatedly while watching a
+   position, so it reads as the dominant figure; the asset name identifies
+   what you're looking at but doesn't need to compete with it. */
+.perps-market-name { font-size: 16px; font-weight: 500; }
+.perps-market-price { font-size: 26px; font-weight: 600; }
 
 /* ——— Deposit layout ——— */
 .perps-deposit-layout {

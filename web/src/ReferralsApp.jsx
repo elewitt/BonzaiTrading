@@ -59,12 +59,17 @@ export default function ReferralsApp({ onBack }) {
         <>
           <div className="card" style={{ marginBottom: 20 }}>
             <div className="card-toprow"><p className="table-card-title">Your stats</p></div>
+            <div className="lvp-pnl-header-row" style={{ marginBottom: 10 }}>
+              <div>
+                <p className="lvp-muted" style={{ marginBottom: 2 }}>Your earnings (50%)</p>
+                <p className="lvp-pnl-focal gain">${usd(data.totals.totalEarned)}</p>
+              </div>
+            </div>
             <div className="trow"><span className="label">Total signups</span><span className="mono">{data.signupCount}</span></div>
             <div className="trow"><span className="label">Total referred volume</span><span className="mono">${usd(data.totals.volume)}</span></div>
             <div className="trow"><span className="label">Equities fees generated</span><span className="mono">${usd(data.totals.equitiesFees)}</span></div>
             <div className="trow"><span className="label">Perps fees generated</span><span className="mono">${usd(data.totals.perpsFees)}</span></div>
             <div className="trow"><span className="label">Borrow/Lend fees generated</span><span className="mono">${usd(data.totals.kaminoFees)}</span></div>
-            <div className="trow"><span className="label">Your earnings (50%)</span><span className="mono gain">${usd(data.totals.totalEarned)}</span></div>
           </div>
 
           <div className="card table-card">

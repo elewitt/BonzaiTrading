@@ -544,14 +544,14 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
             {asset ? (
               <>
                 <div className="perps-market-header">
-                  <a className="serif perps-asset-link" style={{ fontSize: 20 }}
+                  <a className="serif perps-asset-link perps-market-name"
                     href={asset.category === "equity" ? yahooFinanceUrl(asset.displayName) : coingeckoUrl(asset.displayName)}
                     target="_blank" rel="noopener noreferrer">
                     {asset.displayName}-PERP
                   </a>
-                  <span className="lvp-muted">{asset.maxLeverage}x max</span>
+                  <span className="lvp-muted tiny">{asset.maxLeverage}x max</span>
                   {markPrice > 0 && (
-                    <span className="mono" style={{ fontSize: 18 }}>
+                    <span className="mono perps-market-price">
                       ${markPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   )}
