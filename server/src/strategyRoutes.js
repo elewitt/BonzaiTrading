@@ -1,5 +1,5 @@
 import { STRATEGY_TYPES, MAX_ACTIVE_STRATEGIES_PER_WALLET } from "./strategyAgents/index.js";
-import { USDC } from "./tokens.js";
+import { resolveSpotLegAmount, applyStrategyExecutionState } from "./strategyLegs.js";
 
 /**
  * Mounts every Strategy Agents route on the given Express app. `deps`
@@ -182,27 +182,7 @@ export function mountStrategyRoutes(app, deps) {
    * (USDC's decimals never change, so this is safe to compute right at
    * build time rather than needing a precomputed amount at all). */
   async function resolveSpotLegOrder(leg, walletAddress) {
-    let amount;
-    if (leg.amount != null) {
-      amount = String(leg.amount);
-    } else if (leg.side === "buy") {
-      amount = String(Math.floor(leg.usd * 10 ** USDC.decimals));
-    } else {
-      const holdings = await getHoldingsForAddress(walletAddress);
-      const held = holdings.tokens?.find((t) => t.mint === leg.inputMint);
-      if (!held || Number(held.amount) === 0) throw new Error(`No ${leg.symbol} balance to sell.`);
-      if (leg.sellAll) {
-        amount = held.amount;
-      } else {
-        const prices = await getPricesForMints([leg.inputMint]);
-        const price = prices[leg.inputMint];
-        if (!price) throw new Error(`No live price available for ${leg.symbol} right now.`);
-        // Never propose selling more than what's actually held, even if
-        // the usd target (computed from a possibly-stale price snapshot
-        // at evaluate time) would work out to more.
-        amount = String(Math.min(Math.floor((leg.usd / price) * 10 ** held.decimals), Number(held.amount)));
-      }
-    }
+    const amount = await resolveSpotLegAmount(leg, walletAddress, { getHoldingsForAddress, getPricesForMints });
     return buildOrder({ inputMint: leg.inputMint, outputMint: leg.outputMint, amount, taker: walletAddress });
   }
 
@@ -270,29 +250,7 @@ export function mountStrategyRoutes(app, deps) {
         });
       }
 
-      if (proposal.kind === "delta_neutral_open") {
-        const now = new Date().toISOString();
-        await touchStrategyEvaluated(proposal.strategy_id, { state: { openedAt: now, lastFundingCheckedAt: now } });
-      } else if (proposal.kind === "delta_neutral_exit") {
-        await setStrategyStatus(proposal.strategy_id, walletAddress, "completed");
-      } else if (proposal.kind === "twap_slice" || proposal.kind === "vwap_slice") {
-        // The confirmed slice's own leg carries sliceIndex/totalSlices (set
-        // when the proposal was created — see sliceExecution.js), so the
-        // next filledSlices count comes from the proposal itself rather
-        // than needing to re-fetch and re-derive the strategy's state.
-        const leg = proposal.legs.find((l) => l.domain === "spot");
-        const nextFilled = (leg?.sliceIndex ?? 0) + 1;
-        if (leg && nextFilled >= leg.totalSlices) {
-          await setStrategyStatus(proposal.strategy_id, walletAddress, "completed");
-        } else {
-          await touchStrategyEvaluated(proposal.strategy_id, { state: { filledSlices: nextFilled } });
-        }
-      } else if (proposal.kind !== "delta_neutral_rebalance") {
-        // dca_buy — delta_neutral_rebalance needs no state change here at
-        // all: evaluate() recomputes drift fresh from live holdings/perp
-        // positions on the next tick regardless.
-        await touchStrategyEvaluated(proposal.strategy_id, { state: { lastExecutedAt: new Date().toISOString() } });
-      }
+      await applyStrategyExecutionState(proposal, walletAddress, { touchStrategyEvaluated, setStrategyStatus });
 
       res.json({ ok: true });
     } catch (e) {

@@ -24,6 +24,7 @@
 import { VersionedTransaction } from "@solana/web3.js";
 import { derivePortfolio, planTrades } from "./portfolio.js";
 import { upsertTelegramLink, getTelegramLinkForChat, getTelegramLinksForWallet } from "./db.js";
+import { resolveSpotLegAmount, applyStrategyExecutionState } from "./strategyLegs.js";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || "";
@@ -208,8 +209,14 @@ async function handleStrategyConfirm(deps, chatId, proposalId) {
   if (proposal.status !== "pending") { await sendMessage(chatId, `Proposal #${proposalId} is already ${proposal.status}.`); return; }
   if (new Date(proposal.expires_at) < new Date()) { await sendMessage(chatId, `Proposal #${proposalId} has expired.`); return; }
 
+  // Single-leg spot proposals only (dca_buy, delta_neutral_rebalance,
+  // twap_slice, vwap_slice) — delta_neutral_open/exit carry a SECOND perp
+  // leg this handler has no way to execute, so it must refuse the whole
+  // proposal rather than silently executing just the spot half of a
+  // position that's supposed to be hedged (a naked, unhedged buy is a
+  // materially different and riskier thing than what was proposed).
   const leg = proposal.legs[0];
-  if (!leg || leg.domain !== "spot") {
+  if (proposal.legs.length !== 1 || !leg || leg.domain !== "spot") {
     await sendMessage(chatId, "This proposal type isn't supported via Telegram yet — confirm it in the app.");
     return;
   }
@@ -220,9 +227,16 @@ async function handleStrategyConfirm(deps, chatId, proposalId) {
 
   await sendMessage(chatId, "Executing…");
   try {
+    // Same amount resolution the web /build route uses — leg.amount is
+    // DCA's precomputed convention; delta-neutral/TWAP/VWAP legs carry
+    // `usd`/`sellAll` instead and resolve their real atomic amount from
+    // live holdings/prices right here (see strategyLegs.js).
+    const amount = await resolveSpotLegAmount(leg, link.address, {
+      getHoldingsForAddress: deps.getHoldingsForAddress, getPricesForMints: deps.getPricesForMints,
+    });
     const order = await deps.buildOrder({
       inputMint: leg.inputMint, outputMint: leg.outputMint,
-      amount: String(leg.amount), taker: link.address,
+      amount, taker: link.address,
     });
     const tx = VersionedTransaction.deserialize(Buffer.from(order.transaction, "base64"));
     const { signedTransaction } = await deps.privyClient.walletApi.solana.signTransaction({
@@ -244,9 +258,14 @@ async function handleStrategyConfirm(deps, chatId, proposalId) {
     deps.logActivity({
       walletAddress: link.address, kind: "swap",
       symbol: leg.symbol, side: leg.side, usdValue: leg.usd, signature: result.signature,
-      details: { inputMint: leg.inputMint, outputMint: leg.outputMint, amount: leg.amount, feeBps: order.feeBps ?? null, strategyId: proposal.strategy_id, proposalId: proposal.id },
+      details: { inputMint: leg.inputMint, outputMint: leg.outputMint, amount, feeBps: order.feeBps ?? null, strategyId: proposal.strategy_id, proposalId: proposal.id },
     });
-    await deps.touchStrategyEvaluated(proposal.strategy_id, { state: { lastExecutedAt: new Date().toISOString() } });
+    // Same kind-based state update the web /report-execution route uses —
+    // NOT always "lastExecutedAt" (that's DCA-only; delta-neutral/TWAP/VWAP
+    // each advance their own state differently, see strategyLegs.js).
+    await applyStrategyExecutionState(proposal, link.address, {
+      touchStrategyEvaluated: deps.touchStrategyEvaluated, setStrategyStatus: deps.setStrategyStatus,
+    });
 
     await sendMessage(chatId, `✅ ${proposal.summary} — https://solscan.io/tx/${result.signature}`);
   } catch (e) {
