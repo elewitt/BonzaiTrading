@@ -559,7 +559,7 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 @keyframes ldot { 0%,80%,100% { opacity:.15; transform:scale(.7); } 40% { opacity:.9; transform:scale(1.1); } }
 
 /* ——— Dashboard hero ——— */
-.hero-row { display: grid; grid-template-columns: auto 1fr; gap: 24px 56px; align-items: center; margin-bottom: 32px; }
+.hero-row { display: grid; grid-template-columns: auto 1fr; gap: 24px 56px; align-items: center; margin-bottom: 26px; }
 @media (max-width: 820px) { .hero-row { grid-template-columns: 1fr; } }
 .hero-prompt { display: flex; flex-direction: column; gap: 0; }
 .hero-prompt-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -1080,7 +1080,7 @@ a.trow { color: inherit; text-decoration: none; }
    tabs (and, on the right, the news search bar) sit in a separate row
    above the grid so neither pushes its own card's top edge down out of
    alignment with the card beside it. */
-.dash-tabs-row { display: grid; grid-template-columns: 1fr 300px; gap: 28px; align-items: end; margin-bottom: 16px; }
+.dash-tabs-row { display: grid; grid-template-columns: 1fr 300px; gap: 28px; align-items: end; margin-bottom: 12px; }
 @media(max-width: 900px) { .dash-tabs-row { grid-template-columns: 1fr; } }
 .dash-tabs-left { display: flex; flex-direction: column; gap: 10px; }
 
@@ -1383,38 +1383,6 @@ a.trow { color: inherit; text-decoration: none; }
 .alloc-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 20px; }
 .alloc-actions .btn { flex: 1; font-size: 13px; padding: 9px 0; }
 
-/* ——— Watched-portfolio tabs, sit above the Brokerage Account card ——— */
-.watch-tabs-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.watch-tab {
-  display: flex; align-items: center; gap: 6px;
-  border: 1px solid var(--line); background: var(--card); border-radius: 999px;
-  padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit; color: var(--moss);
-  transition: all .15s;
-}
-.watch-tab:hover { border-color: var(--pine); color: var(--pine); }
-.watch-tab.active { background: var(--pine); border-color: var(--pine); color: #fff; }
-.alloc-tab-x {
-  font-size: 13px; line-height: 1; opacity: .7; padding: 0 1px;
-}
-.alloc-tab-x:hover { opacity: 1; }
-.watch-tab-add { font-weight: 600; padding: 5px 11px; }
-.watch-tab-more { font-style: italic; }
-
-@media (max-width: 600px) {
-  /* Same "don't force it to fit, let it scroll" treatment as .borrow-tabs —
-     wrapping a pill-tab row to a second line pushes the whole dashboard
-     header down unpredictably as watched portfolios are added; a swipeable
-     single-line strip keeps header height stable instead. */
-  .watch-tabs-row { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
-  .watch-tab, .watch-tab-add { flex: 0 0 auto; white-space: nowrap; }
-}
-
-.watch-readonly-banner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
-  padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: var(--moss);
-}
-.watch-readonly-banner .btn { font-size: 12px; padding: 6px 14px; white-space: nowrap; }
 
 /* ——— Dashboard product tabs (Brokerage / Perps / Borrow-Lend) ——— */
 .dash-product-tabs { display: flex; justify-content: flex-end; gap: 10px; }

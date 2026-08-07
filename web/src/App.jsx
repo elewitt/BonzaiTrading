@@ -432,17 +432,6 @@ export default function App() {
   const [botTradingEnabled, setBotTradingEnabled] = useState(() => localStorage.getItem("lv_bot_trading") === "true");
   const [botTradingBusy, setBotTradingBusy] = useState(false);
   const [botTradingErr, setBotTradingErr] = useState(null);
-  const [watchedPortfolios, setWatchedPortfolios] = useState([]); // [{ label, address }]
-  const [activeAllocTab, setActiveAllocTab] = useState("mine"); // "mine" | watched address
-  const [showAllWatchTabs, setShowAllWatchTabs] = useState(false);
-  const [viewedHoldings, setViewedHoldings] = useState(null);
-  const [addPortfolioOpen, setAddPortfolioOpen] = useState(false);
-  const [newPortfolioEmail, setNewPortfolioEmail] = useState("");
-  const [addPortfolioBusy, setAddPortfolioBusy] = useState(false);
-  const [addPortfolioErr, setAddPortfolioErr] = useState(null);
-  const [discoverable, setDiscoverableState] = useState(() => localStorage.getItem("lv_discoverable") === "true");
-  const [discoverableBusy, setDiscoverableBusy] = useState(false);
-  const [discoverableErr, setDiscoverableErr] = useState(null);
   const [assetInfoSymbol, setAssetInfoSymbol] = useState(null);
   const [sellTarget, setSellTarget] = useState(null);
   const [lendTarget, setLendTarget] = useState(null);
@@ -545,41 +534,7 @@ export default function App() {
     catch { setTxHistory([]); }
     try { setSavedAddresses(JSON.parse(localStorage.getItem(`lv_saved_addrs_${address}`) || "[]")); }
     catch { setSavedAddresses([]); }
-    try { setWatchedPortfolios(JSON.parse(localStorage.getItem(`lv_watched_portfolios_${address}`) || "[]")); }
-    catch { setWatchedPortfolios([]); }
   }, [address]);
-
-  const addWatchedPortfolio = useCallback((label, addr) => {
-    if (!address) return;
-    setWatchedPortfolios((prev) => {
-      const updated = [...prev, { label, address: addr }];
-      try { localStorage.setItem(`lv_watched_portfolios_${address}`, JSON.stringify(updated)); } catch {}
-      return updated;
-    });
-  }, [address]);
-
-  const removeWatchedPortfolio = useCallback((addr) => {
-    if (!address) return;
-    setWatchedPortfolios((prev) => {
-      const updated = prev.filter((a) => a.address !== addr);
-      try { localStorage.setItem(`lv_watched_portfolios_${address}`, JSON.stringify(updated)); } catch {}
-      return updated;
-    });
-    setActiveAllocTab((t) => (t === addr ? "mine" : t));
-  }, [address]);
-
-  /* ——— viewed (non-own) portfolio: fetch on tab switch ——— */
-  useEffect(() => {
-    if (activeAllocTab === "mine") { setViewedHoldings(null); return; }
-    let cancelled = false;
-    api.holdings(activeAllocTab).then((d) => { if (!cancelled) setViewedHoldings(d); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [activeAllocTab]);
-
-  const viewedPortfolio = useMemo(() => {
-    if (activeAllocTab === "mine") return portfolio;
-    return registry && viewedHoldings ? derivePortfolio(viewedHoldings, prices, registry, { yieldMode: false }) : null;
-  }, [activeAllocTab, portfolio, registry, viewedHoldings, prices]);
 
   /* ——— Kamino loans: full obligation detail, not just deposits — powers
      both the Brokerage donut merge below (deposited collateral leaves the
@@ -587,19 +542,18 @@ export default function App() {
      position's value look wrong) and the dashboard's own Borrow/Lend
      product tab. ——— */
   const [kaminoLoans, setKaminoLoans] = useState([]);
-  const viewedKaminoAddr = activeAllocTab === "mine" ? address : activeAllocTab;
   // Callable directly (not just effect-driven) so a repay/withdraw done
   // from the dashboard's Borrow tab can refresh immediately rather than
   // waiting up to one 20s poll interval.
   const refreshKaminoLoans = useCallback(async () => {
-    if (!viewedKaminoAddr) { setKaminoLoans([]); return; }
+    if (!address) { setKaminoLoans([]); return; }
     try {
-      const obligations = await api.kaminoObligations(viewedKaminoAddr);
+      const obligations = await api.kaminoObligations(address);
       const pubkeys = (obligations || []).map((o) => o.obligationAddress).filter(Boolean);
       const loans = await Promise.all(pubkeys.map((pk) => api.kaminoLoan(pk).catch(() => null)));
       setKaminoLoans(stripKaminoDust(loans.filter(Boolean)));
     } catch { setKaminoLoans([]); }
-  }, [viewedKaminoAddr]);
+  }, [address]);
   useEffect(() => {
     void refreshKaminoLoans();
     const h = setInterval(refreshKaminoLoans, 20_000);
@@ -632,8 +586,8 @@ export default function App() {
   );
 
   const displayPortfolio = useMemo(
-    () => mergePortfolioCollateral(viewedPortfolio, kaminoCollateralDeposits),
-    [viewedPortfolio, kaminoCollateralDeposits]
+    () => mergePortfolioCollateral(portfolio, kaminoCollateralDeposits),
+    [portfolio, kaminoCollateralDeposits]
   );
 
   /* ——— Perpetual Futures dashboard tab: notional exposure per coin, across
@@ -691,12 +645,8 @@ export default function App() {
   // Kamino debt (a real liability that reduces net worth; collateral was
   // added by mergePortfolioCollateral but never had its offsetting debt
   // subtracted anywhere, confirmed via mergePortfolioCollateral's own
-  // implementation). Falls back to the raw wallet-only total on the rare
-  // tick where the "mine" tab isn't active — perps/Kamino aren't fetchable
-  // for an arbitrary watched address, only the logged-in user's own.
-  const myPortfolioTotal = activeAllocTab === "mine"
-    ? (displayPortfolio?.total ?? 0) + perpsAccountValue - borrowDebtTotal
-    : (portfolio?.total ?? 0);
+  // implementation).
+  const myPortfolioTotal = (displayPortfolio?.total ?? 0) + perpsAccountValue - borrowDebtTotal;
 
   useEffect(() => { if (dashProduct !== "brokerage") setStatsFlipped(false); }, [dashProduct]);
 
@@ -768,20 +718,6 @@ export default function App() {
       setBotTradingBusy(false);
     }
   }, [address, addSessionSigners, removeSessionSigners]);
-
-  const toggleDiscoverable = useCallback(async (on) => {
-    setDiscoverableBusy(true);
-    setDiscoverableErr(null);
-    try {
-      await api.setDiscoverable(on);
-      localStorage.setItem("lv_discoverable", String(on));
-      setDiscoverableState(on);
-    } catch (e) {
-      setDiscoverableErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDiscoverableBusy(false);
-    }
-  }, []);
 
   const appendTxHistory = useCallback((records) => {
     if (!address) return;
@@ -1984,19 +1920,6 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-row">
-              <div>
-                <p className="settings-row-title serif">Discoverable by Email</p>
-                <p className="tiny muted">Let other users find and view your portfolio by searching your email. Off by default — your holdings stay private until you enable this.</p>
-              </div>
-              <label className="switch">
-                <input type="checkbox" checked={discoverable} disabled={discoverableBusy}
-                  onChange={(e) => toggleDiscoverable(e.target.checked)} />
-                <span className="switch-track"><span className="switch-thumb" /></span>
-              </label>
-            </div>
-            {discoverableErr && <p className="tiny warn" style={{ marginTop: -8, marginBottom: 8 }}>{discoverableErr}</p>}
-
             <div className="settings-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
               <div style={{ marginBottom: 10 }}>
                 <p className="settings-row-title serif">Saved Addresses</p>
@@ -2229,29 +2152,6 @@ export default function App() {
 
           <div className="dash-tabs-row">
           <div className="dash-tabs-left">
-            {dashProduct === "brokerage" && (
-              <div className="watch-tabs-row">
-                {(showAllWatchTabs ? watchedPortfolios : watchedPortfolios.slice(0, 4)).map((w) => (
-                  <button key={w.address} className={`watch-tab ${activeAllocTab === w.address ? "active" : ""}`}
-                    onClick={() => setActiveAllocTab(activeAllocTab === w.address ? "mine" : w.address)}>
-                    {w.label}
-                    <span className="alloc-tab-x" onClick={(e) => { e.stopPropagation(); removeWatchedPortfolio(w.address); }}>×</span>
-                  </button>
-                ))}
-                {!showAllWatchTabs && watchedPortfolios.length > 4 && (
-                  <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(true)}>
-                    +{watchedPortfolios.length - 4} more
-                  </button>
-                )}
-                {showAllWatchTabs && watchedPortfolios.length > 4 && (
-                  <button className="watch-tab watch-tab-more" onClick={() => setShowAllWatchTabs(false)}>
-                    Show less
-                  </button>
-                )}
-                <button className="watch-tab watch-tab-add" title="Watch another portfolio"
-                  onClick={() => setAddPortfolioOpen(true)}>+</button>
-              </div>
-            )}
             <div className="dash-product-tabs">
               <button className={`dash-product-tab ${dashProduct === "brokerage" ? "active" : ""}`}
                 onClick={() => setDashProduct("brokerage")}>
@@ -2305,19 +2205,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {activeAllocTab !== "mine" && (
-                  <div className="watch-readonly-banner">
-                    <span>Viewing {watchedPortfolios.find((w) => w.address === activeAllocTab)?.label} — read only</span>
-                    <button className="btn ghost" onClick={() => setActiveAllocTab("mine")}>← Back to my dashboard</button>
-                  </div>
-                )}
-
-                {!viewedPortfolio ? (
-                  <div className="loading-dots" style={{ margin: "24px 0" }}><span /><span /><span /></div>
-                ) : (
-                <>
                 <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} onAssetClick={setAssetInfoSymbol} />
-                {activeAllocTab === "mine" && portfolio.total > 0 && (
+                {portfolio.total > 0 && (
                   <div className="alloc-actions">
                     {portfolio.rows.length >= 1 && (
                       <button className="btn ghost"
@@ -2348,8 +2237,6 @@ export default function App() {
                       Custom Rebalance
                     </button>
                   </div>
-                )}
-                </>
                 )}
               </div>
               <div className="flip-face flip-back card card-pop">
@@ -2917,69 +2804,6 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {addPortfolioOpen && (() => {
-            const trimmedEmail = newPortfolioEmail.trim();
-            const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
-            const canAdd = emailValid && !addPortfolioBusy;
-            const close = () => {
-              setAddPortfolioOpen(false);
-              setNewPortfolioEmail("");
-              setAddPortfolioErr(null);
-              setAddPortfolioBusy(false);
-            };
-            const submit = async () => {
-              setAddPortfolioBusy(true);
-              setAddPortfolioErr(null);
-              try {
-                const result = await api.lookupUserByEmail(trimmedEmail);
-                if (!result.found) {
-                  setAddPortfolioErr("No discoverable user found with that email.");
-                  return;
-                }
-                if (watchedPortfolios.some((w) => w.address === result.address)) {
-                  setAddPortfolioErr("You're already watching this portfolio.");
-                  return;
-                }
-                addWatchedPortfolio(result.label, result.address);
-                close();
-              } catch (e) {
-                setAddPortfolioErr(e instanceof Error ? e.message : String(e));
-              } finally {
-                setAddPortfolioBusy(false);
-              }
-            };
-            return (
-              <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && close()}>
-                <div className="modal-box card" style={{ maxWidth: 420 }}>
-                  <div className="answer-header">
-                    <p className="tiny label" style={{ margin: 0 }}>Watch a portfolio</p>
-                    <button className="x" onClick={close}>×</button>
-                  </div>
-                  <p className="tiny muted" style={{ marginBottom: 18 }}>
-                    Search by the email another user signed up with. Only users who've enabled
-                    "Discoverable by Email" in their own Settings can be found this way.
-                  </p>
-                  <div className="withdraw-field">
-                    <label className="tiny label withdraw-label">Email</label>
-                    <input className="withdraw-input" placeholder="their@email.com" type="email"
-                      value={newPortfolioEmail}
-                      onChange={(e) => { setNewPortfolioEmail(e.target.value); setAddPortfolioErr(null); }}
-                      onKeyDown={(e) => e.key === "Enter" && canAdd && submit()}
-                    />
-                    {trimmedEmail && !emailValid && <p className="tiny warn" style={{ marginTop: 4 }}>Invalid email</p>}
-                    {addPortfolioErr && <p className="tiny warn" style={{ marginTop: 4 }}>{addPortfolioErr}</p>}
-                  </div>
-                  <div className="wfoot">
-                    <button className="btn ghost" onClick={close}>Cancel</button>
-                    <button className="btn primary" disabled={!canAdd} onClick={submit}>
-                      {addPortfolioBusy ? "Searching…" : "Add"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
 
           {customRebalanceOpen && (() => {
             const sum = customAllocs.reduce((s, a) => s + (+a.weight || 0), 0);
