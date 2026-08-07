@@ -1,5 +1,7 @@
 import dca from "./dca.js";
 import deltaNeutral from "./deltaNeutral.js";
+import twap from "./twap.js";
+import vwap from "./vwap.js";
 
 /* ————— Strategy-type registry — the extensibility point Strategy Agents
  * is built around. A new strategy type is a new module exporting
@@ -9,6 +11,8 @@ import deltaNeutral from "./deltaNeutral.js";
 export const STRATEGY_TYPES = {
   [dca.key]: dca,
   [deltaNeutral.key]: deltaNeutral,
+  [twap.key]: twap,
+  [vwap.key]: vwap,
 };
 
 export const MAX_ACTIVE_STRATEGIES_PER_WALLET = Number(process.env.MAX_ACTIVE_STRATEGIES_PER_WALLET || 10);

@@ -55,6 +55,14 @@ export function mountStrategyRoutes(app, deps) {
         rebalanceThresholdPct: Number(params.rebalanceThresholdPct), unfavorableFundingExitHours: Number(params.unfavorableFundingExitHours),
       };
     }
+    if (type === "twap" || type === "vwap") {
+      const { bySymbol } = await getRegistry();
+      const token = bySymbol[params.symbol];
+      if (!token || !token.mint || token.symbol === "USDC") {
+        throw new Error(`unknown or unsupported symbol: ${params.symbol}`);
+      }
+      return { symbol: token.symbol, mint: token.mint, totalUsd: Number(params.totalUsd), durationHours: Number(params.durationHours) };
+    }
     return params;
   }
 
@@ -267,6 +275,18 @@ export function mountStrategyRoutes(app, deps) {
         await touchStrategyEvaluated(proposal.strategy_id, { state: { openedAt: now, lastFundingCheckedAt: now } });
       } else if (proposal.kind === "delta_neutral_exit") {
         await setStrategyStatus(proposal.strategy_id, walletAddress, "completed");
+      } else if (proposal.kind === "twap_slice" || proposal.kind === "vwap_slice") {
+        // The confirmed slice's own leg carries sliceIndex/totalSlices (set
+        // when the proposal was created — see sliceExecution.js), so the
+        // next filledSlices count comes from the proposal itself rather
+        // than needing to re-fetch and re-derive the strategy's state.
+        const leg = proposal.legs.find((l) => l.domain === "spot");
+        const nextFilled = (leg?.sliceIndex ?? 0) + 1;
+        if (leg && nextFilled >= leg.totalSlices) {
+          await setStrategyStatus(proposal.strategy_id, walletAddress, "completed");
+        } else {
+          await touchStrategyEvaluated(proposal.strategy_id, { state: { filledSlices: nextFilled } });
+        }
       } else if (proposal.kind !== "delta_neutral_rebalance") {
         // dca_buy — delta_neutral_rebalance needs no state change here at
         // all: evaluate() recomputes drift fresh from live holdings/perp

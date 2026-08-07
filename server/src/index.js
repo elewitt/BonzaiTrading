@@ -14,6 +14,7 @@ import { generateLinkCode, mountTelegramRoutes } from "./telegram.js";
 import { mountStrategyRoutes } from "./strategyRoutes.js";
 import { startStrategyEvaluator } from "./strategyAgents/evaluator.js";
 import { STRATEGY_TYPES } from "./strategyAgents/index.js";
+import { DEFAULT_LEVERAGE, DEFAULT_REBALANCE_THRESHOLD_PCT, DEFAULT_UNFAVORABLE_EXIT_HOURS } from "./strategyAgents/deltaNeutral.js";
 import { getMarketInfo, getMarketChart } from "./marketdata.js";
 import { ensureArbitrumGas, depositToHyperliquid, getArbitrumSponsorStatus } from "./arbitrumSponsor.js";
 import { checkAndRelayCctpDeposit, checkAndRelayCctpWithdraw } from "./cctp.js";
@@ -866,15 +867,21 @@ app.post("/api/parse-borrow", requireAuth, parseLimiter, async (req, res) => {
 const MAX_STRATEGY_PLANS_PER_PROMPT = 10; // matches MAX_ACTIVE_STRATEGIES_PER_WALLET — a batch bigger than the cap can never fully succeed anyway
 
 /**
- * One request can expand into several DCA plans ("DCA $1/day into all the
- * FAANG stocks" → 5 separate plans, one per asset) — each named asset gets
- * the SAME amount/schedule the user gave (per-asset amounts aren't
- * parsed; that's a real scope boundary, not an oversight: keeping one
- * request → one amount/schedule pair means the confirm step can show it
- * as "one thing," not N independently-configured ones to review). This is
- * still curated-DCA-only: a basket request just becomes N ordinary DCA
- * strategies, the exact same audited mechanism as a single-asset one —
- * not a new kind of trade logic.
+ * Extracts ONE of four strategy types from a plain-English request — DCA,
+ * delta-neutral, TWAP, or VWAP — and returns it in a shape the frontend
+ * can preview then hand straight to POST /api/strategies. This is the
+ * single entry point for creating any strategy now (no separate
+ * delta-neutral form): all four types get real bounds re-validated
+ * server-side afterward via the same STRATEGY_TYPES[type].validateParams
+ * the direct API path uses — Claude only ever extracts intent, never
+ * trusted for the actual numbers alone.
+ *
+ * DCA is the one type that can expand into several plans in one request
+ * ("DCA $1/day into all the FAANG stocks" → 5 separate plans, one per
+ * asset, all sharing the same amount/schedule — per-asset amounts aren't
+ * parsed, a real scope boundary so the confirm step can show "one thing,"
+ * not N independently-configured ones). The other three types are always
+ * a single asset/position.
  */
 async function parseStrategyPrompt({ prompt }) {
   if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
@@ -885,27 +892,42 @@ async function parseStrategyPrompt({ prompt }) {
     .map((t) => `${t.symbol} — ${t.name}`)
     .join("\n");
 
-  const system = `You extract one or more recurring dollar-cost-averaging (DCA) purchase plans from a plain-English request, for a product where a user sets up "buy $X of ASSET every N days" and it runs on a schedule. A request can name a single asset, or a group of assets that all get the SAME dollar amount and SAME schedule (e.g. "DCA $10/week into FAANG stocks" → one plan per FAANG stock, each $10 weekly).
+  const system = `You extract a trading strategy configuration from a plain-English request, for a product that supports four kinds of automated strategies. Identify which ONE type the request describes, then extract its params. A background process checks these on a schedule and creates a proposal for the user to review and confirm with their own wallet — nothing is ever executed automatically.
 
 Assets available (symbol — name):
 ${assets}
 
+The four strategy types:
+1. DCA (dollar-cost averaging) — a recurring fixed-size buy on a fixed schedule. e.g. "DCA $50 into bitcoin every week", "buy $10 of the S&P 500 monthly". Can name a GROUP of assets sharing the same amount/schedule (e.g. "DCA $10/week into FAANG stocks" → one plan per FAANG stock).
+2. Delta-neutral (funding-rate harvest) — long the spot asset, short an equal notional on its Hyperliquid perp, market-neutral. e.g. "go delta neutral on $1000 of AAPL at 2x leverage", "harvest funding on bitcoin with $500".
+3. TWAP (time-weighted average price) — a ONE-TIME total buy split into equal slices spread evenly over a time window, to reduce market impact. e.g. "TWAP buy $10,000 of AAPL over 4 hours", "buy $5000 of bitcoin via TWAP over 2 hours".
+4. VWAP (volume-weighted average price) — same idea as TWAP (a one-time total buy spread over a time window) but slice sizes are weighted toward when volume is typically higher, not equal. e.g. "VWAP $10,000 into TSLA over 6 hours".
+
 Respond with ONLY a JSON object. No markdown, no backticks, no prose.
 
-If the request IS one or more plain recurring buys on a fixed schedule, all sharing the same amount and interval:
-{"supported":true,"plans":[{"symbol":"AAPLx"},{"symbol":"METAx"}],"usdPerInterval":10,"intervalDays":7,"summary":"one short plain sentence, e.g. naming the group (\\"the FAANG stocks\\") rather than listing every symbol"}
+If the request is a DCA plan (or group of plans):
+{"supported":true,"type":"dca","plans":[{"symbol":"AAPLx"},{"symbol":"METAx"}],"usdPerInterval":10,"intervalDays":7,"summary":"one short plain sentence, e.g. naming the group (\\"the FAANG stocks\\") rather than listing every symbol"}
 
-If the request is NOT a plain recurring buy on a fixed schedule — e.g. it depends on a price/market condition ("buy the dip", "when it drops 5%"), a one-time trade, DIFFERENT amounts/schedules per asset, more than ${MAX_STRATEGY_PLANS_PER_PROMPT} assets, or anything else this can't express as "$X every N days" per asset:
-{"supported":false,"reason":"one short plain sentence explaining why, noting only a fixed recurring schedule (same amount/interval per asset) is supported right now"}
+If the request is a delta-neutral position (leverage/rebalanceThresholdPct/unfavorableFundingExitHours are OPTIONAL — omit any the user didn't explicitly state, the server fills sane defaults):
+{"supported":true,"type":"delta_neutral","symbol":"AAPLx","notionalUsd":1000,"leverage":2,"rebalanceThresholdPct":5,"unfavorableFundingExitHours":24,"summary":"one short plain sentence"}
+
+If the request is a TWAP order:
+{"supported":true,"type":"twap","symbol":"AAPLx","totalUsd":10000,"durationHours":4,"summary":"one short plain sentence"}
+
+If the request is a VWAP order:
+{"supported":true,"type":"vwap","symbol":"AAPLx","totalUsd":10000,"durationHours":4,"summary":"one short plain sentence"}
+
+If the request is NOT any of these four — e.g. it depends on a price/market condition ("buy the dip", "when it drops 5%"), a plain one-time trade with no schedule/window at all, DIFFERENT amounts/schedules per asset in a DCA plan, more than ${MAX_STRATEGY_PLANS_PER_PROMPT} DCA assets, or anything else none of the four types above can express:
+{"supported":false,"reason":"one short plain sentence explaining why"}
 
 Rules:
-- Map company/index/crypto names to symbols the same way you would for a portfolio instruction (Apple→AAPLx, S&P 500→SPYx, bitcoin→BTC, etc). Use only the listed symbols.
-- Common named groups: FAANG → METAx, AAPLx, AMZNx, NFLXx, GOOGLx. "Magnificent Seven"/"Mag 7" → AAPLx, MSFTx, GOOGLx, AMZNx, METAx, NVDAx, TSLAx. Expand any other named group (sector, index constituents, etc.) using only symbols from the list above; if you can't confidently expand a named group from what's listed, that's unsupported.
+- Map company/index/crypto names to symbols the same way you would for a portfolio instruction (Apple→AAPLx, S&P 500→SPYx, bitcoin→BTC, etc). Use only the listed symbols. For DCA, if a named asset isn't listed, drop just that one from "plans" and mention it was skipped in "summary" — don't make the whole request unsupported unless NONE of them match. For the other three types, an unlisted asset makes the request unsupported.
+- Common named groups (DCA only): FAANG → METAx, AAPLx, AMZNx, NFLXx, GOOGLx. "Magnificent Seven"/"Mag 7" → AAPLx, MSFTx, GOOGLx, AMZNx, METAx, NVDAx, TSLAx. Expand any other named group (sector, index constituents, etc.) using only symbols from the list above; if you can't confidently expand a named group from what's listed, that's unsupported.
 - Map generic yield/treasury requests (no country named) to USDY. Only map to a Foreign Sovereign Bond (KTB/CETES/TESOURO/GILTS) when that specific country/currency is named.
-- intervalDays: "daily"→1, "weekly"→7, "every 2 weeks"/"biweekly"/"fortnightly"→14, "monthly"→30, or an explicit number of days if one is given. Must be a whole number, and the SAME for every plan.
-- usdPerInterval: NEVER invent or estimate a dollar amount — only extract what the user actually said. Must be the SAME for every plan. If no amount is given at all, that's unsupported.
-- If an asset named isn't in the list above, drop it from "plans" but mention it was skipped in "summary" — don't make the whole request unsupported just because one name didn't match, unless NONE of them do.
-- Never list the same symbol twice in "plans".`;
+- DCA intervalDays: "daily"→1, "weekly"→7, "every 2 weeks"/"biweekly"/"fortnightly"→14, "monthly"→30, or an explicit number of days if one is given. Must be a whole number, and the SAME for every plan.
+- Dollar amounts (usdPerInterval, notionalUsd, totalUsd): NEVER invent or estimate one — only extract what the user actually said. If no amount is given at all, that's unsupported.
+- TWAP/VWAP durationHours: extract from phrases like "over 4 hours", "over 2 days" (→48). Must be a positive number of hours.
+- Never list the same symbol twice in DCA "plans".`;
 
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -930,37 +952,70 @@ Rules:
   const parsed = JSON.parse(jsonMatch[0]);
 
   if (!parsed.supported) {
-    throw new Error(parsed.reason || "That doesn't look like a recurring buy on a fixed schedule — try something like \"buy $50 of bitcoin every week\".");
+    throw new Error(parsed.reason || "Couldn't understand that as a strategy — try something like \"buy $50 of bitcoin every week\" or \"TWAP $5,000 into AAPL over 3 hours\".");
   }
 
-  const rawPlans = Array.isArray(parsed.plans) ? parsed.plans : [];
-  const usdPerInterval = Number(parsed.usdPerInterval);
-  const intervalDays = Number(parsed.intervalDays);
+  if (parsed.type === "dca") {
+    const rawPlans = Array.isArray(parsed.plans) ? parsed.plans : [];
+    const usdPerInterval = Number(parsed.usdPerInterval);
+    const intervalDays = Number(parsed.intervalDays);
 
-  // Resolve + de-dupe against the live registry — Claude's symbol output
-  // is never trusted directly, same as every other parse endpoint here.
-  const seen = new Set();
-  const resolved = [];
-  for (const p of rawPlans) {
-    const symbol = String(p?.symbol || "").trim();
-    const token = bySymbol[symbol];
-    if (!token || token.symbol === "USDC" || seen.has(token.symbol)) continue;
-    seen.add(token.symbol);
-    resolved.push(token);
+    // Resolve + de-dupe against the live registry — Claude's symbol output
+    // is never trusted directly, same as every other parse endpoint here.
+    const seen = new Set();
+    const resolved = [];
+    for (const p of rawPlans) {
+      const symbol = String(p?.symbol || "").trim();
+      const token = bySymbol[symbol];
+      if (!token || token.symbol === "USDC" || seen.has(token.symbol)) continue;
+      seen.add(token.symbol);
+      resolved.push(token);
+    }
+    if (resolved.length === 0) throw new Error("None of the requested assets are available on this platform.");
+    if (resolved.length > MAX_STRATEGY_PLANS_PER_PROMPT) {
+      throw new Error(`That's ${resolved.length} assets in one request — try ${MAX_STRATEGY_PLANS_PER_PROMPT} or fewer at a time.`);
+    }
+
+    const plans = resolved.map((token) => {
+      const params = { symbol: token.symbol, usdPerInterval, intervalDays };
+      const paramError = STRATEGY_TYPES.dca.validateParams(params);
+      if (paramError) throw new Error(paramError); // same amount/interval for every plan, so one failure means all fail
+      return { symbol: token.symbol, name: token.name, mint: token.mint, usdPerInterval, intervalDays };
+    });
+
+    return { type: "dca", plans, summary: parsed.summary || "" };
   }
-  if (resolved.length === 0) throw new Error("None of the requested assets are available on this platform.");
-  if (resolved.length > MAX_STRATEGY_PLANS_PER_PROMPT) {
-    throw new Error(`That's ${resolved.length} assets in one request — try ${MAX_STRATEGY_PLANS_PER_PROMPT} or fewer at a time.`);
+
+  if (parsed.type === "delta_neutral") {
+    const token = bySymbol[String(parsed.symbol || "").trim()];
+    if (!token) throw new Error(`"${parsed.symbol}" isn't a supported asset.`);
+    const result = {
+      type: "delta_neutral", symbol: token.symbol, name: token.name,
+      notionalUsd: Number(parsed.notionalUsd),
+      leverage: Number(parsed.leverage) || DEFAULT_LEVERAGE,
+      rebalanceThresholdPct: Number(parsed.rebalanceThresholdPct) || DEFAULT_REBALANCE_THRESHOLD_PCT,
+      unfavorableFundingExitHours: Number(parsed.unfavorableFundingExitHours) || DEFAULT_UNFAVORABLE_EXIT_HOURS,
+      summary: parsed.summary || "",
+    };
+    const paramError = STRATEGY_TYPES.delta_neutral.validateParams(result);
+    if (paramError) throw new Error(paramError);
+    return result;
   }
 
-  const plans = resolved.map((token) => {
-    const params = { symbol: token.symbol, usdPerInterval, intervalDays };
-    const paramError = STRATEGY_TYPES.dca.validateParams(params);
-    if (paramError) throw new Error(paramError); // same amount/interval for every plan, so one failure means all fail
-    return { symbol: token.symbol, name: token.name, mint: token.mint, usdPerInterval, intervalDays };
-  });
+  if (parsed.type === "twap" || parsed.type === "vwap") {
+    const token = bySymbol[String(parsed.symbol || "").trim()];
+    if (!token) throw new Error(`"${parsed.symbol}" isn't a supported asset.`);
+    const result = {
+      type: parsed.type, symbol: token.symbol, name: token.name,
+      totalUsd: Number(parsed.totalUsd), durationHours: Number(parsed.durationHours),
+      summary: parsed.summary || "",
+    };
+    const paramError = STRATEGY_TYPES[parsed.type].validateParams(result);
+    if (paramError) throw new Error(paramError);
+    return result;
+  }
 
-  return { plans, summary: parsed.summary || "" };
+  throw new Error("Couldn't understand that as a strategy — try something like \"buy $50 of bitcoin every week\" or \"TWAP $5,000 into AAPL over 3 hours\".");
 }
 
 app.post("/api/parse-strategy", requireAuth, parseLimiter, async (req, res) => {

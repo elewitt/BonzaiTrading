@@ -82,7 +82,7 @@ export async function initSchema() {
       wallet_address TEXT NOT NULL,
       evm_address TEXT,
       privy_user_id TEXT,
-      type TEXT NOT NULL CHECK (type IN ('dca', 'delta_neutral')),
+      type TEXT NOT NULL CHECK (type IN ('dca', 'delta_neutral', 'twap', 'vwap')),
       params JSONB NOT NULL,
       status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'paused', 'cancelled', 'completed')),
@@ -94,6 +94,14 @@ export async function initSchema() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS strategies_wallet_idx ON strategies (wallet_address, status);
   `);
+  // Widens the type CHECK for databases created before TWAP/VWAP existed —
+  // the CREATE TABLE above only takes effect on a fresh database, so
+  // already-deployed ones need the constraint itself altered. Postgres has
+  // no ADD CONSTRAINT IF NOT EXISTS, so drop-then-add is the idempotent
+  // form (safe to run every boot); "strategies_type_check" is the default
+  // name Postgres gives an inline CHECK with no explicit name.
+  await pool.query(`ALTER TABLE strategies DROP CONSTRAINT IF EXISTS strategies_type_check;`);
+  await pool.query(`ALTER TABLE strategies ADD CONSTRAINT strategies_type_check CHECK (type IN ('dca', 'delta_neutral', 'twap', 'vwap'));`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS strategy_proposals (
       id BIGSERIAL PRIMARY KEY,

@@ -23,6 +23,8 @@ const PROPOSAL_TTL_MS = {
   delta_neutral_open: 24 * 60 * 60 * 1000,
   delta_neutral_exit: 4 * 60 * 60 * 1000, // shorter — the condition driving this can shift faster than a day
   delta_neutral_rebalance: 4 * 60 * 60 * 1000,
+  twap_slice: 2 * 60 * 60 * 1000, // slices are only ~30min apart — a stale unconfirmed one defeats the point of a timed execution schedule
+  vwap_slice: 2 * 60 * 60 * 1000,
 };
 
 function groupByWallet(strategies) {

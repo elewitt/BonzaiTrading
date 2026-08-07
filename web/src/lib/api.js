@@ -68,7 +68,6 @@ export const api = {
   createStrategy:    (body)            => post("/api/strategies", body),
   listStrategies:    (wallet)          => get(`/api/strategies?wallet=${encodeURIComponent(wallet)}`),
   strategyHistory:   (id, wallet)      => get(`/api/strategies/${id}/history?wallet=${encodeURIComponent(wallet)}`),
-  deltaNeutralEligibleAssets: ()       => get("/api/strategies/delta-neutral/eligible-assets"),
   pauseStrategy:     (id, walletAddress)  => post(`/api/strategies/${id}/pause`, { walletAddress }),
   resumeStrategy:    (id, walletAddress)  => post(`/api/strategies/${id}/resume`, { walletAddress }),
   cancelStrategy:    (id, walletAddress)  => post(`/api/strategies/${id}/cancel`, { walletAddress }),

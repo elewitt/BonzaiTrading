@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api.js";
 import { executeStrategyProposal } from "./executeProposal.js";
-import { DEFAULT_LEVERAGE, DEFAULT_REBALANCE_THRESHOLD_PCT, DEFAULT_UNFAVORABLE_EXIT_HOURS } from "./deltaNeutralDefaults.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SCHEDULE_PREVIEW_COUNT = 5;
+const SLICE_INTERVAL_MINUTES = 30; // mirrors server/src/strategyAgents/sliceExecution.js
+function sliceCount(durationHours) {
+  return Math.max(2, Math.min(48, Math.round((durationHours * 60) / SLICE_INTERVAL_MINUTES)));
+}
 
 function fmtUsd(n) {
   return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -82,7 +85,10 @@ function StrategyHistory({ strategyId, address }) {
 
 function StrategyCard({ strategy: s, address, busy, onTransition }) {
   const isDeltaNeutral = s.type === "delta_neutral";
-  const schedule = !isDeltaNeutral && s.status === "active" ? projectSchedule(s) : null;
+  const isSliceExec = s.type === "twap" || s.type === "vwap";
+  const schedule = !isDeltaNeutral && !isSliceExec && s.status === "active" ? projectSchedule(s) : null;
+  const totalSlices = isSliceExec ? sliceCount(s.params.durationHours) : null;
+  const filledSlices = isSliceExec ? (s.state?.filledSlices || 0) : null;
 
   return (
     <div className="lvp-card agents-strategy-card" style={{ marginBottom: 16 }}>
@@ -92,6 +98,10 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
             <p style={{ margin: 0, fontWeight: 600 }}>
               {fmtUsd(s.params.notionalUsd)} delta-neutral {s.params.symbol} at {s.params.leverage}x
             </p>
+          ) : isSliceExec ? (
+            <p style={{ margin: 0, fontWeight: 600 }}>
+              {fmtUsd(s.params.totalUsd)} {s.type.toUpperCase()} into {s.params.symbol} over {s.params.durationHours}h
+            </p>
           ) : (
             <p style={{ margin: 0, fontWeight: 600 }}>
               {fmtUsd(s.params.usdPerInterval)} of {s.params.symbol} {formatInterval(s.params.intervalDays)}
@@ -99,8 +109,9 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
           )}
           <p className="lvp-muted tiny" style={{ margin: "2px 0 0" }}>
             <span className={`strategy-status strategy-status-${s.status}`}>{s.status}</span>
-            {!isDeltaNeutral && s.state?.lastExecutedAt && ` · last bought ${new Date(s.state.lastExecutedAt).toLocaleDateString()}`}
+            {!isDeltaNeutral && !isSliceExec && s.state?.lastExecutedAt && ` · last bought ${new Date(s.state.lastExecutedAt).toLocaleDateString()}`}
             {isDeltaNeutral && (s.state?.openedAt ? ` · opened ${new Date(s.state.openedAt).toLocaleDateString()}` : " · not yet opened")}
+            {isSliceExec && ` · ${filledSlices}/${totalSlices} slices filled`}
           </p>
         </div>
         <div className="strategy-row-actions">
@@ -139,110 +150,16 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
   );
 }
 
-const LEVERAGE_OPTIONS = [1, 2, 3];
-
-/** Explicit-parameter form, not the LLM prompt bar DCA uses — leverage,
- * notional, and the two risk-sensitivity settings are risk parameters
- * worth setting deliberately, not inferring from a sentence. */
-function DeltaNeutralForm({ address, evmAddress, onCreated }) {
-  const [assets, setAssets] = useState([]);
-  const [symbol, setSymbol] = useState("");
-  const [notionalUsd, setNotionalUsd] = useState("");
-  const [leverage, setLeverage] = useState(DEFAULT_LEVERAGE);
-  const [rebalanceThresholdPct, setRebalanceThresholdPct] = useState(DEFAULT_REBALANCE_THRESHOLD_PCT);
-  const [unfavorableFundingExitHours, setUnfavorableFundingExitHours] = useState(DEFAULT_UNFAVORABLE_EXIT_HOURS);
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    api.deltaNeutralEligibleAssets().then((d) => setAssets(d.assets || [])).catch(() => setAssets([]));
-  }, []);
-
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!address || creating) return;
-    setError("");
-    const trimmed = symbol.trim();
-    if (!assets.some((a) => a.symbol === trimmed)) return setError("Pick an asset from the list — it needs to be tradeable as both a spot asset and a Hyperliquid perp.");
-    const notional = Number(notionalUsd);
-    if (!Number.isFinite(notional) || notional <= 0) return setError("Enter a valid notional amount.");
-    if (!evmAddress) return setError("Connect a Hyperliquid-linked wallet first (open the Perps tab once to set it up).");
-
-    setCreating(true);
-    try {
-      await api.createStrategy({
-        walletAddress: address, evmAddress, type: "delta_neutral",
-        params: { symbol: trimmed, notionalUsd: notional, leverage, rebalanceThresholdPct, unfavorableFundingExitHours },
-      });
-      setSymbol(""); setNotionalUsd("");
-      onCreated();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  return (
-    <form onSubmit={submit}>
-      {error && <p className="err tiny" style={{ marginBottom: 10 }}>{error}</p>}
-      <p className="lvp-muted" style={{ marginTop: -6, marginBottom: 14 }}>
-        Long the spot asset and short an equal notional on its Hyperliquid perp to collect funding — market-neutral, not a directional bet.
-        Leverage is capped at 3x on purpose: it doesn't add expected return here, only liquidation risk if the two legs drift out of sync.
-      </p>
-      <div className="borrow-field">
-        <span className="tiny muted">Asset</span>
-        <input className="perps-asset-search" list="delta-neutral-asset-options" placeholder="e.g. AAPLx, BTC, TSLAx"
-          value={symbol} onChange={(e) => setSymbol(e.target.value)} />
-        <datalist id="delta-neutral-asset-options">
-          {assets.map((a) => <option key={a.symbol} value={a.symbol} />)}
-        </datalist>
-      </div>
-      <div className="borrow-field">
-        <span className="tiny muted">Notional (per leg)</span>
-        <input className="perps-asset-search" type="number" min="50" step="any" placeholder="$1,000"
-          value={notionalUsd} onChange={(e) => setNotionalUsd(e.target.value)} />
-      </div>
-      <div className="borrow-field">
-        <span className="tiny muted">Leverage</span>
-        <div className="strategy-freq-picker">
-          {LEVERAGE_OPTIONS.map((lv) => (
-            <button type="button" key={lv} className={`lvp-pct-btn ${leverage === lv ? "sel" : ""}`} onClick={() => setLeverage(lv)}>
-              {lv}x
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="borrow-field">
-        <span className="tiny muted">Rebalance if spot/perp drift past</span>
-        <input className="perps-asset-search" type="number" min="2" max="25" step="1"
-          value={rebalanceThresholdPct} onChange={(e) => setRebalanceThresholdPct(Number(e.target.value))} />
-      </div>
-      <div className="borrow-field">
-        <span className="tiny muted">Exit after unfavorable funding for (hours)</span>
-        <input className="perps-asset-search" type="number" min="4" max="168" step="1"
-          value={unfavorableFundingExitHours} onChange={(e) => setUnfavorableFundingExitHours(Number(e.target.value))} />
-      </div>
-      <div className="wfoot" style={{ marginTop: 12 }}>
-        <button className="btn primary" type="submit" disabled={creating}>
-          {creating ? "Creating…" : "Create strategy"}
-        </button>
-      </div>
-    </form>
-  );
-}
-
 /**
- * Strategy Agents. DCA is created via a plain-English prompt bar
- * (/api/parse-strategy maps it onto the curated DCA mechanism — never
- * freeform LLM-authored trade logic, see that endpoint's own comment).
- * Delta-neutral (funding-rate harvesting via a hedged spot+perp position)
- * is created via an explicit form instead — leverage and drift/exit
- * sensitivity are risk parameters worth setting deliberately, not
- * inferred from a sentence. A server-side evaluator checks each active
- * strategy on a schedule and, when due, writes a pending proposal here
- * for the user to review and confirm with their own wallet — never
- * signed or executed automatically, for either type. Owns its own fetch/
+ * Strategy Agents. Every strategy type — DCA, delta-neutral, TWAP, VWAP —
+ * is created through the same plain-English prompt bar; /api/parse-strategy
+ * identifies which one a request describes and extracts its params (never
+ * freeform LLM-authored trade logic — every type's real bounds are
+ * re-validated server-side afterward via STRATEGY_TYPES[type].validateParams,
+ * the same check the direct API path uses). A server-side evaluator checks
+ * each active strategy on a schedule and, when due, writes a pending
+ * proposal here for the user to review and confirm with their own wallet —
+ * never signed or executed automatically, for any type. Owns its own fetch/
  * refresh state, same shape as MarketsExplorer.jsx — TradingAgentApp.jsx
  * (the page shell) just provides the surrounding chrome.
  */
@@ -251,8 +168,6 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const [mode, setMode] = useState("dca"); // "dca" | "delta_neutral"
 
   const [prompt, setPrompt] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -293,33 +208,56 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
     }
   };
 
-  // Sequential, not Promise.all — the server enforces MAX_ACTIVE_STRATEGIES_PER_WALLET
-  // by counting existing active strategies at request time, so creating a
-  // batch in parallel could race that check (several requests all seeing
-  // the same "count so far" and all succeeding past the real cap).
-  // Sequential keeps each check accurate as the previous create lands.
+  // DCA's multi-plan case is sequential, not Promise.all — the server
+  // enforces MAX_ACTIVE_STRATEGIES_PER_WALLET by counting existing active
+  // strategies at request time, so creating a batch in parallel could race
+  // that check (several requests all seeing the same "count so far" and
+  // all succeeding past the real cap). Sequential keeps each check
+  // accurate as the previous create lands. The other three types are
+  // always a single strategy, so there's nothing to sequence.
   const confirmCreate = async () => {
     if (!parsed || !address || creating) return;
     setCreating(true);
     setError("");
-    const failures = [];
-    for (const plan of parsed.plans) {
-      try {
+    try {
+      if (parsed.type === "dca") {
+        const failures = [];
+        for (const plan of parsed.plans) {
+          try {
+            await api.createStrategy({
+              walletAddress: address,
+              type: "dca",
+              params: { symbol: plan.symbol, usdPerInterval: plan.usdPerInterval, intervalDays: plan.intervalDays },
+            });
+          } catch (e) {
+            failures.push(`${plan.symbol}: ${e.message}`);
+          }
+        }
+        if (failures.length > 0) {
+          setError(`Created ${parsed.plans.length - failures.length} of ${parsed.plans.length}. ${failures.join("; ")}`);
+        }
+      } else if (parsed.type === "delta_neutral") {
+        if (!evmAddress) throw new Error("Connect a Hyperliquid-linked wallet first (open the Perps tab once to set it up).");
         await api.createStrategy({
-          walletAddress: address,
-          type: "dca",
-          params: { symbol: plan.symbol, usdPerInterval: plan.usdPerInterval, intervalDays: plan.intervalDays },
+          walletAddress: address, evmAddress, type: "delta_neutral",
+          params: {
+            symbol: parsed.symbol, notionalUsd: parsed.notionalUsd, leverage: parsed.leverage,
+            rebalanceThresholdPct: parsed.rebalanceThresholdPct, unfavorableFundingExitHours: parsed.unfavorableFundingExitHours,
+          },
         });
-      } catch (e) {
-        failures.push(`${plan.symbol}: ${e.message}`);
+      } else if (parsed.type === "twap" || parsed.type === "vwap") {
+        await api.createStrategy({
+          walletAddress: address, type: parsed.type,
+          params: { symbol: parsed.symbol, totalUsd: parsed.totalUsd, durationHours: parsed.durationHours },
+        });
       }
+      setParsed(null); setPrompt("");
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCreating(false);
     }
-    setParsed(null); setPrompt("");
-    await refresh();
-    if (failures.length > 0) {
-      setError(`Created ${parsed.plans.length - failures.length} of ${parsed.plans.length}. ${failures.join("; ")}`);
-    }
-    setCreating(false);
   };
 
   const transition = async (id, action) => {
@@ -387,59 +325,57 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
       )}
 
       <div className="lvp-card" style={{ marginBottom: 24 }}>
-        <div className="card-toprow" style={{ marginBottom: 12 }}>
-          <p className="table-card-title" style={{ margin: 0 }}>New Strategy</p>
-          <div className="lvp-metric-tabs" style={{ marginBottom: 0 }}>
-            <button className={`lvp-metric-tab ${mode === "dca" ? "sel" : ""}`} onClick={() => setMode("dca")}>DCA</button>
-            <button className={`lvp-metric-tab ${mode === "delta_neutral" ? "sel" : ""}`} onClick={() => setMode("delta_neutral")}>Delta-Neutral</button>
-          </div>
+        <p className="table-card-title" style={{ marginBottom: 12 }}>New Strategy</p>
+        <p className="lvp-muted" style={{ marginTop: -6, marginBottom: 14 }}>
+          Describe what you want — a recurring buy (DCA), a market-neutral funding harvest (delta-neutral),
+          or a large order split over time to reduce market impact (TWAP/VWAP).
+        </p>
+        <div className="prompt-wrap row">
+          <input className="prompt-box oneline"
+            placeholder={'"DCA $50 into bitcoin every week" · "TWAP $10,000 into AAPL over 4 hours" · "go delta-neutral on $1,000 of TSLA"'}
+            value={prompt} onChange={(e) => { setPrompt(e.target.value); setParsed(null); }}
+            onKeyDown={(e) => e.key === "Enter" && runParse()} />
+          <button className="btn primary" disabled={!prompt.trim() || parsing} onClick={runParse}>
+            {parsing ? "Thinking…" : "Go"}
+          </button>
         </div>
 
-        {mode === "dca" ? (
-          <>
-            <div className="prompt-wrap row">
-              <input className="prompt-box oneline" placeholder={'"DCA $50 into bitcoin every week" · "buy $200 of the S&P 500 monthly"'}
-                value={prompt} onChange={(e) => { setPrompt(e.target.value); setParsed(null); }}
-                onKeyDown={(e) => e.key === "Enter" && runParse()} />
-              <button className="btn primary" disabled={!prompt.trim() || parsing} onClick={runParse}>
-                {parsing ? "Thinking…" : "Go"}
-              </button>
-            </div>
-
-            {parsed && (
-              <div className="agents-parsed-preview">
-                <p style={{ margin: 0 }}>
-                  {parsed.plans.length === 1
-                    ? `${fmtUsd(parsed.plans[0].usdPerInterval)} of ${parsed.plans[0].name} (${parsed.plans[0].symbol}) ${formatInterval(parsed.plans[0].intervalDays)}`
-                    : parsed.summary}
-                </p>
-                {parsed.plans.length > 1 && (
-                  <div className="agents-schedule-dates" style={{ marginTop: 8 }}>
-                    {parsed.plans.map((p) => <span key={p.symbol} className="agents-schedule-chip">{p.symbol}</span>)}
-                  </div>
-                )}
-                <div className="wfoot" style={{ marginTop: 10 }}>
-                  <button className="btn ghost" disabled={creating} onClick={() => setParsed(null)}>Never mind</button>
-                  <button className="btn primary" disabled={creating} onClick={confirmCreate}>
-                    {creating ? "Creating…" : parsed.plans.length > 1 ? `Looks good, create ${parsed.plans.length} strategies` : "Looks good, create it"}
-                  </button>
-                </div>
+        {parsed && (
+          <div className="agents-parsed-preview">
+            <p style={{ margin: 0 }}>
+              {parsed.type === "dca" && parsed.plans.length === 1
+                ? `${fmtUsd(parsed.plans[0].usdPerInterval)} of ${parsed.plans[0].name} (${parsed.plans[0].symbol}) ${formatInterval(parsed.plans[0].intervalDays)}`
+                : parsed.summary}
+            </p>
+            {parsed.type === "dca" && parsed.plans.length > 1 && (
+              <div className="agents-schedule-dates" style={{ marginTop: 8 }}>
+                {parsed.plans.map((p) => <span key={p.symbol} className="agents-schedule-chip">{p.symbol}</span>)}
               </div>
             )}
-          </>
-        ) : (
-          <DeltaNeutralForm address={address} evmAddress={evmAddress} onCreated={refresh} />
+            <div className="wfoot" style={{ marginTop: 10 }}>
+              <button className="btn ghost" disabled={creating} onClick={() => setParsed(null)}>Never mind</button>
+              <button className="btn primary" disabled={creating} onClick={confirmCreate}>
+                {creating
+                  ? "Creating…"
+                  : parsed.type === "dca" && parsed.plans.length > 1
+                    ? `Looks good, create ${parsed.plans.length} strategies`
+                    : "Looks good, create it"}
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
       {loading ? (
         <p className="lvp-muted">Loading…</p>
-      ) : strategies.length === 0 ? (
+      ) : strategies.filter((s) => s.status !== "cancelled").length === 0 ? (
         <p className="lvp-muted">No strategies yet — create one above to get started.</p>
       ) : (
-        strategies.map((s) => (
-          <StrategyCard key={s.id} strategy={s} address={address} busy={busyStrategyId === s.id} onTransition={transition} />
-        ))
+        strategies
+          .filter((s) => s.status !== "cancelled")
+          .map((s) => (
+            <StrategyCard key={s.id} strategy={s} address={address} busy={busyStrategyId === s.id} onTransition={transition} />
+          ))
       )}
 
       {confirmProposal && (
