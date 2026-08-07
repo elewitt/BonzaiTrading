@@ -1380,7 +1380,15 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .stats-toggle-btn:hover { background: var(--pine); color: #fff; border-color: var(--pine); }
 .flip-front { display: flex; flex-direction: column; }
-.alloc-actions { display: flex; gap: 10px; margin-top: auto; padding-top: 20px; }
+/* Not margin-top: auto — the front face gets CSS-grid-stretched to match
+   the taller Performance/chart back face's height (both faces share the
+   same grid cell for the 3D flip), so pinning these to the bottom of that
+   stretched box left a big empty gap between the asset list and the
+   buttons whenever there were only a couple of assets. A fixed margin
+   keeps them anchored to the content instead — any leftover stretched
+   height now falls below the buttons, inside the card, which reads as
+   normal padding rather than a broken-looking void. */
+.alloc-actions { display: flex; gap: 10px; margin-top: 20px; }
 .alloc-actions .btn { flex: 1; font-size: 13px; padding: 9px 0; }
 
 
