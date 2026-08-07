@@ -78,6 +78,23 @@ export async function getMarketInfo(symbol) {
   return { ticker, isCrypto, quote, profile, statistics };
 }
 
+// "1D" asks Twelve Data for a fixed count of recent 5-minute bars — there's
+// no "since today's session open" mode. Early in a trading session (or
+// pre-market), 80 bars back reaches past today's open into yesterday's
+// close, so the response silently stitches two disjoint sessions together
+// with a multi-hour gap between them, which renders as a fake-looking
+// straight-line-then-cliff shape and starves the axis of real spacing to
+// work with. Trim to just the most recent session by finding the last gap
+// far bigger than a normal (or even one-dropped-bar) 5-minute step.
+function trimToLastSession(points, intervalMs) {
+  const gapThreshold = Math.max(intervalMs * 6, 30 * 60_000);
+  let start = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].ts - points[i - 1].ts > gapThreshold) start = i;
+  }
+  return points.slice(start);
+}
+
 /** Historical close-price series for the chart, for a given timeframe. */
 export async function getMarketChart(symbol, range) {
   const { ticker } = resolveTicker(symbol);
@@ -85,9 +102,10 @@ export async function getMarketChart(symbol, range) {
   const data = await cached(`chart:${ticker}:${range}`, CHART_TTL, () =>
     tdFetch("/time_series", { symbol: ticker, interval: params.interval, outputsize: params.outputsize })
   );
-  const points = (data.values || [])
+  let points = (data.values || [])
     .map((v) => ({ ts: new Date(v.datetime).getTime(), price: Number(v.close) }))
     .filter((p) => Number.isFinite(p.price))
     .sort((a, b) => a.ts - b.ts);
+  if (range === "1D") points = trimToLastSession(points, 5 * 60_000);
   return { ticker, range, points };
 }
