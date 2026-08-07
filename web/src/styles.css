@@ -511,7 +511,17 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .leg:last-child { border-bottom: none; }
 .leg.routing, .leg.signing, .leg.executing, .leg.confirmed, .leg.failed { opacity: 1; }
-.leg-route  { font-size: 13px; font-weight: 500; }
+.leg-route  { font-size: 13px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 480px) {
+  /* The route-text column (1fr, between the icon badge and the fixed-
+     width $amount/status-pill columns) had no truncation fallback — a
+     longer symbol pair could crowd the status pill instead of just
+     eliding, the one execute-status screen with no mobile treatment.
+     min-width:0 + ellipsis above is the actual fix; this just tightens
+     spacing so the fixed columns take less room in the first place. */
+  .leg { grid-template-columns: 26px 1fr auto auto; gap: 8px; padding: 12px 0; }
+  .leg-status-badge { padding: 4px 9px; font-size: 10px; }
+}
 .leg-icon-badge {
   width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center;
   justify-content: center; font-size: 13px; line-height: 1; color: var(--moss);
@@ -1856,6 +1866,19 @@ a.trow { color: inherit; text-decoration: none; }
 .lvp-pct-btn:hover:not(:disabled) { border-color: var(--pine); color: var(--pine); }
 .lvp-pct-btn:disabled { opacity: .5; cursor: default; }
 .lvp-pct-btn.sel { background: var(--pine); border-color: var(--pine); color: #fff; }
+@media (max-width: 768px) {
+  /* .lvp-pct-btn is reused everywhere from dense filter-chip rows to the
+     25/50/75/Max amount presets on every buy/sell/lend/borrow modal and
+     the perps ticket's %-of-margin row — genuinely different jobs. The
+     earlier touch-target pass bumped the shared base modestly (~32px,
+     picked to stay compact for the filter-chip case). Scoped to its
+     .lvp-pct-presets context specifically — where it's a PRIMARY transact
+     amount control, not a secondary filter — for a real ~44px target,
+     the same way .lvp-pnl-periods .lvp-pct-btn already gets its own
+     scoped sizing today. */
+  .lvp-pct-presets { gap: 8px; }
+  .lvp-pct-presets .lvp-pct-btn { padding: 13px 0; font-size: 13px; }
+}
 
 /* ——— Trade-screen dashboard (fills the column beside the ticket) ——— */
 .lvp-dashboard { display: flex; flex-direction: column; gap: 16px; }
@@ -2049,6 +2072,53 @@ a.trow { color: inherit; text-decoration: none; }
     flex-direction: row !important; gap: 10px !important;
   }
   .perps-balance-bar > span:last-child .lvp-btn { flex: 1; }
+
+  /* ——— Order ticket — the highest-stakes transact UI in the app, and
+     the one that had received zero mobile-specific treatment despite
+     everything around it getting one. ——— */
+
+  /* USD/asset-unit pair stops squeezing to ~158px each and gets full
+     width, stacked. */
+  .lvp-size-pair { grid-template-columns: 1fr; gap: 10px; }
+
+  /* Both range inputs get a real touch-sized thumb instead of relying on
+     whatever the OS default happens to render, plus more vertical space
+     between the leverage row and the %-of-margin row below it — at the
+     default spacing the two sliders sit close enough that grabbing the
+     wrong one is an easy mistake with a thumb. accent-color (desktop)
+     already handles the track/thumb color; -webkit-appearance:none here
+     is scoped to mobile only, so desktop's simpler native styling is
+     untouched. */
+  .lvp-leverage-row { margin: 18px 0 10px; }
+  .lvp-pct-row { margin: 8px 0 12px; }
+  .lvp-leverage-slider, .lvp-pct-slider {
+    height: 28px; -webkit-appearance: none; appearance: none; background: none;
+  }
+  .lvp-leverage-slider::-webkit-slider-runnable-track,
+  .lvp-pct-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: var(--line); }
+  .lvp-leverage-slider::-moz-range-track,
+  .lvp-pct-slider::-moz-range-track { height: 4px; border-radius: 999px; background: var(--line); }
+  .lvp-leverage-slider::-webkit-slider-thumb, .lvp-pct-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -11px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--pine); border: 3px solid var(--card); box-shadow: 0 1px 3px rgba(10,24,18,.3);
+  }
+  .lvp-leverage-slider::-moz-range-thumb, .lvp-pct-slider::-moz-range-thumb {
+    width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--card);
+    background: var(--pine); box-shadow: 0 1px 3px rgba(10,24,18,.3);
+  }
+  .lvp-pct-slider:disabled::-webkit-slider-thumb { background: var(--moss); }
+  .lvp-pct-slider:disabled::-moz-range-thumb { background: var(--moss); }
+
+  /* Submit is the one action this whole screen exists for — sticking it
+     above the bottom tab bar means scrolling through leverage/size/limit
+     price/order summary can never push it out of reach. Matches the
+     58px-tab-bar + safe-area convention .lv-root's own bottom padding
+     already uses. */
+  .perps-ticket-col .lvp-btn.primary {
+    position: sticky; bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 5; box-shadow: 0 2px 12px rgba(10,24,18,.22);
+  }
 }
 
 /* ═══════════════════════════════════════════════
@@ -2596,6 +2666,13 @@ a.trow { color: inherit; text-decoration: none; }
 .borrow-rate-chip .mono { font-size: 13px; font-weight: 600; }
 .borrow-rate-chip-borrow .mono { color: var(--loss); }
 .borrow-rate-chip-deposit .mono { color: var(--gain); }
+@media (max-width: 400px) {
+  /* 3 chips at 84px+gap sits right at the edge of fitting at 375px —
+     depends on being borderline rather than actually having margin.
+     Shrink the box, not the text, so APY/LTV values stay legible. */
+  .borrow-asset-rates { gap: 6px; }
+  .borrow-rate-chip { min-width: 0; flex: 1; padding: 6px 8px; }
+}
 
 /* Simpler single-line variant reused by the Withdraw collateral picker
    (PositionCard.jsx) — no rates, just symbol + amount, so it doesn't need
