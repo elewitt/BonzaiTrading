@@ -196,12 +196,21 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   const high = Math.max(...points.map((p) => p.v));
   const low = Math.min(...points.map((p) => p.v));
 
-  // 4-5 x-axis labels, evenly spaced by index (not by time) so they stay
-  // readable even when points are unevenly sampled.
+  // 4-5 x-axis labels, evenly spaced by TIME. Real feeds are frequently
+  // unevenly sampled (e.g. a "Day" range whose points thin out overnight
+  // and bunch up during market hours) — spacing by index instead of time
+  // put almost every label in the dense stretch and left long empty gaps
+  // unlabeled, which read as broken rather than just imprecise.
   const X_TICK_COUNT = 5;
-  const xTickIdxs = Array.from({ length: X_TICK_COUNT }, (_, i) =>
-    Math.round((i / (X_TICK_COUNT - 1)) * (points.length - 1)),
-  ).filter((v, i, arr) => arr.indexOf(v) === i);
+  const xTickIdxs = Array.from({ length: X_TICK_COUNT }, (_, i) => {
+    const targetT = tMin + (i / (X_TICK_COUNT - 1)) * tRange;
+    let best = 0, bestDiff = Infinity;
+    for (let j = 0; j < points.length; j++) {
+      const diff = Math.abs(points[j].ts - targetT);
+      if (diff < bestDiff) { bestDiff = diff; best = j; }
+    }
+    return best;
+  }).filter((v, i, arr) => arr.indexOf(v) === i);
 
   const updateHover = (clientX, clientY) => {
     const svg = svgRef.current;
@@ -233,6 +242,19 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   const hoverPoint = hover ? points[hover.idx] : null;
   const colorFor = (v) => (isPnl ? (v >= 0 ? "var(--gain)" : "var(--loss)") : (isGain ? "var(--gain)" : "var(--loss)"));
 
+  // Axis ticks only need as much precision as the step between them
+  // actually carries — "$105.00 / $106.00 / $107.00" repeats a ".00" that
+  // says nothing, since niceTicks already only ever lands on round values.
+  // The header/tooltip (priceLabel/deltaLabel) keep their own full
+  // precision; this only trims the small print running down the y-axis.
+  const tickStep = yTicks.length > 1 ? Math.abs(yTicks[1] - yTicks[0]) : 1;
+  const yTickLabel = (v) => {
+    if (isPnl) return label(v);
+    if (Math.abs(v) >= 1000) return `$${(v / 1000).toLocaleString(undefined, { maximumFractionDigits: tickStep >= 1000 ? 0 : 1 })}k`;
+    if (tickStep >= 1) return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    return `$${v.toFixed(tickStep >= 0.1 ? 2 : 4)}`;
+  };
+
   return (
     <div
       ref={wrapRef}
@@ -260,12 +282,12 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="ts-chart-svg" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="tsChartGainGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--gain)" stopOpacity="0.24" />
-            <stop offset="100%" stopColor="var(--gain)" stopOpacity="0.02" />
+            <stop offset="0%" stopColor="var(--gain)" stopOpacity="0.13" />
+            <stop offset="100%" stopColor="var(--gain)" stopOpacity="0.01" />
           </linearGradient>
           <linearGradient id="tsChartLossGrad" x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0%" stopColor="var(--loss)" stopOpacity="0.20" />
-            <stop offset="100%" stopColor="var(--loss)" stopOpacity="0.02" />
+            <stop offset="0%" stopColor="var(--loss)" stopOpacity="0.11" />
+            <stop offset="100%" stopColor="var(--loss)" stopOpacity="0.01" />
           </linearGradient>
           <clipPath id="tsChartClip">
             <rect x={PAD.left} y={PAD.top - 4} width={inner.w + 1} height={inner.h + 5} />
@@ -274,7 +296,7 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
 
         {yTicks.map((v, i) => (
           <line key={i} x1={PAD.left} y1={sy(v).toFixed(1)} x2={W - PAD.right} y2={sy(v).toFixed(1)}
-            stroke="var(--line)" strokeWidth="1" opacity="0.6" />
+            stroke="var(--line)" strokeWidth="1" opacity="0.45" />
         ))}
         {isPnl && (
           <line x1={PAD.left} y1={zeroY.toFixed(1)} x2={W - PAD.right} y2={zeroY.toFixed(1)}
@@ -310,7 +332,7 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
         {yTicks.map((v, i) => (
           <text key={i} x={PAD.left - 10} y={sy(v) + 3} textAnchor="end"
             fontSize="11" fontFamily="IBM Plex Mono,monospace" fill="var(--moss)">
-            {label(v)}
+            {yTickLabel(v)}
           </text>
         ))}
 
