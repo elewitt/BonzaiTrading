@@ -30,8 +30,8 @@ const stepCopy = {
   FAILED: "Deposit didn't complete",
 };
 
-export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdcBalance = 0, rpcUrl, onFunded }) {
-  const [amount, setAmount] = useState("");
+export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdcBalance = 0, rpcUrl, onFunded, initialAmount }) {
+  const [amount, setAmount] = useState(() => (initialAmount != null ? String(initialAmount) : ""));
   const [quote, setQuote] = useState(null);
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);

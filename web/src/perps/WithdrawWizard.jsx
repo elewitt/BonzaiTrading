@@ -14,8 +14,8 @@ const stepCopy = {
   FAILED: "Withdrawal didn't complete",
 };
 
-export function WithdrawWizard({ orchestrator, user, withdrawable = 0, onWithdrawn }) {
-  const [amount, setAmount] = useState("");
+export function WithdrawWizard({ orchestrator, user, withdrawable = 0, onWithdrawn, initialAmount }) {
+  const [amount, setAmount] = useState(() => (initialAmount != null ? String(initialAmount) : ""));
   const [quote, setQuote] = useState(null);
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);

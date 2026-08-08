@@ -54,9 +54,9 @@ export function PerpsCloseCell({ p, hl, user, tradingWallet, onClosed }) {
  */
 export function MoveFundsCard({
   title, description,
-  fromBalance, sourceDex, destinationDex, moveDexFunds, buttonLabel = "Move funds", onDone,
+  fromBalance, sourceDex, destinationDex, moveDexFunds, buttonLabel = "Move funds", onDone, initialAmount,
 }) {
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState(() => (initialAmount != null ? String(initialAmount) : ""));
   const amt = Number(amount);
   // Floor (not round) to cents for display/Max — fromBalance is a raw float,
   // and .toFixed(2) rounding it up (e.g. 5.5361 -> "5.54") meant clicking Max

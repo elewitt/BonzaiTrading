@@ -668,26 +668,47 @@ async function parsePerpPrompt({ prompt }) {
   if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
   if (!prompt) throw new Error("prompt required");
 
-  const system = `You extract structured perpetual-futures order intent from a plain-English trading command, for a Hyperliquid-powered leveraged trading product.
+  const system = `You extract structured perpetual-futures intent from a plain-English trading command, for a Hyperliquid-powered leveraged trading product.
 
 Respond with ONLY a JSON object. No markdown, no backticks, no prose.
-Shape: {"action":"open","asset":"SOL","side":"long","leverage":5,"sizeType":"all","sizeValue":null,"summary":"one short plain sentence"}
+Shape: {"action":"open","asset":"SOL","side":"long","leverage":5,"account":null,"sizeType":"all","sizeValue":null,"summary":"one short plain sentence"}
 
 Fields:
-- "action": "close" if the user wants to close/exit an EXISTING position (e.g. "close my SOL position", "exit my BTC long", "get out of my AAPL perp"). Otherwise "open" (they want to open/increase a new position — buy/long/sell/short).
-- "asset": your best-guess TICKER SYMBOL for the crypto coin or company/ETF the user named (e.g. "Solana"→"SOL", "Bitcoin"→"BTC", "Apple"→"AAPL", "Tesla"→"TSLA"). Uppercase, no suffix. If you cannot identify a specific asset, use null.
-- "side": "long" or "short". Map "buy"/"go long"/"long" → "long". Map "sell"/"go short"/"short" → "short". If genuinely ambiguous, or action is "close" and no side was stated, use null — the close target's real side will be looked up separately.
-- "leverage": the leverage multiplier as a plain integer (e.g. "5x leverage" → 5). null if not mentioned. Not needed when action is "close".
-- "sizeType": one of "all" (user said something like "all my cash/margin/available balance"), "percent" (user gave a percentage of their account), "usd" (user gave a specific dollar amount they want exposed), "asset_amount" (user gave a specific quantity of the asset itself, e.g. "10 SOL"), or "unspecified" (no sizing info given at all). Not needed when action is "close" — use "unspecified".
+- "action": one of:
+  - "close" — user wants to close/exit an EXISTING leveraged position (e.g. "close my SOL position", "exit my BTC long", "get out of my AAPL perp").
+  - "open" — user wants to open/increase a new leveraged position (buy/long/sell/short a specific asset).
+  - "deposit" — user wants to MOVE MONEY INTO their Hyperliquid perps margin account, NOT open a position (e.g. "deposit $500 into perps", "fund my Hyperliquid account with $200", "add money to my perps account", "put $1000 into my crypto perps").
+  - "withdraw" — user wants to move money OUT of their Hyperliquid perps margin account back to their wallet, NOT close a position (e.g. "withdraw $100 from my perps account", "take $50 out of Hyperliquid", "pull my perps funds back to my wallet", "cash out my perps balance"). Only use this for moving the ACCOUNT'S CASH/MARGIN balance — a request to exit a leveraged position is "close", not "withdraw".
+- "asset": your best-guess TICKER SYMBOL for the crypto coin or company/ETF the user named (e.g. "Solana"→"SOL", "Bitcoin"→"BTC", "Apple"→"AAPL", "Tesla"→"TSLA"). Uppercase, no suffix. If you cannot identify a specific asset, use null. Not needed (leave null) when action is "deposit" or "withdraw".
+- "side": "long" or "short". Map "buy"/"go long"/"long" → "long". Map "sell"/"go short"/"short" → "short". If genuinely ambiguous, or action is "close"/"deposit"/"withdraw" and no side was stated, use null.
+- "leverage": the leverage multiplier as a plain integer (e.g. "5x leverage" → 5). null if not mentioned. Only relevant when action is "open".
+- "account": ONLY relevant when action is "deposit" or "withdraw" — which Hyperliquid account: "crypto" (the default crypto perps account) or "equity" (the separate stocks/equities perps account, only when the user specifically names it — "my equities account", "my stocks perps"). If unclear or unstated, use "crypto". null when action is "open"/"close".
+- "sizeType": one of "all" (user said something like "all my cash/margin/available balance"), "percent" (user gave a percentage of their account), "usd" (user gave a specific dollar amount), "asset_amount" (user gave a specific quantity of the asset itself, e.g. "10 SOL" — only possible when action is "open"), or "unspecified" (no sizing info given at all). Not needed when action is "close" — use "unspecified". For "deposit"/"withdraw", never use "asset_amount" (it's always USDC).
 - "sizeValue": the number that goes with sizeType — the percent (0-100) for "percent", the dollar amount for "usd", the asset quantity for "asset_amount". null for "all" or "unspecified".
 - "summary": one short plain sentence restating what you understood, for the user to double check.
 
 Rules:
 - NEVER compute or guess a real dollar amount yourself — only extract what the user actually said.
 - If leverage isn't mentioned, "leverage" must be null — do not default to 1x or any other number.
-- If no asset is identifiable, "asset" must be null.`;
+- If no asset is identifiable for an "open" action, "asset" must be null.`;
 
   const parsed = await callClaudeForJson({ system, prompt, maxTokens: 300, label: "parse-perp" });
+
+  if (parsed.action === "deposit" || parsed.action === "withdraw") {
+    const validSizeTypes = ["all", "percent", "usd", "unspecified"];
+    if (!validSizeTypes.includes(parsed.sizeType)) parsed.sizeType = "unspecified";
+    if (parsed.sizeType === "percent" && !(parsed.sizeValue > 0 && parsed.sizeValue <= 100))
+      throw new Error("That percentage doesn't look right.");
+    if (parsed.sizeType === "usd" && !(parsed.sizeValue > 0))
+      throw new Error("Couldn't find a valid amount in that.");
+    return {
+      action: parsed.action,
+      account: parsed.account === "equity" ? "equity" : "crypto",
+      sizeType: parsed.sizeType || "unspecified",
+      sizeValue: parsed.sizeValue ?? null,
+      summary: parsed.summary || "",
+    };
+  }
 
   const action = parsed.action === "close" ? "close" : "open";
   if (!parsed.asset) throw new Error("Couldn't identify which asset you mean — try naming it directly, e.g. \"SOL\".");

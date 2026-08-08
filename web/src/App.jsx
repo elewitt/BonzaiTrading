@@ -358,6 +358,12 @@ export default function App() {
   const [withdrawalProposal, setWithdrawalProposal] = useState(null); // {to, usd, amount}
   const [perpProposal, setPerpProposal] = useState(null); // resolved, ready-to-sign perps order intent
   const [perpOrderBusy, setPerpOrderBusy] = useState(false);
+  // Perps deposit/withdraw from the dashboard prompt bar hands off to the
+  // Perps page's own funding wizard (a real multi-signature bridging flow,
+  // not a single sign-and-execute action like every other prompt-driven
+  // trade in this app) rather than duplicating it here — see PerpsApp's
+  // initialFundIntent prop.
+  const [perpsFundIntent, setPerpsFundIntent] = useState(null); // { view, account, amount } | null
   const [borrowProposal, setBorrowProposal] = useState(null); // resolved Kamino deposit/borrow intent
   const [borrowActionBusy, setBorrowActionBusy] = useState(false);
 
@@ -869,7 +875,7 @@ export default function App() {
   // Distinct, narrower signal than TRADE_RE's "buy"/"sell" (which also match
   // ordinary brokerage prompts) — requires an unambiguous leverage/perps
   // word so a normal "buy Tesla" doesn't get misrouted here.
-  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\b\d+(\.\d+)?x\b/i;
+  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\bhyperliquid\b|\b\d+(\.\d+)?x\b/i;
   // Kamino borrow/lend signal — "borrow" alone is unambiguous (no other
   // flow in this app uses that verb); "collateral"/"kamino"/"ltv" cover
   // deposit-only phrasing that doesn't happen to say "borrow"; "loan"/
@@ -1027,6 +1033,38 @@ export default function App() {
     setThinking(true); setError("");
     try {
       const intent = await api.parsePerp(text);
+
+      if (intent.action === "deposit" || intent.action === "withdraw") {
+        // Not a single sign-and-execute action like every other prompt-
+        // driven flow — perps funding is a real multi-signature bridging
+        // wizard (DepositWizard/WithdrawWizard), so this resolves a real
+        // amount from live balances (same "never trust Claude's own math"
+        // rule every other flow follows) and hands off to that existing,
+        // fully-tested flow rather than duplicating it inline here.
+        const isEquity = intent.account === "equity";
+        let amount = null;
+        if (intent.action === "deposit") {
+          const cash = portfolio?.cashUsdc ?? 0;
+          if (intent.sizeType === "all") amount = cash;
+          else if (intent.sizeType === "percent") amount = (intent.sizeValue / 100) * cash;
+          else if (intent.sizeType === "usd") amount = intent.sizeValue;
+        } else {
+          const withdrawable = (isEquity ? equityPerps : cryptoPerps)?.withdrawable ?? 0;
+          if (intent.sizeType === "all") amount = withdrawable;
+          else if (intent.sizeType === "percent") amount = (intent.sizeValue / 100) * withdrawable;
+          else if (intent.sizeType === "usd") amount = intent.sizeValue;
+        }
+        // A bad/zero resolved amount (e.g. "all" against a $0 balance)
+        // still opens the wizard — just with a blank field instead of a
+        // stale prefill — rather than erroring out short of a screen that
+        // can show the user their real balance directly.
+        if (amount != null && !(amount > 0)) amount = null;
+        setPerpsFundIntent({ view: intent.action, account: isEquity ? "equity" : "crypto", amount });
+        setRebalPrompt("");
+        setView("perps");
+        return;
+      }
+
       const wantedAsset = String(intent.asset || "").toUpperCase();
       const asset = perpAssets.find(
         (a) => a.name.toUpperCase() === wantedAsset || a.displayName.toUpperCase() === wantedAsset
@@ -2077,7 +2115,8 @@ export default function App() {
       )}
 
       {screen === "perps" && (
-        <PerpsApp solanaAddress={address} solBalance={holdings?.sol ?? 0} usdcBalance={portfolio?.cashUsdc ?? 0} onBack={() => setView("auto")} />
+        <PerpsApp solanaAddress={address} solBalance={holdings?.sol ?? 0} usdcBalance={portfolio?.cashUsdc ?? 0} onBack={() => setView("auto")}
+          initialFundIntent={perpsFundIntent} />
       )}
 
       {screen === "borrow" && (

@@ -28,7 +28,7 @@ const RESTRICTED_REASON_COPY = {
 
 const SOL_RPC = import.meta.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
 
-export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 0, onBack }) {
+export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 0, onBack, initialFundIntent }) {
   const [geoState, setGeoState] = useState("checking");
   const [geoReason, setGeoReason] = useState(null);
   const [tab, setTab] = useState("trade");
@@ -40,6 +40,19 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   const [fundView, setFundView] = useState("deposit"); // "deposit" | "withdraw"
   const [fundAccount, setFundAccount] = useState("crypto"); // "crypto" | "equity"
   const [fundModal, setFundModal] = useState(false);
+
+  // Dashboard prompt bar hand-off ("deposit $200 into perps") — applied
+  // exactly once on mount, same "apply once, don't fight the user's own
+  // navigation afterward" guard used for BorrowTicket.jsx's auto-selected
+  // starting step.
+  const [hasAppliedFundIntent, setHasAppliedFundIntent] = useState(false);
+  useEffect(() => {
+    if (hasAppliedFundIntent || !initialFundIntent) return;
+    setHasAppliedFundIntent(true);
+    setFundAccount(initialFundIntent.account === "equity" ? "equity" : "crypto");
+    setFundView(initialFundIntent.view === "withdraw" ? "withdraw" : "deposit");
+    setFundModal(true);
+  }, [hasAppliedFundIntent, initialFundIntent]);
 
   // ——— Wallets —��—
   const { wallets } = useWallets();
@@ -576,11 +589,13 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
                 {fundAccount === "crypto" && fundView === "deposit" && (
                   <DepositWizard orchestrator={orchestrator} user={user}
                     walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
+                    initialAmount={initialFundIntent?.amount}
                     onFunded={() => setFundModal(false)} />
                 )}
                 {fundAccount === "crypto" && fundView === "withdraw" && (
                   <WithdrawWizard orchestrator={withdrawOrchestrator} user={user}
-                    withdrawable={cryptoWithdrawable} onWithdrawn={() => setFundModal(false)} />
+                    withdrawable={cryptoWithdrawable} initialAmount={initialFundIntent?.amount}
+                    onWithdrawn={() => setFundModal(false)} />
                 )}
                 {fundAccount === "equity" && fundView === "deposit" && (
                   <>
@@ -591,6 +606,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
                       sourceDex="" destinationDex={EQUITY_DEX}
                       moveDexFunds={moveDexFunds}
                       buttonLabel="Deposit"
+                      initialAmount={initialFundIntent?.amount}
                       onDone={() => setFundModal(false)}
                     />
                     {/* sendAsset can only move USDC already inside Hyperliquid
@@ -614,6 +630,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
                     sourceDex={EQUITY_DEX} destinationDex=""
                     moveDexFunds={moveDexFunds}
                     buttonLabel="Withdraw"
+                    initialAmount={initialFundIntent?.amount}
                     onDone={() => setFundModal(false)}
                   />
                 )}
