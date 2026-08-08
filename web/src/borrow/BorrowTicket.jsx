@@ -41,6 +41,13 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
   const [quickBorrowAmount, setQuickBorrowAmount] = useState("");
   const [step, setStep] = useState("deposit"); // "deposit" | "borrow" | "quick-borrow" | "done"
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
+  // Snapshotted right when a deposit succeeds — the "borrow" step (below)
+  // must not keep reading live off `row`/`eligibleRows`, since the parent
+  // refetches wallet holdings after a deposit and the just-deposited asset
+  // then disappears from that list (it's in Kamino now, not the wallet) —
+  // confirmed as a real crash (row.symbol on a null row) the moment that
+  // refetch landed before the user finished the borrow step.
+  const [depositedInfo, setDepositedInfo] = useState(null); // { symbol, depositValueUsd, maxLtv }
 
   // Unused borrowing room on whatever the user already has deposited in
   // this market, straight from Kamino's own obligation data — the
@@ -92,15 +99,24 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
 
   // Max borrowable = collateral value in USD × this reserve's max LTV — the
   // real number Kamino's own reserve config sets per asset (e.g. SPYx 73%,
-  // AAPLx 40%), not a guessed constant.
+  // AAPLx 40%), not a guessed constant. Live preview while still choosing
+  // a deposit amount — once actually on the "borrow" step (post-deposit),
+  // postDepositMaxBorrowUsd below is what's actually used.
   const maxLtv = reserve ? Number(reserve.maxLtv) : 0;
   const depositValueUsd = row ? depositAmt * row.price : 0;
   // Deposits are free — maxBorrowUsd is against the FULL deposited value,
   // no fee reduction. The 0.10% platform fee now lives on borrows instead,
   // taken in USDC as its own transfer inside executeKaminoAction().
   const maxBorrowUsd = depositValueUsd * maxLtv;
+  // The "borrow" step's real numbers — sourced from the deposit-time
+  // snapshot (see depositedInfo above), not the live row/maxLtv, which can
+  // go stale/null right after the deposit that put us on this step.
+  const postDepositMaxLtv = depositedInfo?.maxLtv ?? maxLtv;
+  const postDepositMaxBorrowUsd = depositedInfo
+    ? depositedInfo.depositValueUsd * depositedInfo.maxLtv
+    : maxBorrowUsd;
   const borrowAmt = Number(borrowAmount);
-  const validBorrow = borrowAmt > 0 && borrowAmt <= maxBorrowUsd;
+  const validBorrow = borrowAmt > 0 && borrowAmt <= postDepositMaxBorrowUsd;
   const borrowFeeUsd = borrowAmt * (KAMINO_FEE_BPS / 10000);
   const netBorrowUsd = borrowAmt - borrowFeeUsd;
 
@@ -110,12 +126,15 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
   const netQuickBorrowUsd = quickBorrowAmt - quickBorrowFeeUsd;
 
   const submitDeposit = async () => {
-    if (!validDeposit || !reserve) return;
+    if (!validDeposit || !reserve || !row) return;
     const result = await action.run("deposit", {
       reserve: reserve.reserve, amount: String(kaminoDepositAmount),
       mint: row.mint, decimals: row.decimals, usdValue: depositValueUsd,
     });
-    if (result) setStep("borrow");
+    if (result) {
+      setDepositedInfo({ symbol: row.symbol, depositValueUsd, maxLtv });
+      setStep("borrow");
+    }
   };
 
   const submitBorrow = async () => {
@@ -258,7 +277,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
             </div>
           </div>
 
-          {reserve && (
+          {reserve && row && (
             <>
               <div className="borrow-field">
                 <span className="tiny muted">Deposit amount ({row.symbol}) · max LTV {(maxLtv * 100).toFixed(0)}%</span>
@@ -294,7 +313,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
       {step === "borrow" && (
         <>
           <p className="tiny muted">
-            Collateral deposited. Up to ${maxBorrowUsd.toFixed(2)} USDC borrowable at {row.symbol}'s {(maxLtv * 100).toFixed(0)}% max LTV —
+            Collateral deposited. Up to ${postDepositMaxBorrowUsd.toFixed(2)} USDC borrowable at {depositedInfo?.symbol ?? "this asset"}'s {(postDepositMaxLtv * 100).toFixed(0)}% max LTV —
             borrowing less than the max keeps a bigger safety margin from liquidation.
           </p>
           <div className="borrow-field">
@@ -304,9 +323,9 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
                 onChange={(e) => setBorrowAmount(e.target.value)} placeholder="0" />
             </div>
             <div className="lvp-pct-presets">
-              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((maxBorrowUsd * 0.25).toFixed(2))}>25%</button>
-              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((maxBorrowUsd * 0.5).toFixed(2))}>50%</button>
-              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount(maxBorrowUsd.toFixed(2))}>Max</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((postDepositMaxBorrowUsd * 0.25).toFixed(2))}>25%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount((postDepositMaxBorrowUsd * 0.5).toFixed(2))}>50%</button>
+              <button type="button" className="lvp-pct-btn" onClick={() => setBorrowAmount(postDepositMaxBorrowUsd.toFixed(2))}>Max</button>
             </div>
           </div>
           {borrowAmt > 0 && (
