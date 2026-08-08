@@ -386,6 +386,24 @@ export default function App() {
   const [error, setError] = useState("");
   const [investPct, setInvestPct] = useState(100);
   const [statsFlipped, setStatsFlipped] = useState(false);
+  // The flip card's two faces share one grid cell so the 3D rotateY
+  // animation works, which means CSS alone always sizes the card to the
+  // TALLER of the two faces (the Performance face's price chart is nearly
+  // always taller than a short asset list) — leaving dead space below
+  // whichever face is actually showing. Measuring the active face directly
+  // and applying it as an explicit height is the real fix: the inactive
+  // face can still overflow the box in raw layout terms, but it's never
+  // painted (backface-visibility: hidden), so nothing is visibly cut off.
+  const flipFrontRef = useRef(null);
+  const flipBackRef = useRef(null);
+  const [flipHeight, setFlipHeight] = useState(null);
+  useEffect(() => {
+    const el = statsFlipped ? flipBackRef.current : flipFrontRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setFlipHeight(entry.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [statsFlipped, dashProduct]);
   const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow" | "markets"
   const [newsSearchInput, setNewsSearchInput] = useState("");
   const [newsSearchSymbol, setNewsSearchSymbol] = useState(null);
@@ -2186,9 +2204,9 @@ export default function App() {
           <div className="dash-main">
 
           {dashProduct === "brokerage" && (
-          <div className="flip-scene">
+          <div className="flip-scene" style={{ height: flipHeight ? `${flipHeight}px` : undefined }}>
             <div className={`flip-inner ${statsFlipped ? "flipped" : ""}`}>
-              <div className="flip-face flip-front card card-pop">
+              <div className="flip-face flip-front card card-pop" ref={flipFrontRef}>
                 <div className="card-toprow">
                   <p className="table-card-title">Brokerage Account</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2239,7 +2257,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <div className="flip-face flip-back card card-pop">
+              <div className="flip-face flip-back card card-pop" ref={flipBackRef}>
                 <div className="card-toprow">
                   <p className="tiny label" style={{ margin: 0 }}>Performance</p>
                   <button className="stats-toggle-btn" onClick={() => setStatsFlipped(false)}>

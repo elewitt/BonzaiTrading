@@ -1360,8 +1360,20 @@ a.trow { color: inherit; text-decoration: none; }
 .foot-sep { color: var(--line); }
 
 /* ——— Flip card ——— */
-.flip-scene  { perspective: 1400px; margin-bottom: 26px; overflow: visible; }
-.flip-inner  { display: grid; transform-style: preserve-3d; transition: transform .58s cubic-bezier(.4,0,.2,1); overflow: visible; }
+/* height is set inline (App.jsx measures the active face via
+   ResizeObserver) so the card hugs whichever face is actually showing
+   instead of always matching the taller of the two — the transition
+   here just makes that height change animate smoothly alongside the
+   rotation instead of snapping. */
+.flip-scene  { perspective: 1400px; margin-bottom: 26px; overflow: visible; transition: height .58s cubic-bezier(.4,0,.2,1); }
+/* align-items: start — without it, CSS Grid's default stretch forces
+   EACH face's own box (border/shadow included) to fill the row track,
+   which is sized to the taller of the two faces regardless of alignment.
+   Un-stretched, each face renders at its own natural content height; the
+   inactive face can still be taller than the explicit height set above
+   and spill past it in raw layout terms, but never visibly (backface-
+   visibility: hidden on whichever face is rotated away). */
+.flip-inner  { display: grid; align-items: start; transform-style: preserve-3d; transition: transform .58s cubic-bezier(.4,0,.2,1); overflow: visible; }
 .flip-inner.flipped { transform: rotateY(180deg); }
 .flip-face   { grid-row: 1; grid-column: 1; backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: visible; }
 .flip-back   { transform: rotateY(180deg); }
