@@ -1011,7 +1011,17 @@ a.trow { color: inherit; text-decoration: none; }
 
 /* ——— Hero action buttons (Deposit / Withdraw) ——— */
 .hero-btns { display: flex; gap: 10px; margin-top: 16px; }
-.hero-action-btn { flex: 1; font-size: 13px; padding: 9px 0; }
+/* .btn.ghost's default var(--line) border/var(--ink) text reads as barely
+   visible against this section's paper background — a pine border + text
+   + a light card-tinted fill gives these real presence as their own
+   buttons instead of near-invisible outlines, without going as loud as
+   the primary "Go" button beside them. Hover fills solid, same "outline
+   → solid pine" convention .head-nav-btn already uses. */
+.hero-action-btn {
+  flex: 1; font-size: 13px; padding: 9px 0;
+  border-color: var(--pine); color: var(--pine); background: var(--card);
+}
+.hero-action-btn:hover:not(:disabled) { background: var(--pine); color: #fff; }
 
 /* ——— Withdraw modal ——— */
 .withdraw-modal { max-width: 460px; }
@@ -2007,7 +2017,12 @@ a.trow { color: inherit; text-decoration: none; }
   border: none; background: none; border-radius: 9px; letter-spacing: .01em;
   box-shadow: none;
 }
-.lvp-pnl-periods .lvp-pct-btn.sel { box-shadow: 0 1px 3px rgba(26,68,51,.25); }
+/* Same specificity as, and declared after, the base .lvp-pct-btn.sel rule
+   (which sets the pine background/white text) — this row's own unconditional
+   `background: none` above was winning the cascade for the selected pill
+   too, leaving white text on a transparent background (unreadable).
+   Re-declaring both here explicitly is what actually fixes it. */
+.lvp-pnl-periods .lvp-pct-btn.sel { background: var(--pine); color: #fff; box-shadow: 0 1px 3px rgba(26,68,51,.25); }
 
 /* ——— TimeSeriesChart (components/TimeSeriesChart.jsx) — shared by the
    perps dashboard, the brokerage "Portfolio Stats" panel, and the Markets
