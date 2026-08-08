@@ -426,6 +426,7 @@ export default function App() {
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawAmountStr, setWithdrawAmountStr] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [marketsOpen, setMarketsOpen] = useState(false);
   const [profileModal, setProfileModal] = useState(null); // "account" | "settings" | null
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState([]); // [{ label, address }]
@@ -443,6 +444,7 @@ export default function App() {
   const [lendTarget, setLendTarget] = useState(null);
   const busy = useRef(false);
   const profileRef = useRef(null);
+  const marketsRef = useRef(null);
 
   /* ——— auth: hand the server-request helper a way to fetch a fresh Privy token ——— */
   useEffect(() => { setAuthTokenProvider(getAccessToken); }, [getAccessToken]);
@@ -456,6 +458,16 @@ export default function App() {
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [profileOpen]);
+
+  /* ——— markets menu: close on outside click — same pattern as the profile menu above ——— */
+  useEffect(() => {
+    if (!marketsOpen) return;
+    const onDocClick = (e) => {
+      if (marketsRef.current && !marketsRef.current.contains(e.target)) setMarketsOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [marketsOpen]);
 
   /* ——— bootstrap: token registry ——— */
   useEffect(() => {
@@ -1837,10 +1849,24 @@ export default function App() {
         )}
         {address && (
           <div className="head-right head-right-authed">
-            <button className={`head-nav-btn ${screen === "equities" ? "active" : ""}`} onClick={() => setView("equities")}>Equities Markets</button>
-            <button className={`head-nav-btn ${screen === "predictions" ? "active" : ""}`} onClick={() => setView("predictions")}>Prediction Markets</button>
-            <button className={`head-nav-btn ${screen === "perps" ? "active" : ""}`} onClick={() => setView("perps")}>Perpetual Futures Markets</button>
-            <button className={`head-nav-btn ${screen === "borrow" ? "active" : ""}`} onClick={() => setView("borrow")}>Borrow / Lend Markets</button>
+            <button className={`head-nav-btn ${screen === "dash" ? "active" : ""}`} onClick={() => setView("auto")}>Home</button>
+            <div className="profile-wrap" ref={marketsRef}>
+              <button className={`head-nav-btn profile-btn ${["equities", "predictions", "perps", "borrow"].includes(screen) ? "active" : ""}`}
+                onClick={() => setMarketsOpen((o) => !o)}>
+                Markets
+                <svg className={`profile-chevron ${marketsOpen ? "open" : ""}`} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {marketsOpen && (
+                <div className="profile-menu">
+                  <button className="profile-menu-item" onClick={() => { setView("equities"); setMarketsOpen(false); }}>Equities Markets</button>
+                  <button className="profile-menu-item" onClick={() => { setView("predictions"); setMarketsOpen(false); }}>Prediction Markets</button>
+                  <button className="profile-menu-item" onClick={() => { setView("perps"); setMarketsOpen(false); }}>Perpetual Futures Markets</button>
+                  <button className="profile-menu-item" onClick={() => { setView("borrow"); setMarketsOpen(false); }}>Borrow / Lend Markets</button>
+                </div>
+              )}
+            </div>
             <button className={`head-nav-btn ${screen === "agents" ? "active" : ""}`} onClick={() => setView("agents")}>Trading Agent</button>
             <div className="profile-wrap" ref={profileRef}>
               <button className="head-nav-btn profile-btn" onClick={() => setProfileOpen((o) => !o)}>

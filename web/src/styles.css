@@ -76,7 +76,7 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .chip[title]:hover { border-color: var(--moss); }
 .chip.gold { color: var(--gold); border-color: #DDD0A2; background: #FAF5E5; }
 
-/* ——— My Profile dropdown ——— */
+/* ——— Header dropdowns (Markets, My Profile) — shared markup ——— */
 .profile-wrap { position: relative; }
 .profile-chevron { transition: transform .15s; flex-shrink: 0; }
 .profile-chevron.open { transform: rotate(180deg); }
