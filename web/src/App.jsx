@@ -386,6 +386,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [investPct, setInvestPct] = useState(100);
   const [statsFlipped, setStatsFlipped] = useState(false);
+  const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow" | "markets"
   // The flip card's two faces share one grid cell so the 3D rotateY
   // animation works, which means CSS alone always sizes the card to the
   // TALLER of the two faces (the Performance face's price chart is nearly
@@ -404,7 +405,6 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [statsFlipped, dashProduct]);
-  const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow" | "markets"
   const [newsSearchInput, setNewsSearchInput] = useState("");
   const [newsSearchSymbol, setNewsSearchSymbol] = useState(null);
   const runNewsSearch = (e) => {
