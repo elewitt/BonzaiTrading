@@ -1360,23 +1360,23 @@ a.trow { color: inherit; text-decoration: none; }
 .foot-sep { color: var(--line); }
 
 /* ——— Flip card ——— */
-/* height is set inline (App.jsx measures the active face via
-   ResizeObserver) so the card hugs whichever face is actually showing
-   instead of always matching the taller of the two — the transition
-   here just makes that height change animate smoothly alongside the
-   rotation instead of snapping. */
-.flip-scene  { perspective: 1400px; margin-bottom: 26px; overflow: visible; transition: height .58s cubic-bezier(.4,0,.2,1); }
-/* align-items: start — without it, CSS Grid's default stretch forces
-   EACH face's own box (border/shadow included) to fill the row track,
-   which is sized to the taller of the two faces regardless of alignment.
-   Un-stretched, each face renders at its own natural content height; the
-   inactive face can still be taller than the explicit height set above
-   and spill past it in raw layout terms, but never visibly (backface-
-   visibility: hidden on whichever face is rotated away). */
-.flip-inner  { display: grid; align-items: start; transform-style: preserve-3d; transition: transform .58s cubic-bezier(.4,0,.2,1); overflow: visible; }
+/* Whichever face is showing is position: static (in normal flow, so its
+   own natural content height IS the card's height); the other face is
+   position: absolute, overlaid exactly on top but out of flow entirely,
+   so it can't affect the container's height. .flipped swaps which face
+   is which. (A shared CSS Grid cell — the previous approach — always
+   sizes to the TALLER of the two faces no matter how the items inside
+   are aligned; fighting that with a JS/ResizeObserver-measured explicit
+   height proved fragile in practice, so this avoids the problem instead
+   of correcting for it.) */
+.flip-scene  { perspective: 1400px; margin-bottom: 26px; overflow: visible; }
+.flip-inner  { position: relative; transform-style: preserve-3d; transition: transform .58s cubic-bezier(.4,0,.2,1); overflow: visible; }
 .flip-inner.flipped { transform: rotateY(180deg); }
-.flip-face   { grid-row: 1; grid-column: 1; backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: visible; }
-.flip-back   { transform: rotateY(180deg); }
+.flip-face   { backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: visible; }
+.flip-front  { position: static; }
+.flip-back   { position: absolute; top: 0; left: 0; width: 100%; transform: rotateY(180deg); }
+.flip-inner.flipped .flip-front { position: absolute; top: 0; left: 0; width: 100%; }
+.flip-inner.flipped .flip-back  { position: static; }
 .card-toprow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 @media (max-width: 600px) {
   /* This one rule is reused everywhere a card title sits next to action
