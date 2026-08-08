@@ -101,8 +101,57 @@ function splitAtZero(mapped, values, zeroY) {
   return runs;
 }
 
+// Some feeds behind this chart (the dashboard's local portfolio-value log
+// in particular) snapshot on every value change, not on a fixed interval —
+// over a long "All time" window that's routinely 500-2000+ points, many of
+// them mere seconds apart. Rendered as straight connected segments, that
+// density reads as a jagged, chaotic sawtooth rather than a legible trend,
+// even though each individual point is real. Bucketing down to a bounded
+// number of points for the LINE (not the high/low stats, which still read
+// off the true full-resolution data) is the standard fix real charting
+// tools use for the same "way more raw samples than pixels" situation —
+// picking the last value in each time bucket (like a per-bucket "close")
+// rather than averaging, so the line still only ever shows real recorded
+// values, never an invented blend between them.
+const MAX_RENDER_POINTS = 150;
+function downsample(points, target) {
+  if (points.length <= target) return points;
+  const bucketSize = points.length / target;
+  const out = [];
+  for (let i = 0; i < target; i++) {
+    const start = Math.floor(i * bucketSize);
+    const end = Math.max(start + 1, Math.floor((i + 1) * bucketSize));
+    out.push(points[Math.min(end, points.length) - 1]);
+  }
+  out[0] = points[0]; // always start on the true earliest point…
+  out[out.length - 1] = points[points.length - 1]; // …and end on the true latest one
+  return out;
+}
+
+// Quadratic-through-midpoints smoothing — the standard, low-risk way to
+// round off a polyline's sharp corners: each interior point becomes a
+// curve CONTROL point (not necessarily touched exactly), with the curve
+// running between the midpoints of its neighboring segments. Always starts
+// and ends exactly on the real first/last point. Deliberately not a full
+// spline through every point — a curve that's bounded to the local
+// neighborhood of 3 points at a time can't overshoot past what the data
+// actually did the way a naive Catmull-Rom fit can, which matters for a
+// financial chart (the hover/tooltip still snaps to and reads out the
+// exact real value at each point regardless of how the curve looks).
 function pathFor(points) {
-  return points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  if (points.length < 3) {
+    return points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  }
+  let d = `M${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [cx, cy] = points[i];
+    const [nx, ny] = points[i + 1];
+    const mx = (cx + nx) / 2, my = (cy + ny) / 2;
+    d += ` Q${cx.toFixed(1)},${cy.toFixed(1)} ${mx.toFixed(1)},${my.toFixed(1)}`;
+  }
+  const [lx, ly] = points[points.length - 1];
+  d += ` L${lx.toFixed(1)},${ly.toFixed(1)}`;
+  return d;
 }
 
 function areaFor(points, baseY) {
@@ -166,13 +215,24 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
     return <p className="lvp-muted ts-chart-empty">{emptyText || "Not enough history yet."}</p>;
   }
 
+  // The LINE renders from a bounded, downsampled set (see downsample()
+  // above) — the range/stats below still read off the full-resolution
+  // `points`, so "High"/"Low" and the axis stay accurate even when the
+  // rendered line itself is bucketed down for legibility.
+  const renderPoints = downsample(points, MAX_RENDER_POINTS);
+
   // PnL always includes 0 (the meaningful breakeven reference); price
   // never forces it in — a sub-cent-precision chart of a token that never
   // goes near $0 shouldn't get padded down to a huge, mostly-empty range.
   const vMin = isPnl ? Math.min(0, ...points.map((p) => p.v)) : Math.min(...points.map((p) => p.v));
   const vMax = isPnl ? Math.max(0, ...points.map((p) => p.v)) : Math.max(...points.map((p) => p.v));
   const vPad = (vMax - vMin) * 0.12 || Math.max(Math.abs(vMax), 1) * 0.05;
-  const { ticks: yTicks, niceMin, niceMax } = niceTicks(vMin - vPad, vMax + vPad, 5);
+  // A price/value axis should never dip below $0 — a portfolio or asset
+  // can't be worth a negative amount, so unlike PnL (where a negative
+  // floor is the whole point) the padded-down floor gets clamped at zero
+  // instead of occasionally landing on an ugly, meaningless "-$5" tick.
+  const axisFloor = isPnl ? vMin - vPad : Math.max(0, vMin - vPad);
+  const { ticks: yTicks, niceMin, niceMax } = niceTicks(axisFloor, vMax + vPad, 5);
   const vLo = niceMin, vHi = niceMax;
   const tMin = points[0].ts, tMax = points[points.length - 1].ts;
   const tRange = tMax - tMin || 1;
@@ -186,8 +246,8 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   const last = points[points.length - 1].v;
   const isGain = isPnl ? last >= 0 : last >= first;
 
-  const mapped = points.map((p) => [sx(p.ts), sy(p.v)]);
-  const values = points.map((p) => p.v);
+  const mapped = renderPoints.map((p) => [sx(p.ts), sy(p.v)]);
+  const values = renderPoints.map((p) => p.v);
   const zeroY = sy(0);
   const baseY = isPnl ? zeroY : PAD.top + inner.h; // price fill anchors to the chart floor, not a meaningless "zero"
   const runs = isPnl ? splitAtZero(mapped, values, zeroY) : [{ sign: isGain ? 1 : -1, points: mapped }];
@@ -215,15 +275,15 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   const xTickIdxs = Array.from({ length: X_TICK_COUNT }, (_, i) => {
     const targetT = tMin + (i / (X_TICK_COUNT - 1)) * tRange;
     let best = 0, bestDiff = Infinity;
-    for (let j = 0; j < points.length; j++) {
-      const diff = Math.abs(points[j].ts - targetT);
+    for (let j = 0; j < renderPoints.length; j++) {
+      const diff = Math.abs(renderPoints[j].ts - targetT);
       if (diff < bestDiff) { bestDiff = diff; best = j; }
     }
     return best;
   }).filter((v, i, arr) => arr.indexOf(v) === i)
     .reduce((kept, idx) => {
-      const x = sx(points[idx].ts);
-      const lastX = kept.length ? sx(points[kept[kept.length - 1]].ts) : -Infinity;
+      const x = sx(renderPoints[idx].ts);
+      const lastX = kept.length ? sx(renderPoints[kept[kept.length - 1]].ts) : -Infinity;
       if (x - lastX >= MIN_TICK_GAP) kept.push(idx);
       return kept;
     }, []);
@@ -255,7 +315,7 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   };
 
   const clearHover = () => setHover(null);
-  const hoverPoint = hover ? points[hover.idx] : null;
+  const hoverPoint = hover ? renderPoints[hover.idx] : null;
   const colorFor = (v) => (isPnl ? (v >= 0 ? "var(--gain)" : "var(--loss)") : (isGain ? "var(--gain)" : "var(--loss)"));
 
   // Axis ticks only need as much precision as the step between them
@@ -342,7 +402,7 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
         {xTickIdxs.map((idx) => (
           <text key={idx} x={mapped[idx][0]} y={H - 8} textAnchor="middle"
             fontSize="10" fontFamily="IBM Plex Mono,monospace" fill="var(--moss)">
-            {xAxisLabel(points[idx].ts, period)}
+            {xAxisLabel(renderPoints[idx].ts, period)}
           </text>
         ))}
         {yTicks.map((v, i) => (
