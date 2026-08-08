@@ -509,7 +509,62 @@ app.get("/api/holdings/:address", async (req, res) => {
   }
 });
 
-/* ————— Claude: prompt → target allocations ————— */
+/* ————— Claude: prompt → structured JSON (shared by all 4 prompt parsers) ————— */
+/**
+ * Calls Claude with a system prompt that demands "ONLY a JSON object" and
+ * extracts/parses it. Two real failure modes confirmed in production, both
+ * silently un-retried before this helper existed (a user hit "Claude
+ * returned no JSON" on a perfectly ordinary prompt — "Sell my apple, buy
+ * BTC" — then had it succeed on a manual retry moments later, with nothing
+ * in the server logs beyond the request line since neither failure path
+ * logged anything):
+ *   1. Anthropic's API itself is rate-limited/overloaded — data.error is
+ *      set with a retryable type. Same "don't make the user manually
+ *      retry a transient upstream hiccup" fix already applied to Jupiter
+ *      calls (see jupFetch) — one retry with a short backoff.
+ *   2. Claude's response text just doesn't contain a JSON object despite
+ *      the system prompt's instruction (a genuine, if rare, model
+ *      compliance miss) — one retry (a fresh sample often just works),
+ *      and the raw text is logged either way so a persistent failure is
+ *      actually debuggable next time instead of a bare error string.
+ */
+async function callClaudeForJson({ system, prompt, maxTokens, label }) {
+  const MAX_ATTEMPTS = 2;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    const data = await r.json();
+    if (data.error) {
+      const retryable = data.error.type === "rate_limit_error" || data.error.type === "overloaded_error";
+      if (retryable && attempt < MAX_ATTEMPTS) {
+        console.warn(`[${label}] Claude API ${data.error.type}, retrying (attempt ${attempt}/${MAX_ATTEMPTS})…`);
+        await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+        continue;
+      }
+      throw new Error(data.error.message);
+    }
+    const raw_text = (data.content || [])
+      .filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    console.error(`[${label}] Claude returned no JSON (attempt ${attempt}/${MAX_ATTEMPTS}), raw text:`, raw_text.slice(0, 500));
+    if (attempt < MAX_ATTEMPTS) continue;
+    throw new Error("Claude returned no JSON");
+  }
+}
+
 /**
  * Prompt → target allocations, extracted from the /api/parse handler so the
  * Telegram bot can reuse the exact same parsing logic (including the
@@ -565,27 +620,7 @@ Rules:
 - If something requested isn't available, leave it out and say so in "summary".
 - MINIMUM TRADE SIZE: Each individual allocation change must be at least $0.25 in dollar terms. Portfolio total is ~$${total ? Number(total).toFixed(2) : "unknown"}. The minimum meaningful weight change is ${minPct}%. If the user requests a smaller shift, round up to at least ${minPct}% so the trade can actually execute. Mention the rounding in your summary.${currentBlock}`;
 
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        system,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    const data = await r.json();
-    if (data.error) throw new Error(data.error.message);
-    const raw_text = (data.content || [])
-      .filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Claude returned no JSON");
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = await callClaudeForJson({ system, prompt, maxTokens: 1000, label: "parse" });
     const raw = parsed.allocations || [];
     // Filter to known, non-USDC symbols
     const allocations = raw.filter((a) => bySymbol[a.symbol] && a.symbol !== "USDC");
@@ -652,27 +687,7 @@ Rules:
 - If leverage isn't mentioned, "leverage" must be null — do not default to 1x or any other number.
 - If no asset is identifiable, "asset" must be null.`;
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 300,
-      system,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message);
-  const raw_text = (data.content || [])
-    .filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude returned no JSON");
-  const parsed = JSON.parse(jsonMatch[0]);
+  const parsed = await callClaudeForJson({ system, prompt, maxTokens: 300, label: "parse-perp" });
 
   const action = parsed.action === "close" ? "close" : "open";
   if (!parsed.asset) throw new Error("Couldn't identify which asset you mean — try naming it directly, e.g. \"SOL\".");
@@ -751,27 +766,7 @@ Rules:
 - Only fill in the size fields relevant to the chosen action — leave the rest "unspecified"/null.
 - "Pay back my loan and withdraw my TSLA" → action "repay_and_withdraw", asset "TSLA", repaySizeType "all", withdrawSizeType "all".`;
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 300,
-      system,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message);
-  const raw_text = (data.content || [])
-    .filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude returned no JSON");
-  const parsed = JSON.parse(jsonMatch[0]);
+  const parsed = await callClaudeForJson({ system, prompt, maxTokens: 300, label: "parse-borrow" });
 
   const validActions = ["deposit", "borrow", "deposit_and_borrow", "repay", "withdraw", "repay_and_withdraw"];
   const action = validActions.includes(parsed.action) ? parsed.action : null;
@@ -941,27 +936,7 @@ Rules:
 - Trigger thresholdValue: NEVER invent one — only extract a level/percent the user actually stated.
 - Never list the same symbol twice in DCA "plans".`;
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 500,
-      system,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message);
-  const raw_text = (data.content || [])
-    .filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude returned no JSON");
-  const parsed = JSON.parse(jsonMatch[0]);
+  const parsed = await callClaudeForJson({ system, prompt, maxTokens: 500, label: "parse-strategy" });
 
   if (!parsed.supported) {
     throw new Error(parsed.reason || "Couldn't understand that as a strategy — try something like \"buy $50 of bitcoin every week\" or \"TWAP $5,000 into AAPL over 3 hours\".");
