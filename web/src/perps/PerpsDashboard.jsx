@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { usePortfolioStats, useAssetCandles } from "./useHyperliquid.js";
-import { PositionRow } from "./PerpsPanel.jsx";
 import TimeSeriesChart, { priceLabel } from "../components/TimeSeriesChart.jsx";
 
 const PERIODS = [
@@ -27,13 +26,66 @@ const PERIOD_LOOKBACK_MS = {
   perpAllTime: Infinity,
 };
 
-export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions, asset }) {
+// The Trade tab's chart column — deliberately just the selected market's
+// own price, nothing else. It used to share space with account PnL/stats/
+// history (see PerpsPerformancePanel below), but that made the one thing
+// you actually want while sizing an order — "what is this market doing
+// right now" — compete for room with account-level info that has nothing
+// to do with the trade in front of you.
+export function AssetPriceChart({ hl, asset }) {
   const [period, setPeriod] = useState("perpDay");
-  const [metric, setMetric] = useState("unrealized"); // "unrealized" | "realized" | "asset"
-  const [view, setView] = useState("positions"); // "positions" | "history"
+  const { points: candlePoints, loading: candlesLoading } = useAssetCandles(hl, asset?.name, period);
+
+  const assetPoints = candlePoints.map((p) => ({ ts: p.ts, v: p.price }));
+  const assetLast = assetPoints.length ? assetPoints[assetPoints.length - 1].v : null;
+  const assetFirst = assetPoints.length ? assetPoints[0].v : null;
+  const assetPctChange = assetFirst ? ((assetLast - assetFirst) / assetFirst) * 100 : null;
+
+  return (
+    <div className="lvp-card lvp-pnl-card-full lvp-chart-card-lg">
+      <div className="lvp-pnl-header-row">
+        <div>
+          <p className="lvp-muted" style={{ marginBottom: 2 }}>
+            {asset ? `${asset.displayName} Price` : "Select a market"}
+          </p>
+          {assetLast != null ? (
+            <p className="lvp-pnl-focal">
+              {priceLabel(assetLast)}
+              {assetPctChange != null && (
+                <span className={`lvp-pnl-focal-chip mono ${assetPctChange >= 0 ? "gain" : "loss"}`}>
+                  {assetPctChange >= 0 ? "+" : ""}{assetPctChange.toFixed(2)}%
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="lvp-pnl-focal lvp-muted" style={{ fontSize: 28 }}>—</p>
+          )}
+        </div>
+        <div className="lvp-pnl-periods">
+          {PERIODS.map((p) => (
+            <button key={p.key} className={`lvp-pct-btn ${period === p.key ? "sel" : ""}`} onClick={() => setPeriod(p.key)}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <TimeSeriesChart key={`a-${period}-${asset?.name}`} points={assetPoints} period={period} loading={candlesLoading} mode="price"
+        emptyText={asset ? "No price history available for this asset." : "Select an asset from the Market list to see its chart."} />
+    </div>
+  );
+}
+
+// The Positions tab's right-hand column — account-level Unrealized/Realized
+// P&L (moved here from the Trade tab, where it used to compete with the
+// asset price chart for space), the account stat tiles, and trade history.
+// No "Open Positions" list of its own — that would just duplicate the real
+// PositionsPanel table this sits beside.
+export function PerpsPerformancePanel({ hl, user, positions }) {
+  const [period, setPeriod] = useState("perpDay");
+  const [metric, setMetric] = useState("unrealized"); // "unrealized" | "realized"
   const [search, setSearch] = useState("");
   const { pnlHistory, fills, volume, stats } = usePortfolioStats(hl, user);
-  const { points: candlePoints, loading: candlesLoading } = useAssetCandles(hl, asset?.name, period);
 
   const unrealizedPnl = useMemo(
     () => (positions || []).reduce((sum, p) => sum + (p.unrealizedPnl || 0), 0),
@@ -47,7 +99,7 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
 
   // Realized P&L has no ready-made per-period series from Hyperliquid the
   // way unrealized does — built here instead from the same fills already
-  // being fetched for the trade-history tab below, scoped to the selected
+  // being fetched for the trade-history list below, scoped to the selected
   // period and cumulatively summed so it resets to 0 at the start of the
   // window, same convention as the unrealized chart's own period scoping.
   const realizedPoints = useMemo(() => {
@@ -60,11 +112,6 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
     return scoped.map((f) => { running += f.closedPnl; return { ts: f.time, v: running }; });
   }, [fills, period]);
   const realizedTotal = realizedPoints.length ? realizedPoints[realizedPoints.length - 1].v : 0;
-
-  const assetPoints = candlePoints.map((p) => ({ ts: p.ts, v: p.price }));
-  const assetLast = assetPoints.length ? assetPoints[assetPoints.length - 1].v : null;
-  const assetFirst = assetPoints.length ? assetPoints[0].v : null;
-  const assetPctChange = assetFirst ? ((assetLast - assetFirst) / assetFirst) * 100 : null;
 
   const isRealizedGain = stats.realizedPnl >= 0;
   const statTiles = [
@@ -87,50 +134,24 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
   const HISTORY_LIMIT = 100;
   const shownFills = filteredFills.slice(0, HISTORY_LIMIT);
 
-  const METRICS = [
-    { key: "unrealized", label: "Unrealized" },
-    { key: "realized", label: "Realized" },
-    { key: "asset", label: asset?.displayName || "Asset", disabled: !asset },
-  ];
-
   return (
     <div className="lvp-dashboard">
-      <div className="lvp-card lvp-pnl-card-full">
+      <div className="lvp-card lvp-pnl-card-full lvp-chart-card-lg">
         <div className="lvp-pnl-header-row">
-          {metric === "asset" ? (
-            <div>
-              <p className="lvp-muted" style={{ marginBottom: 2 }}>
-                {asset ? `${asset.displayName} Price` : "Select an asset"}
-              </p>
-              {assetLast != null ? (
-                <p className="lvp-pnl-focal">
-                  {priceLabel(assetLast)}
-                  {assetPctChange != null && (
-                    <span className={`lvp-pnl-focal-chip mono ${assetPctChange >= 0 ? "gain" : "loss"}`}>
-                      {assetPctChange >= 0 ? "+" : ""}{assetPctChange.toFixed(2)}%
-                    </span>
-                  )}
+          <div>
+            <p className="lvp-muted" style={{ marginBottom: 2 }}>
+              {metric === "unrealized" ? "Unrealized P&L" : "Realized P&L"}
+            </p>
+            {(() => {
+              const v = metric === "unrealized" ? unrealizedPnl : realizedTotal;
+              const g = v >= 0;
+              return (
+                <p className={`lvp-pnl-focal ${g ? "gain" : "loss"}`}>
+                  {g ? "+" : "−"}${Math.abs(v).toFixed(2)}
                 </p>
-              ) : (
-                <p className="lvp-pnl-focal lvp-muted" style={{ fontSize: 28 }}>—</p>
-              )}
-            </div>
-          ) : (
-            <div>
-              <p className="lvp-muted" style={{ marginBottom: 2 }}>
-                {metric === "unrealized" ? "Unrealized P&L" : "Realized P&L"}
-              </p>
-              {(() => {
-                const v = metric === "unrealized" ? unrealizedPnl : realizedTotal;
-                const g = v >= 0;
-                return (
-                  <p className={`lvp-pnl-focal ${g ? "gain" : "loss"}`}>
-                    {g ? "+" : "−"}${Math.abs(v).toFixed(2)}
-                  </p>
-                );
-              })()}
-            </div>
-          )}
+              );
+            })()}
+          </div>
           <div className="lvp-pnl-periods">
             {PERIODS.map((p) => (
               <button key={p.key} className={`lvp-pct-btn ${period === p.key ? "sel" : ""}`} onClick={() => setPeriod(p.key)}>
@@ -141,12 +162,12 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
         </div>
 
         <div className="lvp-metric-tabs">
-          {METRICS.map((m) => (
-            <button key={m.key} className={`lvp-metric-tab ${metric === m.key ? "sel" : ""}`}
-              disabled={m.disabled} onClick={() => setMetric(m.key)}>
-              {m.label}
-            </button>
-          ))}
+          <button className={`lvp-metric-tab ${metric === "unrealized" ? "sel" : ""}`} onClick={() => setMetric("unrealized")}>
+            Unrealized
+          </button>
+          <button className={`lvp-metric-tab ${metric === "realized" ? "sel" : ""}`} onClick={() => setMetric("realized")}>
+            Realized
+          </button>
         </div>
 
         {metric === "unrealized" && (
@@ -156,10 +177,6 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
         {metric === "realized" && (
           <TimeSeriesChart key={`r-${period}`} points={realizedPoints} period={period} loading={historyLoading} mode="pnl"
             emptyText="No closed trades in this period yet." />
-        )}
-        {metric === "asset" && (
-          <TimeSeriesChart key={`a-${period}-${asset?.name}`} points={assetPoints} period={period} loading={candlesLoading} mode="price"
-            emptyText={asset ? "No price history available for this asset." : "Select an asset from the Trade tab to see its chart."} />
         )}
       </div>
 
@@ -174,56 +191,40 @@ export default function PerpsDashboard({ hl, cfg, user, tradingWallet, positions
 
       <div className="lvp-card lvp-posthist-card">
         <div className="lvp-pnl-header-row">
-          <h3 style={{ margin: 0 }}>{view === "positions" ? "Open Positions" : "Trade History"}</h3>
-          <div className="lvp-view-toggle">
-            <button className={`lvp-pct-btn ${view === "positions" ? "sel" : ""}`} onClick={() => setView("positions")}>Positions</button>
-            <button className={`lvp-pct-btn ${view === "history" ? "sel" : ""}`} onClick={() => setView("history")}>History</button>
-          </div>
+          <h3 style={{ margin: 0 }}>Trade History</h3>
         </div>
-
-        {view === "positions" && (
-          <div style={{ marginTop: 14 }}>
-            {(positions || []).length === 0 && <p className="lvp-muted">No open positions.</p>}
-            {(positions || []).map((p) => (
-              <PositionRow key={p.coin} p={p} hl={hl} cfg={cfg} user={user} tradingWallet={tradingWallet} onClosed={() => {}} />
-            ))}
-          </div>
-        )}
-
-        {view === "history" && (
-          <div style={{ marginTop: 14 }}>
-            <input
-              className="perps-asset-search"
-              placeholder="Search by asset or side…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {shownFills.length === 0 && <p className="lvp-muted" style={{ marginTop: 8 }}>No trades found.</p>}
-            {shownFills.map((f, i) => (
-              <div key={i} className="lvp-fill-row">
-                <div className="lvp-row">
-                  <span>
-                    <strong>{f.coin}</strong>{" "}
-                    <span className={`trade-chip ${f.isBuy ? "buy" : "sell"} lvp-fill-chip`}>{f.dir}</span>
+        <div style={{ marginTop: 14 }}>
+          <input
+            className="perps-asset-search"
+            placeholder="Search by asset or side…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {shownFills.length === 0 && <p className="lvp-muted" style={{ marginTop: 8 }}>No trades found.</p>}
+          {shownFills.map((f, i) => (
+            <div key={i} className="lvp-fill-row">
+              <div className="lvp-row">
+                <span>
+                  <strong>{f.coin}</strong>{" "}
+                  <span className={`trade-chip ${f.isBuy ? "buy" : "sell"} lvp-fill-chip`}>{f.dir}</span>
+                </span>
+                {f.closedPnl !== 0 && (
+                  <span className={f.closedPnl >= 0 ? "lvp-pnl-up" : "lvp-pnl-down"}>
+                    {f.closedPnl >= 0 ? "+" : ""}{f.closedPnl.toFixed(2)} Cash
                   </span>
-                  {f.closedPnl !== 0 && (
-                    <span className={f.closedPnl >= 0 ? "lvp-pnl-up" : "lvp-pnl-down"}>
-                      {f.closedPnl >= 0 ? "+" : ""}{f.closedPnl.toFixed(2)} Cash
-                    </span>
-                  )}
-                </div>
-                <p className="lvp-muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
-                  {f.size} @ ${f.price.toLocaleString(undefined, { maximumFractionDigits: 2 })} · {timeAgo(f.time)}
-                </p>
+                )}
               </div>
-            ))}
-            {filteredFills.length > HISTORY_LIMIT && (
-              <p className="lvp-fine" style={{ marginTop: 10 }}>
-                Showing most recent {HISTORY_LIMIT} of {filteredFills.length} matching trades.
+              <p className="lvp-muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                {f.size} @ ${f.price.toLocaleString(undefined, { maximumFractionDigits: 2 })} · {timeAgo(f.time)}
               </p>
-            )}
-          </div>
-        )}
+            </div>
+          ))}
+          {filteredFills.length > HISTORY_LIMIT && (
+            <p className="lvp-fine" style={{ marginTop: 10 }}>
+              Showing most recent {HISTORY_LIMIT} of {filteredFills.length} matching trades.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

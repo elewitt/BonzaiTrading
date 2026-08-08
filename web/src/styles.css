@@ -1608,8 +1608,6 @@ a.trow { color: inherit; text-decoration: none; }
 .perps-asset-row.active { background: rgba(26,68,51,.08); }
 .perps-asset-name { font-size: 13px; font-weight: 500; }
 .perps-asset-price { font-size: 12px; color: var(--moss); }
-.perps-asset-link { color: inherit; text-decoration: none; }
-.perps-asset-link:hover { text-decoration: underline; color: var(--pine); }
 /* Markets explorer (components/MarketsExplorer.jsx) — the "Spot" /
    "Crypto Perp" / "Equity Perp" tag on each search row, distinguishing
    which of the two underlying data sources (registry vs Hyperliquid) a
@@ -1792,12 +1790,36 @@ a.trow { color: inherit; text-decoration: none; }
 }
 
 /* ——— Account layout ——— */
-/* 1040px, not the original 780px — the Open Positions table's 8 columns
-   (through the Liq. price column, plus the Add/Close action buttons) need
-   more room than that to lay out without the sticky action column
-   overlapping the Unrealized PnL/Leverage columns it briefly did after a
-   narrower fix, confirmed on a real 5x SOL position. */
-.perps-account-layout { padding: 24px 28px; max-width: 1040px; }
+/* Wide enough for the Open Positions table AND the performance panel
+   (P&L chart, stat tiles, trade history) side by side, each with real
+   room — 1040px was sized for the table alone, before it gained a
+   neighboring column. */
+.perps-account-layout { padding: 24px 28px; max-width: 1900px; }
+/* The performance panel gets priority (1.5fr vs 1fr) since a price/PnL
+   chart reads better with real width — TimeSeriesChart's fixed aspect
+   ratio means a wider column is a taller, more legible chart, not just a
+   stretched one. Positions keeps a 520px floor (its own table already
+   scrolls horizontally within its card past that, same safety net
+   .positions-table-wrap uses elsewhere) so it never gets crushed — the
+   generous 1900px overall width means that floor is rarely the binding
+   constraint in practice, both columns land closer to ~800-1000px on a
+   normal desktop viewport. */
+.perps-positions-grid {
+  display: grid;
+  grid-template-columns: minmax(520px, 1fr) minmax(560px, 1.5fr);
+  gap: 28px;
+  align-items: start;
+}
+/* Without this, unshrinkable content in either column (the positions
+   table's card-toprow, the stat tiles row) forces its own grid track past
+   its fr-computed share to fit its min-content size, blowing the whole
+   grid — and this max-width layout — out past 1560px. Same fix .dash-main
+   already needed for the exact same reason in the main dashboard's 2-col
+   grid. */
+.perps-positions-grid > * { min-width: 0; }
+@media (max-width: 1150px) {
+  .perps-positions-grid { grid-template-columns: 1fr; }
+}
 
 /* ——— LVP (Longview Perps) component styles ——— */
 .lvp-card {
@@ -1874,13 +1896,8 @@ a.trow { color: inherit; text-decoration: none; }
 .lvp-order-msg { margin-top: 10px; }
 
 .lvp-row { display: flex; justify-content: space-between; align-items: flex-start; }
-.lvp-pos {
-  border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 6px;
-}
-.lvp-pos:first-of-type { border-top: none; }
 .lvp-pnl-up   { color: var(--gain); font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
 .lvp-pnl-down { color: var(--loss); font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
-.lvp-warnrow  { display: flex; align-items: flex-start; gap: 10px; margin-top: 4px; }
 .lvp-badge {
   flex-shrink: 0; border-radius: 6px; padding: 3px 8px; font-size: 11px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .06em;
@@ -1930,6 +1947,11 @@ a.trow { color: inherit; text-decoration: none; }
 .lvp-dashboard { display: flex; flex-direction: column; gap: 16px; }
 
 .lvp-pnl-card-full { text-align: left; }
+/* Slightly more generous padding than the default .lvp-card — used on the
+   two "this chart is the main event" cards (Trade tab's asset price,
+   Positions tab's account P&L), which both get real column width and
+   deserve to feel a step more premium than a compact ticket/stat card. */
+.lvp-chart-card-lg { padding: 26px 28px; }
 .lvp-pnl-header-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 .lvp-pnl-focal {
   font-family: 'Young Serif', Georgia, serif; font-weight: 400;
@@ -2078,13 +2100,11 @@ a.trow { color: inherit; text-decoration: none; }
 .lvp-stat-value.loss { color: var(--loss); }
 
 .lvp-posthist-card .perps-asset-search { margin-bottom: 4px; }
-.lvp-view-toggle { display: flex; gap: 6px; flex-shrink: 0; }
 .lvp-fill-row { padding: 10px 0; border-top: 1px solid var(--line); }
 .lvp-fill-row:first-of-type { border-top: none; padding-top: 0; }
 .lvp-fill-chip { padding: 1px 9px; font-size: 11px; margin-left: 2px; }
 
-/* ——— Position close button — inline on the header row, next to PnL ——— */
-.lvp-pos-headright { display: flex; align-items: center; gap: 12px; }
+/* ——— Position close button ——— */
 .lvp-close-btn {
   border: 1px solid var(--line); background: none; border-radius: 8px;
   padding: 4px 12px; font-family: inherit; font-size: 12px; font-weight: 500;

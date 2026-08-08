@@ -4,7 +4,6 @@ import { useSignTransaction, useSignMessage as useSolanaSignMessage } from "@pri
 import { VersionedTransaction, Transaction, Connection, PublicKey } from "@solana/web3.js";
 
 import { DEFAULT_CONFIG, EQUITY_DEX, EQUITY_DEX_LABEL } from "./config.js";
-import { COINGECKO_SLUGS } from "./coingeckoSlugs.js";
 import { API_BASE } from "../lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials } from "../lib/qaBypass.js";
 import { evaluateGate, fetchIpCountry } from "./compliance/geoGate.js";
@@ -17,7 +16,7 @@ import { useLongviewHl, useAssets, usePositions, useMoveDexFunds } from "./useHy
 import { DepositWizard } from "./DepositWizard.jsx";
 import { WithdrawWizard } from "./WithdrawWizard.jsx";
 import { OrderTicket, PositionsPanel, MoveFundsCard } from "./PerpsPanel.jsx";
-import PerpsDashboard from "./PerpsDashboard.jsx";
+import { AssetPriceChart, PerpsPerformancePanel } from "./PerpsDashboard.jsx";
 
 const RESTRICTED_REASON_COPY = {
   restricted_country: "Bonzai Trading Perps is not available in your country.",
@@ -28,24 +27,6 @@ const RESTRICTED_REASON_COPY = {
 };
 
 const SOL_RPC = import.meta.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
-
-// Equity asset displayNames are already the bare underlying ticker (the
-// "xyz:" dex prefix stripped in useHyperliquid.js's useAssets) — Yahoo
-// Finance quote pages are addressable directly by ticker, no lookup needed.
-function yahooFinanceUrl(ticker) {
-  return `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`;
-}
-
-// Direct coin-page link where we have a verified slug (COINGECKO_SLUGS —
-// see that file for how it was generated and two real ticker-collision
-// bugs caught along the way). Falls back to CoinGecko's search page for
-// anything not in the map, rather than guessing a slug — a search results
-// page is never wrong, a bad direct link is.
-function coingeckoUrl(ticker) {
-  const slug = COINGECKO_SLUGS[ticker];
-  if (slug) return `https://www.coingecko.com/en/coins/${slug}`;
-  return `https://www.coingecko.com/en/search?query=${encodeURIComponent(ticker)}`;
-}
 
 export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 0, onBack }) {
   const [geoState, setGeoState] = useState("checking");
@@ -182,6 +163,14 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // Withdrawing (and funding the equities dex) is always FROM the crypto
   // dex regardless of which category is selected.
   const cryptoWithdrawable = cryptoAccount.withdrawable;
+  // The Positions tab shows BOTH dexs at once (unlike the Trade tab's
+  // ticket, which only ever trades one category at a time) — same merge
+  // PositionsPanel does internally for its own table, needed again here so
+  // the performance panel's "Open Positions" count/unrealized total match
+  // exactly what the table beside it shows.
+  const allPositions = useMemo(() => [
+    ...cryptoAccount.positions, ...equityAccount.positions,
+  ], [cryptoAccount.positions, equityAccount.positions]);
   const moveDexFunds = useMoveDexFunds(hl, evmAddress, viemAccount);
 
   // Shared by both the deposit orchestrator (approve/transfer into HL) and
@@ -526,11 +515,9 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
                   role="button" tabIndex={0}
                   onClick={() => setSelectedAsset(a)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedAsset(a); }}>
-                  <a className="perps-asset-name mono perps-asset-link"
-                    href={a.category === "equity" ? yahooFinanceUrl(a.displayName) : coingeckoUrl(a.displayName)}
-                    target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                  <span className="perps-asset-name mono">
                     {a.displayName}
-                  </a>
+                  </span>
                   <span className="perps-asset-price">
                     {markPrices[a.name] ? `$${Number(markPrices[a.name]).toLocaleString()}` : "—"}
                   </span>
@@ -544,11 +531,9 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
             {asset ? (
               <>
                 <div className="perps-market-header">
-                  <a className="serif perps-asset-link perps-market-name"
-                    href={asset.category === "equity" ? yahooFinanceUrl(asset.displayName) : coingeckoUrl(asset.displayName)}
-                    target="_blank" rel="noopener noreferrer">
+                  <span className="serif perps-market-name">
                     {asset.displayName}-PERP
-                  </a>
+                  </span>
                   <span className="lvp-muted tiny">{asset.maxLeverage}x max</span>
                   {markPrice > 0 && (
                     <span className="mono perps-market-price">
@@ -573,7 +558,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
           </div>
 
           <div style={ticketHeight ? { maxHeight: ticketHeight, overflowY: "auto" } : undefined}>
-            <PerpsDashboard hl={hl} cfg={DEFAULT_CONFIG} user={evmAddress} tradingWallet={viemAccount} positions={positions} asset={asset} />
+            <AssetPriceChart hl={hl} asset={asset} />
           </div>
         </div>
       )}
@@ -655,10 +640,13 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
 
       {tab === "account" && (
         <div className="perps-account-layout">
-          <PositionsPanel hl={hl} user={evmAddress}
-            tradingWallet={viemAccount}
-            onPositionClosed={() => {}}
-            onAddToPosition={handleAddToPosition} />
+          <div className="perps-positions-grid">
+            <PositionsPanel hl={hl} user={evmAddress}
+              tradingWallet={viemAccount}
+              onPositionClosed={() => {}}
+              onAddToPosition={handleAddToPosition} />
+            <PerpsPerformancePanel hl={hl} user={evmAddress} positions={allPositions} />
+          </div>
         </div>
       )}
     </div>
