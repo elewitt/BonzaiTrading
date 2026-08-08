@@ -2491,41 +2491,60 @@ a.trow { color: inherit; text-decoration: none; }
    the active tab turns white to visually fuse with the card below it,
    the same "which tab is open" cue a browser tab bar uses. */
 .lp-flow-section { padding: 100px 0; background: var(--pine); }
-/* Wider than the page's normal 1080px container — this card is meant to
-   feel like the section's one big centerpiece, not just another content
-   block the same width as everything above it. */
+/* Wider than the page's normal 1080px container — this section is meant to
+   feel like a real centerpiece, not just another content block the same
+   width as everything above it. */
 .lp-flow-section .lp-container { max-width: 1240px; }
-.lp-flow-nav {
-  display: flex; gap: 3px;
-  margin: 40px 0 0; position: relative; z-index: 2;
+/* Light-on-dark eyebrow — the default .eyebrow is pine-on-paper, invisible
+   against this section's solid pine background. */
+.lp-flow-eyebrow { color: #9AC4A8 !important; }
+
+/* Configure → Watch → Confirm → Execute — the real 4-step flow from the
+   in-app Trading Agent page (TradingAgentApp.jsx's own HowItWorks), redrawn
+   light-on-dark for this section rather than sharing CSS with that light-
+   background original. */
+.lp-agent-steps {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: 48px 0 0; overflow-x: auto; padding-bottom: 2px;
 }
-.lp-flow-tab {
-  flex: 1; border: none; cursor: pointer; background-size: cover;
-  padding: 22px 12px; font-family: inherit; font-size: 19px; font-weight: 600;
-  color: #fff; border-radius: 16px 16px 0 0; opacity: .82;
-  transition: opacity .15s, background-color .15s;
+.lp-agent-step {
+  flex: 1; min-width: 130px; display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 10px; padding: 8px 6px;
 }
-.lp-flow-tab:hover { opacity: 1; }
-.lp-flow-tab.active {
-  background-image: none !important; background-color: #fff;
-  color: var(--ink); opacity: 1;
+.lp-agent-step-icon {
+  width: 52px; height: 52px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.1); color: #fff;
+  border: 1px solid rgba(255,255,255,.16);
+}
+.lp-agent-step-icon svg { width: 22px; height: 22px; }
+.lp-agent-step-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lp-agent-step-label { margin: 0; font-size: 15px; font-weight: 600; color: #fff; }
+.lp-agent-step-sub { margin: 0; font-size: 12.5px; color: rgba(255,255,255,.55); }
+.lp-agent-step-arrow { color: rgba(255,255,255,.3); flex-shrink: 0; margin-top: 26px; }
+@media (max-width: 700px) {
+  .lp-agent-steps { flex-direction: column; align-items: stretch; gap: 2px; overflow-x: visible; }
+  .lp-agent-step { flex-direction: row; text-align: left; min-width: 0; }
+  .lp-agent-step-arrow { display: none; }
 }
 
-/* The one white content card — everything from here down (title, body,
-   points, partner chips) sits inside it, dark-on-white, same as the
-   Products section's own text treatment above. */
-.lp-flow-card {
-  background: #fff; border-radius: 22px; padding: 56px;
-  box-shadow: 0 10px 32px rgba(10,24,18,.28);
-  animation: lp-flow-in .35s ease;
+/* Strategy-type cards — same light .lp-flow-chip treatment the old partner-
+   logo row used, reused as-is (FlowChip component), just laid out as a
+   2-column grid instead of a single stacked column. */
+.lp-agent-strategy-grid {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin: 48px 0 0;
 }
-@keyframes lp-flow-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-.lp-flow-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
-.lp-flow-text { display: flex; flex-direction: column; gap: 18px; }
-.lp-flow-card .lp-product-title { font-size: 30px; }
-.lp-flow-card .lp-product-body { font-size: 17px; }
-.lp-flow-card .lp-product-points li { font-size: 16px; }
+@media (max-width: 700px) {
+  .lp-agent-strategy-grid { grid-template-columns: 1fr; }
+}
+/* min-width: 0 on the grid item — without it, unshrinkable blurb text
+   forces the card past its column's fr-computed share, blowing out the
+   whole grid (and everything sharing its container) past the viewport on
+   narrow screens. Same fix the Perps positions/chart grid needed earlier. */
 .lp-flow-chips { display: grid; gap: 12px; }
+.lp-flow-chips > * { min-width: 0; }
 .lp-flow-chip {
   background: var(--paper); border-radius: 14px;
   padding: 16px 18px; display: flex; align-items: center; gap: 14px;
@@ -2538,13 +2557,14 @@ a.trow { color: inherit; text-decoration: none; }
   font-family: 'Young Serif', Georgia, serif; font-size: 18px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
 }
+/* Multi-character badge overrides (e.g. "DCA", "TWAP") — smaller and
+   letter-spaced tighter than the single-letter default so 3-4 characters
+   still fit the same 42px badge without visually overflowing it. */
+.lp-flow-chip-badge-wide { font-size: 11px; font-family: inherit; font-weight: 700; letter-spacing: -.02em; }
 .lp-flow-chip-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .lp-flow-chip-name { font-size: 18px; color: var(--ink); line-height: 1.2; }
 .lp-flow-chip-blurb { font-size: 12.5px; line-height: 1.4; }
 .lp-flow-chip-caps { text-transform: uppercase; letter-spacing: .08em; font-weight: 500; }
-.lp-flow-arrows { display: flex; justify-content: space-between; margin-top: 28px; }
-.lp-flow-arrow-btn.btn.ghost { border-color: rgba(255,255,255,.35); color: #fff; }
-.lp-flow-arrow-btn.btn.ghost:hover:not(:disabled) { border-color: #fff; background: rgba(255,255,255,.1); }
 
 /* ── Infrastructure trust marks ── */
 .lp-infra-section {
@@ -2616,7 +2636,6 @@ a.trow { color: inherit; text-decoration: none; }
 @media (max-width: 900px) {
   .lp-tab-panel { grid-template-columns: 1fr; gap: 32px; }
   .lp-tab-picture { order: -1; }
-  .lp-flow-panel { grid-template-columns: 1fr; gap: 32px; }
 }
 @media (max-width: 600px) {
   .lp-hero { padding: 36px 0 60px; }
@@ -2627,13 +2646,6 @@ a.trow { color: inherit; text-decoration: none; }
   .lp-tab-row { gap: 8px; }
   .lp-tab-btn { padding: 9px 16px; font-size: 13px; }
   .lp-flow-section { padding: 70px 0; }
-  .lp-flow-nav { gap: 2px; }
-  .lp-flow-tab { padding: 14px 4px; font-size: 12px; border-radius: 12px 12px 0 0; }
-  .lp-flow-card { padding: 30px 22px; border-radius: 4px 4px 22px 22px; }
-  .lp-flow-card .lp-product-title { font-size: 24px; }
-  .lp-flow-card .lp-product-body { font-size: 15px; }
-  .lp-flow-card .lp-product-points li { font-size: 14px; }
-  .lp-flow-arrows { flex-direction: column-reverse; gap: 10px; }
 }
 
 /* ——— Borrow (Kamino xStocks Market) ——— */

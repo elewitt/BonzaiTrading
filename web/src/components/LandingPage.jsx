@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import DemoAnimation from "./DemoAnimation.jsx";
 
 // Order matches DemoAnimation's own SCENES array exactly — the headline
@@ -257,86 +257,67 @@ const PRODUCT_TABS = [
   },
 ];
 
-/* ─── How Bonzai Trading Works (step flow) ───
-   Distinct from the Products tabs above (what you can do) — this walks
-   through the stack underneath it (what's actually moving your funds),
-   one layer at a time: the wallet, the assets, the protocols executing
-   trades, and the chain everything settles on. */
-// Inactive nav tabs use these — one cohesive green family (matching the
-// section's own dark-green field) rather than a different hue per step —
-// the active tab turns solid white instead (see .lp-flow-tab.active) so it
-// visually fuses with the card below it.
-const STEP_GRADIENTS = {
-  wallet: "linear-gradient(135deg, #2F6B50, #163427)",
-  assets: "linear-gradient(135deg, #4C8A69, #1F4E39)",
-  defi: "linear-gradient(135deg, #6FA98A, #2C6449)",
-  network: "linear-gradient(135deg, #9AC4A8, #3D7A5C)",
+/* ─── Agentic Trading (step flow + strategy showcase) ───
+   Highlights the Trading Agent product — the real 4-step flow (configure,
+   watch, confirm, execute) is the same one shown on the in-app Trading
+   Agent page itself, redrawn for this dark section rather than shared
+   verbatim, since that page's own CSS assumes a light background. */
+const AGENT_STEPS = [
+  { icon: "configure", label: "Set a strategy", sub: "Describe it in plain English" },
+  { icon: "watch", label: "Agent watches", sub: "Checks the market on a schedule" },
+  { icon: "confirm", label: "You confirm", sub: "Review every proposal yourself" },
+  { icon: "execute", label: "Trade executes", sub: "Signed by your own wallet, never ours" },
+];
+
+const AGENT_STEP_ICONS = {
+  configure: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
+      <line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none" />
+      <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  watch: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  confirm: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12.4l2.6 2.6L16 9.4" />
+    </svg>
+  ),
+  execute: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="7" y1="17" x2="17" y2="7" />
+      <polyline points="7 7 17 7 17 17" />
+    </svg>
+  ),
 };
 
-const HOW_IT_WORKS = [
-  {
-    key: "wallet",
-    label: "Wallet",
-    title: "One wallet, fully yours",
-    body: "Sign in with just an email — Privy creates a self-custodial embedded wallet behind the scenes, spanning Solana and Arbitrum. Bonzai Trading never holds your keys or your funds; every trade, deposit, and withdrawal is signed by a wallet only you control.",
-    points: [
-      "No seed phrases, no browser extension — just email",
-      "Self-custodial by default — we never hold your keys or funds",
-      "One wallet covers Solana and Arbitrum automatically",
-    ],
-    chips: [
-      { name: "Privy", blurb: "Embedded, self-custodial wallet infrastructure" },
-    ],
-  },
-  {
-    key: "assets",
-    label: "Assets",
-    title: "Real assets, tokenized 1:1",
-    body: "Every position you hold is backed by the real thing — tokenized equities, regulated stablecoins, and yield-bearing cash, issued by regulated partners and settled on-chain.",
-    points: [
-      "167 tokenized stocks and ETFs, issued 1:1 by Backed's xStocks",
-      "USDC and EURC — Coinbase's regulated stablecoins",
-      "USDY — Ondo Finance's yield-bearing tokenized Treasury note",
-    ],
-    chips: [
-      { name: "xStocks", blurb: "167 tokenized stocks & ETFs, by Backed" },
-      { name: "Coinbase", blurb: "USDC & EURC regulated stablecoins", color: "#0052FF" },
-      { name: "Ondo Finance", blurb: "USDY yield-bearing Treasury token" },
-    ],
-  },
-  {
-    key: "defi",
-    label: "Trading",
-    title: "Execution on real, audited protocols",
-    body: "Every trade is a real on-chain transaction, routed through established DeFi infrastructure — never an internal ledger. You hold custody at every step, from quote to settlement.",
-    points: [
-      "Jupiter — instant spot swaps between any asset, with no loss of custody",
-      "Hyperliquid — leveraged crypto and equity perpetual futures",
-      "Kamino — borrow directly against tokenized equity or crypto positions",
-      "Kalshi, via DFlow — regulated, tokenized prediction market positions",
-    ],
-    chips: [
-      { name: "Jupiter", blurb: "Instant spot swaps, no custody loss" },
-      { name: "Hyperliquid", blurb: "Crypto & equity perpetual futures" },
-      { name: "KAMINO", blurb: "Borrow against tokenized positions", caps: true },
-      { name: "Kalshi", blurb: "Regulated prediction markets", color: "#00A67E" },
-      { name: "DFlow", blurb: "Tokenization & routing layer", color: "#2D5DA8" },
-    ],
-  },
-  {
-    key: "network",
-    label: "Network",
-    title: "Settled on Solana",
-    body: "Every trade, swap, and position lives on Solana — sub-second finality and fees measured in fractions of a cent, so markets that used to take days to settle now settle before you finish reading this.",
-    points: [
-      "Sub-second transaction finality",
-      "Fees measured in fractions of a cent",
-      "Every position is a real, verifiable on-chain transaction",
-    ],
-    chips: [
-      { name: "Solana", blurb: "High-performance settlement layer", gradient: true },
-    ],
-  },
+function AgentStepArrow() {
+  return (
+    <svg className="lp-agent-step-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 6 15 12 9 18" />
+    </svg>
+  );
+}
+
+// Same four strategy types the real Trading Agent page supports — one
+// color per card, continuing the green family already used across this
+// section rather than introducing a new palette.
+// Explicit `badge` overrides — Dollar-Cost Averaging and Delta-Neutral
+// Hedge otherwise both default to a "D" monogram (FlowChip's fallback is
+// just the name's first letter), which reads as a mistake sitting side by
+// side in the grid.
+const AGENT_STRATEGIES = [
+  { name: "Dollar-Cost Averaging", badge: "DCA", blurb: "Buy a fixed amount on a recurring schedule, no matter what the market's doing.", color: "#2F6B50" },
+  { name: "Delta-Neutral Hedge", badge: "Δ", blurb: "Pair a spot position with an offsetting perp to collect funding while staying market-neutral.", color: "#4C8A69" },
+  { name: "TWAP / VWAP Execution", badge: "T/V", blurb: "Split a large order into slices over hours, so one trade doesn't move the price against you.", color: "#6FA98A" },
+  { name: "Price Triggers", badge: "TRG", blurb: "Stop-loss, take-profit, buy-the-dip, or breakout-buy — set a price, the agent watches for it.", color: "#9AC4A8" },
 ];
 
 // Wordmark-only treatment (no icon marks) for every partner — deliberate,
@@ -345,7 +326,8 @@ const HOW_IT_WORKS = [
 // entries with plain text for others would look unfinished. Brand color
 // (Coinbase blue, Kalshi green, etc.) carries the identity instead of an
 // icon; swap in real logo files later by rendering an <img> here instead.
-function FlowChip({ name, blurb, color, gradient, caps }) {
+// Reused here for the strategy-type cards below, same treatment.
+function FlowChip({ name, blurb, color, gradient, caps, badge }) {
   const textStyle = gradient
     ? {
         backgroundImage: "linear-gradient(90deg, #9945FF, #14F195)",
@@ -360,9 +342,13 @@ function FlowChip({ name, blurb, color, gradient, caps }) {
   const badgeStyle = gradient
     ? { backgroundImage: "linear-gradient(135deg, #9945FF, #14F195)" }
     : { backgroundColor: color || "var(--pine)" };
+  // Defaults to the name's first letter (fine when every item in a group
+  // starts with a different letter); pass an explicit `badge` when two
+  // items in the same grid would otherwise collide on the same initial.
+  const badgeText = badge ?? name.trim().charAt(0).toUpperCase();
   return (
     <div className="lp-flow-chip">
-      <span className="lp-flow-chip-badge" style={badgeStyle}>{name.trim().charAt(0).toUpperCase()}</span>
+      <span className={`lp-flow-chip-badge ${badgeText.length > 1 ? "lp-flow-chip-badge-wide" : ""}`} style={badgeStyle}>{badgeText}</span>
       <span className="lp-flow-chip-body">
         <span className={`serif lp-flow-chip-name ${caps ? "lp-flow-chip-caps" : ""}`} style={textStyle}>{name}</span>
         <span className="tiny muted lp-flow-chip-blurb">{blurb}</span>
@@ -371,47 +357,39 @@ function FlowChip({ name, blurb, color, gradient, caps }) {
   );
 }
 
-function HowItWorksSection({ onLogin }) {
-  const [step, setStep] = useState(0);
-  const active = HOW_IT_WORKS[step];
-  const last = HOW_IT_WORKS.length - 1;
-
+function AgenticTradingSection({ onLogin }) {
   return (
     <section className="lp-section lp-flow-section">
       <div className="lp-container">
-        <h2 className="lp-section-title lp-dark-title" style={{ textAlign: "center" }}>Tokenized Trading Simplified</h2>
+        <p className="eyebrow lp-flow-eyebrow" style={{ textAlign: "center" }}>Bonzai Trading Agents</p>
+        <h2 className="lp-section-title lp-dark-title" style={{ textAlign: "center" }}>Agentic trading, on autopilot</h2>
+        <p className="lp-assets-sub">
+          Set a strategy once, in plain English — a recurring buy, a delta-neutral hedge, a TWAP execution,
+          or a price trigger. Your agent watches the market and proposes the trade when it's time; nothing
+          executes until you review it and sign with your own wallet.
+        </p>
 
-        <div className="lp-flow-nav" role="tablist">
-          {HOW_IT_WORKS.map((s, i) => (
-            <button key={s.key} role="tab" aria-selected={i === step}
-              className={`lp-flow-tab ${i === step ? "active" : ""}`}
-              style={i === step ? undefined : { backgroundImage: STEP_GRADIENTS[s.key] }}
-              onClick={() => setStep(i)}>
-              {s.label}
-            </button>
+        <div className="lp-agent-steps">
+          {AGENT_STEPS.map((s, i) => (
+            <Fragment key={s.label}>
+              <div className="lp-agent-step">
+                <div className="lp-agent-step-icon">{AGENT_STEP_ICONS[s.icon]}</div>
+                <div className="lp-agent-step-text">
+                  <p className="lp-agent-step-label">{s.label}</p>
+                  <p className="lp-agent-step-sub">{s.sub}</p>
+                </div>
+              </div>
+              {i < AGENT_STEPS.length - 1 && <AgentStepArrow />}
+            </Fragment>
           ))}
         </div>
 
-        <div className="lp-flow-card" key={active.key}>
-          <div className="lp-flow-panel">
-            <div className="lp-flow-text">
-              <h3 className="lp-product-title">{active.title}</h3>
-              <p className="lp-product-body">{active.body}</p>
-              <ul className="lp-product-points">
-                {active.points.map((pt) => <li key={pt}>{pt}</li>)}
-              </ul>
-            </div>
-            <div className="lp-flow-chips">
-              {active.chips.map((c) => <FlowChip key={c.name} {...c} />)}
-            </div>
-          </div>
+        <div className="lp-flow-chips lp-agent-strategy-grid">
+          {AGENT_STRATEGIES.map((s) => <FlowChip key={s.name} {...s} />)}
         </div>
 
-        <div className="lp-flow-arrows">
-          <button className="btn ghost lp-flow-arrow-btn" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>← Back</button>
-          <button className="btn ghost lp-flow-arrow-btn" onClick={() => (step === last ? onLogin() : setStep((s) => s + 1))}>
-            {step === last ? "Get started →" : "Next →"}
-          </button>
+        <div style={{ textAlign: "center", marginTop: 40 }}>
+          <button className="btn primary lp-cta-btn" onClick={onLogin}>Set up a Trading Agent →</button>
         </div>
       </div>
     </section>
@@ -509,8 +487,8 @@ export default function LandingPage({ onLogin }) {
         </div>
       </section>
 
-      {/* ── How Bonzai Trading Works ── */}
-      <HowItWorksSection onLogin={onLogin} />
+      {/* ── Agentic Trading ── */}
+      <AgenticTradingSection onLogin={onLogin} />
 
       {/* ── Infrastructure ── */}
       <section className="lp-section lp-infra-section">
