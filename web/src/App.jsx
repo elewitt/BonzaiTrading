@@ -785,17 +785,52 @@ export default function App() {
     setUsdtSwap({ busy: false, status: null, error: null });
   };
 
-  /* ——— Yield mode toggle: swap all USDC↔USDY ——— */
+  /* ——— Yield mode toggle: swap all USDC↔USDY ———
+   * Used to set localStorage + the yieldMode state unconditionally at the
+   * very top, before any of the guards below (busy.current, registry not
+   * loaded, a too-small balance) ran — a guard tripping left the UI
+   * claiming yield mode had changed even though no swap ever fired, AND
+   * with no error shown to explain why. Worse, since the buttons' own
+   * onClick is guarded by `!yieldMode`/`yieldMode` (so clicking "Yes"
+   * again while already "on" is a no-op), that stuck, inaccurate state
+   * couldn't even be retried by clicking the same button again — exactly
+   * "toggling it does nothing." Fixed by only flipping the persisted/
+   * displayed mode once a real swap is actually about to be attempted,
+   * and reverting it if that swap itself fails — the toggle now always
+   * reflects reality, and every dead end along the way surfaces through
+   * the same `error` state the rest of the dashboard's hero actions use. */
   const handleYieldMode = async (on) => {
-    localStorage.setItem("lv_yield_mode", String(on));
-    setYieldMode(on);
-    if (busy.current) return;
-    const h = await api.holdings(address);
+    setError("");
+    if (busy.current) {
+      setError("Another transaction is already in progress — try again in a moment.");
+      return;
+    }
+    if (!registry?.USDC || !registry?.USDY) {
+      setError("Still loading asset data — try again in a moment.");
+      return;
+    }
+    let h;
+    try {
+      h = await api.holdings(address);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't check your balance — try again.");
+      return;
+    }
+    const setMode = (val) => { localStorage.setItem("lv_yield_mode", String(val)); setYieldMode(val); };
     if (on) {
       const usdcBal = h.tokens?.find((t) => t.mint === registry.USDC.mint)?.uiAmount || 0;
-      if (usdcBal < 1) return;
+      if (usdcBal < 1) {
+        setError(usdcBal > 0
+          ? `Only $${usdcBal.toFixed(2)} in USDC — need at least $1 to convert to USDY.`
+          : "No USDC available to convert to USDY.");
+        return;
+      }
       const amount = Math.floor(usdcBal * 0.995 * 10 ** registry.USDC.decimals);
-      if (amount <= 0) return;
+      if (amount <= 0) {
+        setError("That USDC balance is too small to convert.");
+        return;
+      }
+      setMode(true);
       busy.current = true;
       setLegs([{ symbol: "USDY", side: "buy", usd: usdcBal, inputMint: registry.USDC.mint, outputMint: registry.USDY.mint, amount, status: "queued", sig: null }]);
       setExecuteOpen(true);
@@ -805,6 +840,7 @@ export default function App() {
         setLeg({ status: "confirmed", sig: result.signature });
       } catch (e) {
         setLeg({ status: "failed", err: e.message });
+        setMode(false); // the swap that was supposed to turn this on never landed
       } finally {
         busy.current = false;
         await refreshHoldings();
@@ -812,8 +848,12 @@ export default function App() {
     } else {
       const usdyToken = registry.USDY ? h.tokens?.find((t) => t.mint === registry.USDY.mint) : null;
       const usdyAtoms = Number(usdyToken?.amount || 0);
-      if (usdyAtoms <= 0) return;
+      if (usdyAtoms <= 0) {
+        setError("No USDY holdings to convert back to USDC.");
+        return;
+      }
       const usdyUsd = (usdyToken?.uiAmount || 0) * (prices[registry.USDY.mint] || 1);
+      setMode(false);
       busy.current = true;
       setLegs([{ symbol: "USDY", side: "sell", usd: usdyUsd, inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, status: "queued", sig: null }]);
       setExecuteOpen(true);
@@ -823,6 +863,7 @@ export default function App() {
         setLeg({ status: "confirmed", sig: result.signature });
       } catch (e) {
         setLeg({ status: "failed", err: e.message });
+        setMode(true); // the swap that was supposed to turn this off never landed
       } finally {
         busy.current = false;
         await refreshHoldings();
