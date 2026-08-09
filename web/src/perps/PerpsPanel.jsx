@@ -6,6 +6,8 @@ import { liquidationPrice } from "./hl/margin.js";
 import { EQUITY_DEX } from "./config.js";
 import { usd } from "../lib/api.js";
 
+const HL_MIN_NOTIONAL_USD = 10; // Hyperliquid's own exchange-wide minimum order value
+
 /**
  * Shared close-position button + inline error, used by both the account
  * page's Open Positions table below and the main dashboard's Perps
@@ -156,6 +158,15 @@ export function OrderTicket({
   const submit = async () => {
     setMsg(null);
     if (!tradingWallet || !user) { setMsg("Wallet not ready"); setMsgType("err"); return; }
+    // Hyperliquid rejects any order under $10 notional — catch it here with
+    // a plain-English message instead of letting the raw exchange error
+    // ("Order must have minimum value of $10. asset=...") reach the user.
+    const notionalUsd = (Number(size) || 0) * (markPrice || 0);
+    if (notionalUsd < HL_MIN_NOTIONAL_USD) {
+      setMsg(`That's a $${notionalUsd.toFixed(2)} position — Hyperliquid requires at least $${HL_MIN_NOTIONAL_USD} per order. Try a larger amount or higher leverage.`);
+      setMsgType("err");
+      return;
+    }
     try {
       // Apply leverage first, then place order
       await hl.setLeverage(tradingWallet, assetIndex, leverage);

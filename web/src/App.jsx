@@ -929,6 +929,7 @@ export default function App() {
   // ordinary brokerage prompts) — requires an unambiguous leverage/perps
   // word so a normal "buy Tesla" doesn't get misrouted here.
   const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\bhyperliquid\b|\b\d+(\.\d+)?x\b/i;
+  const HL_MIN_NOTIONAL_USD = 10; // Hyperliquid's own exchange-wide minimum order value
   // Kamino borrow/lend signal — "borrow" alone is unambiguous (no other
   // flow in this app uses that verb); "collateral"/"kamino"/"ltv" cover
   // deposit-only phrasing that doesn't happen to say "borrow"; "loan"/
@@ -1171,6 +1172,11 @@ export default function App() {
       if (!(marginUsd > 0) || !(size > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
       if (marginUsd > withdrawable + 0.01)
         throw new Error(`That needs $${marginUsd.toFixed(2)} margin but only $${withdrawable.toFixed(2)} is available to trade.`);
+      // Hyperliquid rejects any order under $10 notional — catch it here with
+      // a plain-English message instead of letting the raw exchange error
+      // ("Order must have minimum value of $10. asset=5") reach the user.
+      if (notionalUsd < HL_MIN_NOTIONAL_USD)
+        throw new Error(`That's a $${notionalUsd.toFixed(2)} position — Hyperliquid requires at least $${HL_MIN_NOTIONAL_USD} per order. Try a larger amount or higher leverage.`);
 
       let formattedSize;
       try { formattedSize = formatSize(String(size), asset.szDecimals ?? 0); }
