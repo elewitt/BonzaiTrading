@@ -927,8 +927,14 @@ export default function App() {
   const TRADE_RE = /\b(sell|buy|rebalance|liquidate|invest|trim|remove|swap|for cash|go to cash|make|build|create|compose|allocate|diversify|combine|combination|convert|construct|split|distribute|put (me|it|my \w+) (in|into)|switch (me|it|my \w+) to|shift (me|it|my \w+) to|turn (it|my \w+) into|set (my|the) portfolio|change my portfolio|hold only)\b/i;
   // Distinct, narrower signal than TRADE_RE's "buy"/"sell" (which also match
   // ordinary brokerage prompts) — requires an unambiguous leverage/perps
-  // word so a normal "buy Tesla" doesn't get misrouted here.
-  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\bhyperliquid\b|\b\d+(\.\d+)?x\b/i;
+  // word so a normal "buy Tesla" doesn't get misrouted here. "long"/"short
+  // position" is included too — unlike plain "close my position" (genuinely
+  // ambiguous with a brokerage sell-all, handled by the allocation parser
+  // instead), naming a long/short direction is perps-only terminology, so
+  // it's safe to route here without touching the brokerage case. Confirmed
+  // as a real gap: "can you close my SOL long position" matched no trigger
+  // word and fell all the way through to the generic Q&A research assistant.
+  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\bhyperliquid\b|\b\d+(\.\d+)?x\b|\b(long|short)\s+position\b|\bclose\s+(my|the)\s+(long|short)\b/i;
   const HL_MIN_NOTIONAL_USD = 10; // Hyperliquid's own exchange-wide minimum order value
   // Kamino borrow/lend signal — "borrow" alone is unambiguous (no other
   // flow in this app uses that verb); "collateral"/"kamino"/"ltv" cover
