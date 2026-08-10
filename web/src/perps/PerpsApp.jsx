@@ -578,9 +578,14 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
             )}
           </div>
 
-          <div style={ticketHeight ? { maxHeight: ticketHeight, overflowY: "auto" } : undefined}>
-            <AssetPriceChart hl={hl} asset={asset} />
-          </div>
+          {/* Unlike the Market list (a row list genuinely benefits from being
+              height-bounded-and-scrollable), the price chart shouldn't be
+              capped to the ticket's height at all — its SVG scales with
+              width to a fixed aspect ratio, so clipping it via overflow:auto
+              just crops the bottom of the chart (axis labels included)
+              instead of shrinking it to fit. Confirmed as a real bug: the
+              chart's y-axis was cut off mid-tick with the cap applied. */}
+          <AssetPriceChart hl={hl} asset={asset} />
         </div>
       )}
 
