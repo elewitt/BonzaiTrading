@@ -61,6 +61,17 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .wordmark-btn { border: none; background: none; padding: 0; font-family: inherit; cursor: pointer; transition: opacity .15s; }
 .wordmark-btn:hover { opacity: .8; }
 .head-right { display: flex; gap: 10px; align-items: center; }
+/* At phone widths the 78px-tall header (44px logo + 24px uppercase serif
+   wordmark + 32px side padding) had no downsizing of its own, so "BONZAI
+   TRADING" wrapped to 2 lines and squeezed the "Log in" pill (below) down
+   with it. nowrap on the wordmark plus smaller everything is what actually
+   keeps "Bonzai Trading" on one line instead of just shrinking it slightly
+   and hoping it still fits. */
+@media (max-width: 768px) {
+  .lv-head { padding: 0 14px; height: 60px; }
+  .wordmark { font-size: 14px; letter-spacing: .03em; gap: 8px; white-space: nowrap; }
+  .wordmark-logo { height: 30px; width: 30px; border-radius: 8px; }
+}
 .chip {
   border: 1px solid var(--line);
   background: var(--paper);
@@ -1537,6 +1548,15 @@ a.trow { color: inherit; text-decoration: none; }
    hover state instead of looking identical to "about to click." */
 .head-nav-btn.active { border-color: var(--pine); background: rgba(26,68,51,.08); color: var(--pine); font-weight: 500; }
 .head-nav-btn.active:hover { background: var(--pine); color: #fff; }
+/* Mobile: the only .head-nav-btn ever visible here is the un-authed "Log
+   in" button — the authed nav row (.head-right-authed) is display:none at
+   this width, replaced by the bottom tab bar — so this can safely target
+   .head-nav-btn broadly. Was wrapping to "Log"/"in" on 2 lines and
+   rendering as an oversized circle instead of a pill; nowrap + smaller
+   padding/font is what actually fixes that instead of just shrinking. */
+@media (max-width: 768px) {
+  .head-nav-btn { padding: 7px 16px; font-size: 13px; white-space: nowrap; }
+}
 
 /* ——— Perps Stage ——— */
 .perps-stage {
