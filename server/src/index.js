@@ -2840,6 +2840,18 @@ app.get("/api/telegram/status", requireAuth, async (req, res) => {
   try {
     const wallet = String(req.query.wallet || "");
     if (!wallet) return res.status(400).json({ error: "wallet required" });
+    // Unlike /api/order's taker param, this isn't gated by a signature
+    // requirement downstream — without an ownership check it'd let any
+    // logged-in user probe whether an arbitrary wallet has a linked
+    // Telegram chat, so verify `wallet` is actually the caller's own
+    // Privy-linked Solana address (same check used for perps' solanaSender).
+    if (privyClient) {
+      const user = await privyClient.getUserById(req.privyUserId).catch(() => null);
+      const ownSolanaAddress = user?.linkedAccounts.find((a) => a.type === "wallet" && a.chainType === "solana")?.address;
+      if (!ownSolanaAddress || ownSolanaAddress !== wallet) {
+        return res.status(403).json({ error: "wallet must be your own address" });
+      }
+    }
     const chatIds = await getTelegramLinksForWallet(wallet);
     res.json({ linked: chatIds.length > 0 });
   } catch (e) {
