@@ -35,16 +35,20 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [assetSearch, setAssetSearch] = useState("");
   const [assetCategory, setAssetCategory] = useState("crypto"); // "crypto" | "equity"
-  const ticketColRef = useRef(null);
-  const [ticketHeight, setTicketHeight] = useState(null);
-  // Floor for the height-match below — before a user approves the builder
-  // fee, the ticket column renders OrderTicket's short "Before your first
-  // trade" consent card instead of the full order form, and without a
-  // floor that short height gets applied as the Market panel's maxHeight
-  // too, squashing the ~170-asset crypto list down to 3-4 visible rows.
-  // Confirmed as a real bug: a fresh account saw only BTC/ETH/ATOM/DYDX in
-  // the market list with SOL and everything else invisible below the fold.
-  const MIN_TICKET_HEIGHT = 480;
+  // Market panel is height-matched to the price chart (not the ticket
+  // column) — the chart renders at its own natural, uncapped height, and
+  // is reliably the tallest column once a market's selected, so anchoring
+  // the Market list to it (rather than the ticket's shorter, more variable
+  // height) is what makes both cards end at the same edge.
+  const chartColRef = useRef(null);
+  const [chartHeight, setChartHeight] = useState(null);
+  // Floor for the height-match below, for the brief window before the
+  // chart has measured itself (or the "select a market" placeholder,
+  // which is short) — without a floor the ~170-asset crypto list could get
+  // squashed down to a handful of visible rows. Confirmed as a real bug
+  // previously: a fresh account saw only BTC/ETH/ATOM/DYDX in the market
+  // list with SOL and everything else invisible below the fold.
+  const MIN_CHART_HEIGHT = 480;
   const [fundView, setFundView] = useState("deposit"); // "deposit" | "withdraw"
   const [fundAccount, setFundAccount] = useState("crypto"); // "crypto" | "equity"
   const [fundModal, setFundModal] = useState(false);
@@ -405,15 +409,14 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
     setTab("trade");
   }, [assets]);
 
-  // The order ticket's natural height (leverage slider, size input, etc.) is
-  // the reference the Market panel and the chart/positions column should
-  // both be capped to and scroll within — not the other way around, so a
-  // long asset list or position history never makes the row taller than a
-  // normal order form needs to be.
+  // The price chart's natural height is the reference the Market panel is
+  // capped to and scrolls within — so the two cards end at the same edge,
+  // and a long asset list never makes the row taller than the chart needs
+  // to be.
   useEffect(() => {
-    const el = ticketColRef.current;
+    const el = chartColRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setTicketHeight(Math.max(entry.contentRect.height, MIN_TICKET_HEIGHT)));
+    const observer = new ResizeObserver(([entry]) => setChartHeight(Math.max(entry.contentRect.height, MIN_CHART_HEIGHT)));
     observer.observe(el);
     return () => observer.disconnect();
   }, [asset]);
@@ -520,7 +523,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
 
       {tab === "trade" && (
         <div className="perps-trade-layout">
-          <div className="perps-asset-panel lvp-card" style={ticketHeight ? { maxHeight: ticketHeight, overflowY: "auto" } : undefined}>
+          <div className="perps-asset-panel lvp-card" style={chartHeight ? { height: chartHeight } : undefined}>
             <h3>Market</h3>
             <div className="perps-category-toggle">
               <button className={`lvp-pct-btn ${assetCategory === "crypto" ? "sel" : ""}`}
@@ -548,7 +551,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
             </div>
           </div>
 
-          <div className="perps-ticket-col" ref={ticketColRef}>
+          <div className="perps-ticket-col">
             {asset ? (
               <>
                 <div className="perps-market-header">
@@ -584,8 +587,12 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
               width to a fixed aspect ratio, so clipping it via overflow:auto
               just crops the bottom of the chart (axis labels included)
               instead of shrinking it to fit. Confirmed as a real bug: the
-              chart's y-axis was cut off mid-tick with the cap applied. */}
-          <AssetPriceChart hl={hl} asset={asset} />
+              chart's y-axis was cut off mid-tick with the cap applied.
+              chartColRef only measures its natural height (nothing here
+              constrains it) so the Market panel can match it. */}
+          <div ref={chartColRef}>
+            <AssetPriceChart hl={hl} asset={asset} />
+          </div>
         </div>
       )}
 
