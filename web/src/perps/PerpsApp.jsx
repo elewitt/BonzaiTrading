@@ -37,6 +37,14 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   const [assetCategory, setAssetCategory] = useState("crypto"); // "crypto" | "equity"
   const ticketColRef = useRef(null);
   const [ticketHeight, setTicketHeight] = useState(null);
+  // Floor for the height-match below — before a user approves the builder
+  // fee, the ticket column renders OrderTicket's short "Before your first
+  // trade" consent card instead of the full order form, and without a
+  // floor that short height gets applied as the Market panel's maxHeight
+  // too, squashing the ~170-asset crypto list down to 3-4 visible rows.
+  // Confirmed as a real bug: a fresh account saw only BTC/ETH/ATOM/DYDX in
+  // the market list with SOL and everything else invisible below the fold.
+  const MIN_TICKET_HEIGHT = 480;
   const [fundView, setFundView] = useState("deposit"); // "deposit" | "withdraw"
   const [fundAccount, setFundAccount] = useState("crypto"); // "crypto" | "equity"
   const [fundModal, setFundModal] = useState(false);
@@ -405,7 +413,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   useEffect(() => {
     const el = ticketColRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setTicketHeight(entry.contentRect.height));
+    const observer = new ResizeObserver(([entry]) => setTicketHeight(Math.max(entry.contentRect.height, MIN_TICKET_HEIGHT)));
     observer.observe(el);
     return () => observer.disconnect();
   }, [asset]);
