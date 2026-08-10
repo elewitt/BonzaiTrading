@@ -1246,15 +1246,28 @@ async function buildOrder({ inputMint, outputMint, amount, taker }) {
 
   // Buy path: use Jupiter Ultra (handles sponsorship via payer param).
   const params = new URLSearchParams({ inputMint, outputMint, amount, taker });
-  if (sponsor) params.set("payer", sponsor.publicKey.toBase58());
+  let wantSponsor = false;
+  if (sponsor) {
+    // Only route fees to the sponsor when the taker doesn't already have
+    // enough SOL to cover their own tx fee + a potential new output-token
+    // ATA — mirrors the sell path's balance-gated top-up above instead of
+    // sponsoring every single buy unconditionally, which doesn't scale
+    // with trade volume.
+    const BUY_MIN_SOL = 5_000_000; // 0.005 SOL — covers ATA rent + fee buffer
+    const balance = await connection.getBalance(new PublicKey(taker));
+    if (balance < BUY_MIN_SOL) {
+      wantSponsor = true;
+      params.set("payer", sponsor.publicKey.toBase58());
+    }
+  }
   applyReferralFee(params);
   let { r, data } = await jupFetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() });
-  if ((!r.ok || data.error) && sponsor) {
+  if ((!r.ok || data.error) && wantSponsor) {
     params.delete("payer");
     ({ r, data } = await jupFetch(`${JUP_BASE}/ultra/v1/order?${params}`, { headers: jupHeaders() }));
     data._sponsored = false;
   } else {
-    data._sponsored = !!sponsor;
+    data._sponsored = wantSponsor;
   }
   if (!r.ok || data.error) throw new OrderError(502, data.error || `order HTTP ${r.status}`);
 
