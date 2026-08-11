@@ -62,6 +62,7 @@ export default function MarketsExplorer({ registry, autoFocusSearch = true }) {
   const [userPicked, setUserPicked] = useState(false); // false while still on the synchronous default
   const [period, setPeriod] = useState("perpDay");
   const blurTimer = useRef(null);
+  const inputRef = useRef(null);
 
   // Unified, deduped-by-symbol list. Hyperliquid wins a collision (e.g.
   // BTC is both a registry spot asset and a Hyperliquid perp) — its candle
@@ -99,6 +100,12 @@ export default function MarketsExplorer({ registry, autoFocusSearch = true }) {
     setUserPicked(true);
     setQuery("");
     setDropdownOpen(false);
+    // The dropdown row's onMouseDown below calls e.preventDefault() so the
+    // input doesn't lose focus mid-click (needed for the click to register
+    // before the input's own onBlur fires) — but that also means the
+    // keyboard/zoomed-in view never dismisses on its own afterward. Blur
+    // it explicitly once the pick is done instead.
+    inputRef.current?.blur();
   };
 
   // Hyperliquid candles — only actually requested when a Hyperliquid asset
@@ -136,6 +143,7 @@ export default function MarketsExplorer({ registry, autoFocusSearch = true }) {
         <p className="table-card-title" style={{ marginBottom: 12 }}>Markets</p>
         <div className="markets-search-wrap">
           <input
+            ref={inputRef}
             className="perps-asset-search"
             placeholder="Search any product — e.g. AAPL, BTC, TESOURO…"
             value={query}

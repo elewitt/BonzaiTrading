@@ -1842,6 +1842,17 @@ a.trow { color: inherit; text-decoration: none; }
 .markets-search-card { position: relative; overflow: visible; }
 .markets-search-wrap { position: relative; }
 .markets-search-wrap .perps-asset-search { margin-bottom: 0; }
+/* The bare .perps-asset-search{font-size:13px} rule (declared further
+   down, for the Perps page's own asset list) is a later, equal-
+   specificity rule that silently wins over the earlier mobile 16px
+   anti-zoom rule for EVERY .perps-asset-search on the page, including
+   this one — confirmed as a real bug: iOS Safari was actually zooming
+   in on focus here. Two classes (matching the same fix already applied
+   to .news-search-row above) beats it on specificity, not just source
+   order, so this one doesn't care which rule comes first. */
+@media (max-width: 768px) {
+  .markets-search-wrap .perps-asset-search { font-size: 16px; }
+}
 .markets-autocomplete {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 5;
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;
