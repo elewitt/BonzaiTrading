@@ -2035,6 +2035,12 @@ export default function App() {
   );
 
   const marketsHeroCard = portfolio && dashProduct === "markets" && <MarketsExplorer registry={registry} />;
+  // Mobile-only variant: autoFocus on the search input pops the on-screen
+  // keyboard immediately on mount, covering most of the screen the moment
+  // the Markets tab is selected — a real bug reported against this exact
+  // spot. Fine on desktop (no on-screen keyboard to fight), so only the
+  // mobile render site gets this disabled.
+  const marketsHeroCardMobile = portfolio && dashProduct === "markets" && <MarketsExplorer registry={registry} autoFocusSearch={false} />;
 
   return (
     <div className="lv-root">
@@ -2478,7 +2484,7 @@ export default function App() {
               {brokerageHeroCard}
               {perpsHeroCard}
               {borrowHeroCardLight}
-              {marketsHeroCard}
+              {marketsHeroCardMobile}
             </div>
 
             {/* Mobile-only: Deposit/Withdraw directly below the

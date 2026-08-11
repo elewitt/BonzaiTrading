@@ -51,7 +51,7 @@ const DEFAULT_SELECTION = { symbol: "NVDAx", name: "NVIDIA", source: "registry" 
  * does list them), just land on the chart's own "no data" empty state
  * rather than being silently hidden from results.
  */
-export default function MarketsExplorer({ registry }) {
+export default function MarketsExplorer({ registry, autoFocusSearch = true }) {
   const hl = useLongviewHl(DEFAULT_CONFIG);
   const { assets: hlAssets } = useAssets(hl);
 
@@ -149,7 +149,7 @@ export default function MarketsExplorer({ registry }) {
               else if (e.key === "Enter") { e.preventDefault(); pick(suggestions[activeIdx]); }
               else if (e.key === "Escape") { setDropdownOpen(false); }
             }}
-            autoFocus
+            autoFocus={autoFocusSearch}
           />
           {dropdownOpen && q && (
             <div className="markets-autocomplete">
