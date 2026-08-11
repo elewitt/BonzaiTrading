@@ -592,27 +592,51 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   .product-hero-mobile { display: block; margin-bottom: 20px; }
   .product-hero-desktop { display: none; }
 }
-/* Mobile-only Deposit/Withdraw + compact search bar, replacing the
-   Earn-Yield toggle's spot (still reachable in Settings) and the
-   desktop .hero-prompt below (hidden here — same rebalPrompt/History
-   controls, just laid out differently, see the comment in App.jsx).
-   The actual .yield-ctrl/.hero-prompt hide rules live further down,
-   AFTER those classes' own base declarations (.hero-prompt at ~610,
-   .yield-ctrl at ~651) — a media-query rule placed BEFORE a later,
-   unconditional same-specificity rule loses to it regardless of
-   viewport width, confirmed as a real bug here (both stayed visible
-   on mobile until the override was moved past their base rules). */
-.hero-mobile-actions { display: none; }
-@media (max-width: 820px) { .hero-mobile-actions { display: block; margin-top: 16px; } }
-.hero-mobile-actions .hero-btns { margin-top: 0; margin-bottom: 14px; }
+/* Mobile-only header row for the value block — "Total portfolio value"
+   left, History icon right (desktop keeps its own History button inside
+   .hero-prompt-top instead, hidden on mobile below). */
+.hero-value-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.hero-value-header .eyebrow { margin: 0; }
+/* display:none/flex for .hero-value-hist-btn lives further down, AFTER
+   .hist-icon-btn's own base declaration (~639) — same cascade-order
+   lesson as .hero-prompt/.yield-ctrl above: placed here, the later,
+   unconditional .hist-icon-btn{display:flex} rule would win at every
+   width regardless of this class. Confirmed as a real bug: a faint
+   button outline showed up in the corner on desktop until this moved. */
+.hero-value-hist-btn { width: 34px; height: 34px; padding: 0; justify-content: center; flex-shrink: 0; }
+
+/* Mobile-only compact search bar, replacing the Earn-Yield toggle's spot
+   (still reachable in Settings) and the desktop .hero-prompt below
+   (hidden here — same rebalPrompt state, laid out differently, see the
+   comment in App.jsx). The .yield-ctrl/.hero-prompt hide rules live
+   further down, AFTER those classes' own base declarations (.hero-prompt
+   at ~614, .yield-ctrl at ~655) — a media-query rule placed BEFORE a
+   later, unconditional same-specificity rule loses to it regardless of
+   viewport width, confirmed as a real bug here (both stayed visible on
+   mobile until the override was moved past their base rules). */
+.hero-mobile-search { display: none; }
+@media (max-width: 820px) { .hero-mobile-search { display: block; margin-top: 16px; } }
 /* .prompt-wrap.row (used by other prompt bars) switches to a column
    layout under 560px — overridden back to a row here, at matching
-   specificity so it actually wins, since this 3-item row (input/Go/
-   History) is sized to fit via flex-shrink rather than wrapping. */
+   specificity so it actually wins, since this row is sized to fit via
+   flex-shrink rather than wrapping. */
 .prompt-wrap.row.hero-mobile-prompt-row { flex-direction: row; align-items: stretch; gap: 8px; }
-.hero-mobile-prompt-row .prompt-box.oneline { font-size: 16px; } /* iOS Safari zoom guard, same as .hero-prompt's */
+/* Base input stays at 16px (iOS Safari zooms the whole page in on focus
+   below that) — the placeholder alone gets its own smaller size via
+   ::placeholder so "What would you like to do?" reads in full instead
+   of truncating, without needing the risky-for-zoom base font shrink.
+   Confirmed as a real gap: at 375px width the 16px placeholder clipped
+   mid-sentence. */
+.hero-mobile-prompt-row .prompt-box.oneline { font-size: 16px; }
+.hero-mobile-prompt-row .prompt-box.oneline::placeholder { font-size: 14px; }
 .hero-mobile-prompt-row .btn.primary { padding: 11px 16px; font-size: 14px; flex-shrink: 0; }
-.hero-mobile-prompt-row .hist-icon-btn { padding: 0; width: 40px; height: 40px; justify-content: center; flex-shrink: 0; }
+
+/* Mobile-only: Deposit/Withdraw, now sitting directly below the
+   product-summary card (.product-hero-mobile) instead of the value. */
+.hero-mobile-buttons { display: none; }
+@media (max-width: 820px) { .hero-mobile-buttons { display: block; margin-top: 20px; } }
+.hero-mobile-buttons .hero-btns { margin-top: 0; }
+
 .hero-prompt { display: flex; flex-direction: column; gap: 0; }
 @media (max-width: 820px) { .hero-prompt { display: none; } }
 .hero-prompt-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -624,6 +648,8 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   transition: all .15s; white-space: nowrap;
 }
 .hist-icon-btn:hover { border-color: var(--pine); color: var(--pine); background: rgba(26,68,51,.04); }
+.hero-value-hist-btn { display: none; }
+@media (max-width: 820px) { .hero-value-hist-btn { display: flex; } }
 .hero-prompt .prompt-wrap { gap: 10px; }
 .hero-prompt .prompt-box { font-size: 15px; padding: 11px 14px; }
 /* Below 16px, mobile Safari zooms the whole page in on focus — the
