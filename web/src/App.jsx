@@ -1845,6 +1845,197 @@ export default function App() {
     : view === "referrals" ? "referrals"
     : "dash";
 
+  // ——— Mobile dashboard reorder: the per-product account-summary card
+  // needs to render in TWO places — its existing spot inside .dash-main,
+  // and a new spot inside .hero-row for mobile (CSS toggles which is
+  // visible per breakpoint; see .product-hero-mobile/-desktop in
+  // styles.css). Computed here, once, as plain values rather than authored
+  // twice, so both render sites reference the exact same JSX. Safe to
+  // mount in two DOM positions simultaneously — these only read
+  // already-computed values/shared App-level state, no independent
+  // fetching, and their buttons only open modals or navigate (setProposal/
+  // setCustomRebalanceOpen/setView), which duplicate trigger buttons can
+  // safely share. Borrow is the one exception: its desktop card embeds
+  // <PositionCard>, a real deposit/borrow/repay/withdraw signing UI, so
+  // that part is deliberately NOT duplicated into the mobile position —
+  // borrowHeroCardLight below omits it, borrowHeroCardFull keeps it.
+  const brokerageHeroCard = portfolio && dashProduct === "brokerage" && (
+    <div className="flip-scene">
+      <div className={`flip-inner ${statsFlipped ? "flipped" : ""}`}>
+        <div className="flip-face flip-front card card-pop">
+          <div className="card-toprow">
+            <p className="table-card-title">Brokerage Account</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button className="stats-toggle-btn alloc-share-btn" onClick={() => setShareOpen(true)}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                Share
+              </button>
+              <button className="stats-toggle-btn" onClick={() => setStatsFlipped(true)}>
+                Portfolio Stats →
+              </button>
+            </div>
+          </div>
+
+          <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} onAssetClick={setAssetInfoSymbol} />
+          {portfolio.total > 0 && (
+            <div className="alloc-actions">
+              {portfolio.rows.length >= 1 && (
+                <button className="btn ghost"
+                  onClick={() => {
+                    const n = portfolio.rows.length;
+                    const weight = 100 / n;
+                    const allocations = portfolio.rows.map((r) => ({ symbol: r.symbol, weight }));
+                    const { trades, maxSkippedDelta } = planTrades({ allocations, portfolio, prices, registry });
+                    setProposal({
+                      summary: `Equal-weight rebalance — ${n} positions at ${weight.toFixed(1)}% each`,
+                      allocations,
+                      trades,
+                      maxSkippedDelta,
+                    });
+                  }}>
+                  Rebalance Portfolio
+                </button>
+              )}
+              <button className="btn ghost"
+                onClick={() => {
+                  setCustomAllocs(portfolio.rows.map((r) => ({
+                    symbol: r.symbol,
+                    name: r.name,
+                    weight: r.weight.toFixed(1),
+                  })));
+                  setCustomRebalanceOpen(true);
+                }}>
+                Custom Rebalance
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="flip-face flip-back card card-pop">
+          <div className="card-toprow">
+            <p className="tiny label" style={{ margin: 0 }}>Performance</p>
+            <button className="stats-toggle-btn" onClick={() => setStatsFlipped(false)}>
+              ← Allocation
+            </button>
+          </div>
+          <div className="lvp-pnl-header-row">
+            <div>
+              <p className="lvp-muted" style={{ marginBottom: 2 }}>Portfolio Value</p>
+              {statsPoints.length >= 2 ? (() => {
+                const first = statsPoints[0].v, last = statsPoints[statsPoints.length - 1].v;
+                const pct = first > 0 ? ((last - first) / first) * 100 : null;
+                return (
+                  <p className="lvp-pnl-focal">
+                    {priceLabel(last)}
+                    {pct != null && (
+                      <span className={`lvp-pnl-focal-chip mono ${pct >= 0 ? "gain" : "loss"}`}>
+                        {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                      </span>
+                    )}
+                  </p>
+                );
+              })() : (
+                <p className="lvp-pnl-focal lvp-muted" style={{ fontSize: 28 }}>—</p>
+              )}
+            </div>
+            <div className="lvp-pnl-periods">
+              {DASH_STATS_PERIODS.map((p) => (
+                <button key={p.key} className={`lvp-pct-btn ${statsPeriod === p.key ? "sel" : ""}`}
+                  onClick={() => setStatsPeriod(p.key)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <TimeSeriesChart key={statsPeriod} points={statsPoints} period={statsPeriod} loading={false} mode="price"
+            emptyText="History builds up over time — check back soon." />
+        </div>
+      </div>
+    </div>
+  );
+
+  const perpsHeroCard = portfolio && dashProduct === "perps" && (
+    <div className="card" style={{ marginBottom: 26 }}>
+      <div className="card-toprow">
+        <p className="table-card-title">Perpetual Futures Account</p>
+        <button className="stats-toggle-btn" onClick={() => setView("perps")}>Trade Perps →</button>
+      </div>
+      {perpsRows.length === 0 ? (
+        <p className="muted" style={{ margin: "24px 0" }}>No open perpetual futures positions.</p>
+      ) : (
+        <Donut rows={perpsRows} cash={0} total={perpsNotionalTotal} />
+      )}
+      <p className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>
+        Account value ${usd(perpsAccountValue)} · Unrealized PnL {perpsPnl >= 0 ? "+" : ""}${usd(perpsPnl)}
+      </p>
+    </div>
+  );
+
+  const borrowHeroTop = portfolio && dashProduct === "borrow" && (
+    <>
+      <div className="card-toprow">
+        <p className="table-card-title">Borrow / Lend Account</p>
+        <button className="stats-toggle-btn" onClick={() => setView("borrow")}>Borrow / Lend →</button>
+      </div>
+      {borrowRows.length === 0 ? (
+        <p className="muted" style={{ margin: "24px 0" }}>No collateral posted to Kamino yet.</p>
+      ) : (
+        <Donut rows={borrowRows} cash={0} total={borrowCollateralTotal} />
+      )}
+      <p className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>
+        Collateral ${usd(borrowCollateralTotal)} · Borrowed ${usd(borrowDebtTotal)} · Blended LTV {borrowBlendedLtv.toFixed(1)}%
+      </p>
+    </>
+  );
+
+  // Desktop-only — embeds <PositionCard>, a real signing UI, deliberately
+  // not duplicated into the mobile hero position (see comment above).
+  const borrowHeroDetail = portfolio && dashProduct === "borrow" && kaminoLoans.length > 0 && (() => {
+    // One tab per collateral ASSET, not per obligation — same
+    // grouping as BorrowApp.jsx's Positions tab, since Kamino
+    // pools every collateral type into one shared obligation
+    // (one debt, one LTV) and each asset should still be
+    // viewable/actionable independently.
+    const assetTabs = kaminoLoans.flatMap((loan, li) => {
+      const deposits = loan.loanInfo?.collateral?.deposits ?? [];
+      const loanKey = loan.loanId ?? loan.obligation ?? li;
+      if (deposits.length === 0) return [{ key: `${loanKey}`, loan, mint: null, label: `Position ${li + 1}` }];
+      return deposits.map((d) => ({ key: `${loanKey}:${d.tokenMint}`, loan, mint: d.tokenMint, label: d.tokenName }));
+    });
+    const activeKey = assetTabs.some((t) => t.key === borrowDashTabKey) ? borrowDashTabKey : assetTabs[0].key;
+    const active = assetTabs.find((t) => t.key === activeKey);
+    return (
+      <div style={{ marginTop: 20 }}>
+        <div className="borrow-position-tabs">
+          {assetTabs.map((t) => (
+            <button key={t.key} className={`borrow-position-tab ${t.key === activeKey ? "active" : ""}`}
+              onClick={() => setBorrowDashTabKey(t.key)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <PositionCard key={active.key} loan={active.loan} focusMint={active.mint} reserves={kaminoReserves}
+          wallet={address} signWithWallet={signKaminoTx} onDone={refreshKaminoLoans} />
+      </div>
+    );
+  })();
+
+  const borrowHeroCardFull = portfolio && dashProduct === "borrow" && (
+    <div className="card" style={{ marginBottom: 26 }}>
+      {borrowHeroTop}
+      {borrowHeroDetail}
+    </div>
+  );
+  const borrowHeroCardLight = portfolio && dashProduct === "borrow" && (
+    <div className="card" style={{ marginBottom: 26 }}>
+      {borrowHeroTop}
+    </div>
+  );
+
+  const marketsHeroCard = portfolio && dashProduct === "markets" && <MarketsExplorer registry={registry} />;
+
   return (
     <div className="lv-root">
       <header className="lv-head">
@@ -2233,6 +2424,22 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Mobile-only position for the account-summary card — same
+                variables as the desktop render below in .dash-main, just
+                shown here instead via CSS (.product-hero-mobile). Sits
+                between the value and the prompt bar in source order,
+                which is also the correct mobile visual order once
+                .hero-row collapses to one column, so no explicit CSS
+                order: is needed. Borrow uses the Light variant here
+                (no <PositionCard> — that stays desktop-only). */}
+            <div className="product-hero-mobile">
+              {brokerageHeroCard}
+              {perpsHeroCard}
+              {borrowHeroCardLight}
+              {marketsHeroCard}
+            </div>
+
             <div className="hero-prompt">
               <div className="hero-prompt-top">
                 <p className="hero-prompt-label serif">What would you like to do?</p>
@@ -2303,167 +2510,17 @@ export default function App() {
           <div className="dash-grid">
           <div className="dash-main">
 
-          {dashProduct === "brokerage" && (
-          <div className="flip-scene">
-            <div className={`flip-inner ${statsFlipped ? "flipped" : ""}`}>
-              <div className="flip-face flip-front card card-pop">
-                <div className="card-toprow">
-                  <p className="table-card-title">Brokerage Account</p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <button className="stats-toggle-btn alloc-share-btn" onClick={() => setShareOpen(true)}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                      </svg>
-                      Share
-                    </button>
-                    <button className="stats-toggle-btn" onClick={() => setStatsFlipped(true)}>
-                      Portfolio Stats →
-                    </button>
-                  </div>
-                </div>
-
-                <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} onAssetClick={setAssetInfoSymbol} />
-                {portfolio.total > 0 && (
-                  <div className="alloc-actions">
-                    {portfolio.rows.length >= 1 && (
-                      <button className="btn ghost"
-                        onClick={() => {
-                          const n = portfolio.rows.length;
-                          const weight = 100 / n;
-                          const allocations = portfolio.rows.map((r) => ({ symbol: r.symbol, weight }));
-                          const { trades, maxSkippedDelta } = planTrades({ allocations, portfolio, prices, registry });
-                          setProposal({
-                            summary: `Equal-weight rebalance — ${n} positions at ${weight.toFixed(1)}% each`,
-                            allocations,
-                            trades,
-                            maxSkippedDelta,
-                          });
-                        }}>
-                        Rebalance Portfolio
-                      </button>
-                    )}
-                    <button className="btn ghost"
-                      onClick={() => {
-                        setCustomAllocs(portfolio.rows.map((r) => ({
-                          symbol: r.symbol,
-                          name: r.name,
-                          weight: r.weight.toFixed(1),
-                        })));
-                        setCustomRebalanceOpen(true);
-                      }}>
-                      Custom Rebalance
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="flip-face flip-back card card-pop">
-                <div className="card-toprow">
-                  <p className="tiny label" style={{ margin: 0 }}>Performance</p>
-                  <button className="stats-toggle-btn" onClick={() => setStatsFlipped(false)}>
-                    ← Allocation
-                  </button>
-                </div>
-                <div className="lvp-pnl-header-row">
-                  <div>
-                    <p className="lvp-muted" style={{ marginBottom: 2 }}>Portfolio Value</p>
-                    {statsPoints.length >= 2 ? (() => {
-                      const first = statsPoints[0].v, last = statsPoints[statsPoints.length - 1].v;
-                      const pct = first > 0 ? ((last - first) / first) * 100 : null;
-                      return (
-                        <p className="lvp-pnl-focal">
-                          {priceLabel(last)}
-                          {pct != null && (
-                            <span className={`lvp-pnl-focal-chip mono ${pct >= 0 ? "gain" : "loss"}`}>
-                              {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
-                            </span>
-                          )}
-                        </p>
-                      );
-                    })() : (
-                      <p className="lvp-pnl-focal lvp-muted" style={{ fontSize: 28 }}>—</p>
-                    )}
-                  </div>
-                  <div className="lvp-pnl-periods">
-                    {DASH_STATS_PERIODS.map((p) => (
-                      <button key={p.key} className={`lvp-pct-btn ${statsPeriod === p.key ? "sel" : ""}`}
-                        onClick={() => setStatsPeriod(p.key)}>
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <TimeSeriesChart key={statsPeriod} points={statsPoints} period={statsPeriod} loading={false} mode="price"
-                  emptyText="History builds up over time — check back soon." />
-              </div>
-            </div>
+          {/* Desktop position for the account-summary card — unchanged
+              visually from before. Hidden on mobile via CSS, where the
+              same variables render instead inside .hero-row (see
+              .product-hero-mobile/-desktop in styles.css). Borrow uses
+              the Full variant here (includes <PositionCard>). */}
+          <div className="product-hero-desktop">
+            {brokerageHeroCard}
+            {perpsHeroCard}
+            {borrowHeroCardFull}
+            {marketsHeroCard}
           </div>
-          )}
-
-          {dashProduct === "perps" && (
-          <div className="card" style={{ marginBottom: 26 }}>
-            <div className="card-toprow">
-              <p className="table-card-title">Perpetual Futures Account</p>
-              <button className="stats-toggle-btn" onClick={() => setView("perps")}>Trade Perps →</button>
-            </div>
-            {perpsRows.length === 0 ? (
-              <p className="muted" style={{ margin: "24px 0" }}>No open perpetual futures positions.</p>
-            ) : (
-              <Donut rows={perpsRows} cash={0} total={perpsNotionalTotal} />
-            )}
-            <p className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>
-              Account value ${usd(perpsAccountValue)} · Unrealized PnL {perpsPnl >= 0 ? "+" : ""}${usd(perpsPnl)}
-            </p>
-          </div>
-          )}
-
-          {dashProduct === "borrow" && (
-          <div className="card" style={{ marginBottom: 26 }}>
-            <div className="card-toprow">
-              <p className="table-card-title">Borrow / Lend Account</p>
-              <button className="stats-toggle-btn" onClick={() => setView("borrow")}>Borrow / Lend →</button>
-            </div>
-            {borrowRows.length === 0 ? (
-              <p className="muted" style={{ margin: "24px 0" }}>No collateral posted to Kamino yet.</p>
-            ) : (
-              <Donut rows={borrowRows} cash={0} total={borrowCollateralTotal} />
-            )}
-            <p className="tiny muted" style={{ textAlign: "center", marginTop: 10 }}>
-              Collateral ${usd(borrowCollateralTotal)} · Borrowed ${usd(borrowDebtTotal)} · Blended LTV {borrowBlendedLtv.toFixed(1)}%
-            </p>
-            {kaminoLoans.length > 0 && (() => {
-              // One tab per collateral ASSET, not per obligation — same
-              // grouping as BorrowApp.jsx's Positions tab, since Kamino
-              // pools every collateral type into one shared obligation
-              // (one debt, one LTV) and each asset should still be
-              // viewable/actionable independently.
-              const assetTabs = kaminoLoans.flatMap((loan, li) => {
-                const deposits = loan.loanInfo?.collateral?.deposits ?? [];
-                const loanKey = loan.loanId ?? loan.obligation ?? li;
-                if (deposits.length === 0) return [{ key: `${loanKey}`, loan, mint: null, label: `Position ${li + 1}` }];
-                return deposits.map((d) => ({ key: `${loanKey}:${d.tokenMint}`, loan, mint: d.tokenMint, label: d.tokenName }));
-              });
-              const activeKey = assetTabs.some((t) => t.key === borrowDashTabKey) ? borrowDashTabKey : assetTabs[0].key;
-              const active = assetTabs.find((t) => t.key === activeKey);
-              return (
-                <div style={{ marginTop: 20 }}>
-                  <div className="borrow-position-tabs">
-                    {assetTabs.map((t) => (
-                      <button key={t.key} className={`borrow-position-tab ${t.key === activeKey ? "active" : ""}`}
-                        onClick={() => setBorrowDashTabKey(t.key)}>
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  <PositionCard key={active.key} loan={active.loan} focusMint={active.mint} reserves={kaminoReserves}
-                    wallet={address} signWithWallet={signKaminoTx} onDone={refreshKaminoLoans} />
-                </div>
-              );
-            })()}
-          </div>
-          )}
-
-          {dashProduct === "markets" && <MarketsExplorer registry={registry} />}
 
           {dashProduct === "brokerage" && (
           <section className="card table-card card-pop">
