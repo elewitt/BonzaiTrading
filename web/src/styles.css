@@ -592,7 +592,29 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   .product-hero-mobile { display: block; margin-bottom: 20px; }
   .product-hero-desktop { display: none; }
 }
+/* Mobile-only Deposit/Withdraw + compact search bar, replacing the
+   Earn-Yield toggle's spot (still reachable in Settings) and the
+   desktop .hero-prompt below (hidden here — same rebalPrompt/History
+   controls, just laid out differently, see the comment in App.jsx).
+   The actual .yield-ctrl/.hero-prompt hide rules live further down,
+   AFTER those classes' own base declarations (.hero-prompt at ~610,
+   .yield-ctrl at ~651) — a media-query rule placed BEFORE a later,
+   unconditional same-specificity rule loses to it regardless of
+   viewport width, confirmed as a real bug here (both stayed visible
+   on mobile until the override was moved past their base rules). */
+.hero-mobile-actions { display: none; }
+@media (max-width: 820px) { .hero-mobile-actions { display: block; margin-top: 16px; } }
+.hero-mobile-actions .hero-btns { margin-top: 0; margin-bottom: 14px; }
+/* .prompt-wrap.row (used by other prompt bars) switches to a column
+   layout under 560px — overridden back to a row here, at matching
+   specificity so it actually wins, since this 3-item row (input/Go/
+   History) is sized to fit via flex-shrink rather than wrapping. */
+.prompt-wrap.row.hero-mobile-prompt-row { flex-direction: row; align-items: stretch; gap: 8px; }
+.hero-mobile-prompt-row .prompt-box.oneline { font-size: 16px; } /* iOS Safari zoom guard, same as .hero-prompt's */
+.hero-mobile-prompt-row .btn.primary { padding: 11px 16px; font-size: 14px; flex-shrink: 0; }
+.hero-mobile-prompt-row .hist-icon-btn { padding: 0; width: 40px; height: 40px; justify-content: center; flex-shrink: 0; }
 .hero-prompt { display: flex; flex-direction: column; gap: 0; }
+@media (max-width: 820px) { .hero-prompt { display: none; } }
 .hero-prompt-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .hero-prompt-label { font-size: 22px; margin: 0; color: var(--ink); line-height: 1.2; }
 .hist-icon-btn {
@@ -636,6 +658,10 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .yield-ctrl {
   display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap;
 }
+/* Replaced by .hero-mobile-actions' search bar on mobile — still fully
+   reachable via Settings (same yieldMode/handleYieldMode), just not
+   duplicated here. */
+@media (max-width: 820px) { .yield-ctrl { display: none; } }
 .yield-ctrl-label { font-size: 13px; color: var(--moss); }
 .seg-ctrl {
   display: flex; border: 1.5px solid var(--line); border-radius: 999px;

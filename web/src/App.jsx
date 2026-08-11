@@ -2425,6 +2425,49 @@ export default function App() {
               </div>
             </div>
 
+            {/* Mobile-only: Deposit/Withdraw directly under the value,
+                then a compact search bar (History folded in as a 3rd
+                icon in the same row) taking the Earn-Yield toggle's old
+                spot — "What would you like to do?" moves from a separate
+                label line into the input's own placeholder. The yield
+                toggle itself isn't lost, just hidden here — it's also in
+                Settings (same yieldMode/handleYieldMode). Reuses the
+                exact same rebalPrompt/runPrompt/thinking/error state as
+                the desktop .hero-prompt below (hidden on mobile) — safe
+                to duplicate a controlled input like this since both
+                copies bind to the same App-level state and only one is
+                ever visible per breakpoint, same reasoning as
+                .product-hero-mobile/-desktop below. */}
+            <div className="hero-mobile-actions">
+              <div className="hero-btns">
+                <button className="btn ghost hero-action-btn" onClick={() => setDepositOpen(true)}>Deposit</button>
+                <button className="btn ghost hero-action-btn" onClick={() => {
+                  setWithdrawAsset(portfolio?.rows[0]?.symbol || "USDC");
+                  setWithdrawAddress("");
+                  setWithdrawAmountStr("");
+                  setWithdrawToSaved("");
+                  setWithdrawOpen(true);
+                }}>Withdraw</button>
+              </div>
+              <div className="prompt-wrap row hero-mobile-prompt-row">
+                <input className="prompt-box oneline"
+                  placeholder="What would you like to do?"
+                  value={rebalPrompt} onChange={(e) => setRebalPrompt(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && rebalPrompt.trim() && !thinking && runPrompt(rebalPrompt, true)} />
+                <button className="btn primary" disabled={!rebalPrompt.trim() || thinking}
+                  onClick={() => runPrompt(rebalPrompt, true)}>
+                  {thinking ? (rebalPrompt.includes("?") && !TRADE_RE.test(rebalPrompt) ? "Researching…" : "Thinking…") : "Go"}
+                </button>
+                <button className="hist-icon-btn" onClick={() => setView("history")} title="Transaction history">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </button>
+              </div>
+              {error && <p className="err tiny">{error}</p>}
+            </div>
+
             {/* Mobile-only position for the account-summary card — same
                 variables as the desktop render below in .dash-main, just
                 shown here instead via CSS (.product-hero-mobile). Sits
