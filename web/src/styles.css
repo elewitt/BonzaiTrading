@@ -1181,6 +1181,14 @@ a.trow { color: inherit; text-decoration: none; }
 @media (max-width: 900px) {
   .news-panel { position: static; max-height: none; overflow-y: visible; }
   .news-search-row { position: static; margin-top: 0; }
+  /* Removed entirely on mobile (not just visually shrunk) — the feed
+     competes for space with the actual portfolio/trading tools on a
+     phone-sized screen, and isn't core to the mobile flow. CSS-only
+     display:none (not a JS mobile check) matches this codebase's own
+     established convention (see .head-right-authed above) — avoids a
+     resize-timing flash and there's no precedent anywhere else here for
+     JS-based device detection. */
+  .news-panel, .news-search-row { display: none; }
 }
 /* Two classes (not one) so this reliably beats .perps-asset-search's
    equal-specificity rules regardless of which is defined later in the
