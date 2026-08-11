@@ -15,6 +15,13 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+/* Hard safety net — an unconstrained-width element anywhere on the page
+   (a flex row with no wrap/scroll of its own, e.g.) used to drag the
+   WHOLE page into panning sideways past its natural edge instead of just
+   that one element overflowing in place. Confirmed as a real bug: the
+   dashboard's product-tabs row (below) had no overflow handling and the
+   entire viewport became horizontally scrollable because of it. */
+html, body { overflow-x: hidden; }
 body { margin: 0; -webkit-font-smoothing: antialiased; }
 
 .lv-root {
@@ -1430,10 +1437,30 @@ a.trow { color: inherit; text-decoration: none; }
 .dash-product-tab {
   border: 1px solid var(--line); background: var(--offwhite); border-radius: 999px;
   padding: 10px 20px; font-family: 'Marcellus', 'Young Serif', Georgia, serif; font-size: 15px; font-weight: 400;
-  color: var(--ink); cursor: pointer; transition: all .15s;
+  color: var(--ink); cursor: pointer; transition: all .15s; flex-shrink: 0;
 }
 .dash-product-tab:hover { border-color: var(--moss); }
 .dash-product-tab.active { background: var(--pine); border-color: var(--pine); color: #fff; }
+/* Mobile: the 4 pills don't fit one row at phone widths and had no wrap
+   or scroll of their own, so they just spilled past the viewport edge —
+   the root cause of the whole page becoming horizontally pannable (see
+   the html/body overflow-x:hidden safety net near the top of this file).
+   Scrolls within its own bounds instead now. justify-content switches to
+   flex-start specifically for this case — flex-end on an overflowing flex
+   container is a known Safari bug where the start of the content becomes
+   unreachable by scrolling (confirmed: this is an iOS Safari screenshot). */
+@media (max-width: 768px) {
+  .dash-product-tabs {
+    justify-content: flex-start; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+  .dash-product-tabs::-webkit-scrollbar { height: 6px; }
+  .dash-product-tabs::-webkit-scrollbar-track { background: transparent; }
+  .dash-product-tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  @supports not selector(::-webkit-scrollbar) {
+    .dash-product-tabs { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  }
+}
 
 /* ——— Custom rebalance form ——— */
 .custom-alloc-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
