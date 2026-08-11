@@ -2477,7 +2477,7 @@ export default function App() {
                 </span>
               </label>
             </div>
-            <div className="trow thead tiny label" style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}>
+            <div className="trow trow-positions thead tiny label">
               <span>Asset</span>
               <span>Price / token</span>
               <span>Quantity</span>
@@ -2489,8 +2489,7 @@ export default function App() {
               const category = assetCategory(r.symbol);
               const clickable = category === "Stock" || category === "ETF" || category === "Crypto";
               return (
-                <div className={`trow ${clickable ? "asset-row-clickable" : ""}`} key={r.symbol}
-                  style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}
+                <div className={`trow trow-positions ${clickable ? "asset-row-clickable" : ""}`} key={r.symbol}
                   onClick={clickable ? () => setAssetInfoSymbol(r.symbol) : undefined}>
                   <span className="asset">
                     <span className="serif">{r.name}</span>
@@ -2518,7 +2517,7 @@ export default function App() {
               );
             })}
             {yieldMode && portfolio.usdyAmount > 0.5 && (
-              <div className="trow cashrow yield-cash-row" style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}>
+              <div className="trow trow-positions cashrow yield-cash-row">
                 <span className="asset">
                   <span className="serif">Yield Cash</span>
                   <span className="mono tiny muted">USDY · Yield · ~5% APY</span>
@@ -2533,7 +2532,7 @@ export default function App() {
               </div>
             )}
             {(!yieldMode || portfolio.cashUsdc > 0.01) && (
-              <div className="trow cashrow" style={{ gridTemplateColumns: "1.6fr .8fr 1.1fr .8fr .55fr .55fr" }}>
+              <div className="trow trow-positions cashrow">
                 <span className="asset">
                   <span className="serif">Cash</span>
                   <span className="mono tiny muted">USDC · Stablecoin</span>

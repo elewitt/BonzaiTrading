@@ -862,9 +862,9 @@ a.trow { color: inherit; text-decoration: none; }
    match those rows too and stack with their own nth-child rules below,
    hiding columns neither rule intended to hide on its own. */
 @media(max-width:600px) {
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals) { grid-template-columns: 1.6fr 1fr 1fr; }
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals) span:nth-child(3),
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals) span:nth-child(5) { display: none; }
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions) { grid-template-columns: 1.6fr 1fr 1fr; }
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions) span:nth-child(3),
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions) span:nth-child(5) { display: none; }
 }
 
 /* Per-table .trow column templates — these used to be set via an inline
@@ -874,6 +874,36 @@ a.trow { color: inherit; text-decoration: none; }
    at any width. Moved into real stylesheet classes so their own mobile
    rules below can actually take effect, same pattern as the base .trow
    rule above (hide N spans, drop the template by N columns). */
+/* The dashboard's main brokerage Positions table (App.jsx) had this exact
+   bug too — missed when the other 4 tables were fixed. 6 columns with no
+   mobile handling meant "Price / token" and "Market value" wrapped into
+   ragged multi-line headers and the Cash row's numbers ran together with
+   no breathing room. Card-stack treatment like .trow-equities below:
+   header row drops (Asset/Price/Value read fine without it), Quantity and
+   Allocation drop too (redundant with Market value on a narrow screen),
+   Price stays as a small reference number and Market value is the
+   emphasized figure people actually came to check. */
+.trow-positions { grid-template-columns: 1.6fr .8fr 1.1fr .8fr .55fr .55fr; }
+@media (max-width: 600px) {
+  .trow-positions.thead { display: none; }
+  .trow-positions:not(.thead) {
+    grid-template-columns: 1fr auto; grid-template-areas: "identity identity" "price value" "actions actions";
+    row-gap: 6px; background: var(--paper); border-radius: 12px; border-bottom: none;
+    padding: 14px; margin-bottom: 8px;
+  }
+  .trow-positions:not(.thead):last-child { margin-bottom: 0; }
+  /* Direct-child combinator (>) matters here — the plain descendant form
+     (a space) would also match the "AAPLx · Stock" subtitle span nested
+     inside .asset, since it's independently the 2nd child of ITS OWN
+     parent too. Confirmed as a real bug: that span picked up align-self
+     from the row-level nth-child(2) rule and stopped stretching full width. */
+  .trow-positions > span:nth-child(3), .trow-positions > span:nth-child(5) { display: none; }
+  .trow-positions:not(.thead) > span:nth-child(1) { grid-area: identity; }
+  .trow-positions:not(.thead) > span:nth-child(2) { grid-area: price; font-size: 13px; color: var(--moss); align-self: end; }
+  .trow-positions:not(.thead) > span:nth-child(4) { grid-area: value; font-size: 16px; font-weight: 600; text-align: right; align-self: end; }
+  .trow-positions:not(.thead) > span:nth-child(6):not(:empty) { grid-area: actions; display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  .trow-positions:not(.thead) > span:nth-child(6):empty { display: none; }
+}
 .trow-kamino-rates { grid-template-columns: 1.3fr 1fr 1fr 1fr 1fr 1fr; }
 @media (max-width: 600px) {
   .trow-kamino-rates { grid-template-columns: 1.6fr 1fr 1fr; }
