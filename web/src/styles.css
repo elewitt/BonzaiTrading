@@ -951,9 +951,9 @@ a.trow { color: inherit; text-decoration: none; }
    match those rows too and stack with their own nth-child rules below,
    hiding columns neither rule intended to hide on its own. */
 @media(max-width:600px) {
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions) { grid-template-columns: 1.6fr 1fr 1fr; }
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions) span:nth-child(3),
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions) span:nth-child(5) { display: none; }
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) { grid-template-columns: 1.6fr 1fr 1fr; }
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) span:nth-child(3),
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) span:nth-child(5) { display: none; }
 }
 
 /* Per-table .trow column templates — these used to be set via an inline

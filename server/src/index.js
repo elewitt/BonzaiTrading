@@ -24,7 +24,9 @@ import {
   initSchema, logActivity, getActivityForWallet,
   getCustomerStatus, getCustomerStatusDetail, setCustomerStatus,
   getOrCreateReferralCode, findReferralCodeOwner, attributeReferral,
-  getReferralsFor, getEquitiesStatsForWallet, getKaminoFeeStatsForWallet, getKaminoFeeTotals,
+  getReferralsFor, getTopReferrers, getEquitiesStatsForWallet, getKaminoFeeStatsForWallet, getKaminoFeeTotals,
+  getReferralPayoutsTotal, insertPendingReferralPayout, markReferralPayoutSent, markReferralPayoutFailed,
+  markReferralPayoutPaidManually, getPendingManualPayoutRequests, getReferralPayoutsFor,
   createKaminoFeeObligation, getUnpaidKaminoFeeObligation, markKaminoFeeObligationPaid,
   createStrategy, listStrategiesForWallet, countActiveStrategiesForWallet,
   setStrategyStatus, touchStrategyEvaluated, getStrategyById,
@@ -321,6 +323,29 @@ function trackSponsorSpend(lamports) {
   const today = new Date().toISOString().slice(0, 10);
   if (sponsorSpendDay !== today) { sponsorSpendDay = today; sponsorSpendLamports = 0; }
   sponsorSpendLamports += lamports;
+}
+
+// Referral payout budget: a SEPARATE cap from the SOL gas one above (this
+// is real earned-revenue payout, not gas sponsorship — different pool,
+// different purpose, shouldn't share a limit meant for something else).
+// Same in-memory-only, resets-on-restart shape — acceptable here because
+// it's explicitly a SECONDARY backstop, not the primary correctness
+// mechanism: the actual "have they already been paid this much" check is
+// the DB-backed referral_payouts ledger (see getReferralPayoutsTotal),
+// which is durable across restarts/instances. This just bounds worst-case
+// daily exposure if that computation ever has a bug.
+const REFERRAL_PAYOUT_DAILY_CAP_USD = Number(process.env.REFERRAL_PAYOUT_DAILY_CAP_USD || 200);
+let referralPayoutSpendDay = null;
+let referralPayoutSpendUsd = 0;
+function referralPayoutBudgetOk(amountUsd) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (referralPayoutSpendDay !== today) { referralPayoutSpendDay = today; referralPayoutSpendUsd = 0; }
+  return referralPayoutSpendUsd + amountUsd <= REFERRAL_PAYOUT_DAILY_CAP_USD;
+}
+function trackReferralPayoutSpend(amountUsd) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (referralPayoutSpendDay !== today) { referralPayoutSpendDay = today; referralPayoutSpendUsd = 0; }
+  referralPayoutSpendUsd += amountUsd;
 }
 
 // Real, on-chain balance of `mint` held by `owner` — used to refuse sponsoring
@@ -1510,6 +1535,75 @@ async function buildTransferTx({ from, to, amount, mint: mintStr, decimals: deci
   return { transaction };
 }
 
+/** Sponsor-signs-and-submits USDC transfer, used ONLY for automated
+ * referral payouts (/api/referrals/claim below) — reuses buildTransferTx's
+ * ATA-derivation/creation logic above, but that function is hardwired
+ * with the USER as payer/signer (payerKey: fromPubkey, returns an
+ * unsigned tx for the client to sign), so this is new code rather than a
+ * parameter swap: the sponsor unilaterally signs and sends server-side,
+ * since there's no user present to co-sign a payout the platform
+ * initiates on its own. USDC-only (not the generic any-mint tool
+ * buildTransferTx is) — throws rather than silently mis-encoding if USDC
+ * ever turned out to be Token-2022 on-chain (it isn't; belt-and-suspenders
+ * check, not an expected path). */
+async function sendSponsorUsdc(toAddress, amountAtoms) {
+  const fromPubkey = sponsor.publicKey;
+  const toPubkey = new PublicKey(toAddress);
+  const mintPubkey = new PublicKey(USDC.mint);
+
+  const mintInfo = await connection.getAccountInfo(mintPubkey);
+  if (!mintInfo) throw new Error("USDC mint not found on-chain");
+  const tokenProgramId = mintInfo.owner;
+  if (tokenProgramId.equals(TOKEN_2022_PROGRAM)) throw new Error("unexpected: USDC mint reports as Token-2022");
+
+  const fromAta = deriveAta(fromPubkey, mintPubkey, tokenProgramId);
+  const toAta = deriveAta(toPubkey, mintPubkey, tokenProgramId);
+
+  const instructions = [];
+  const toAtaInfo = await connection.getAccountInfo(toAta);
+  if (!toAtaInfo) {
+    instructions.push(new TransactionInstruction({
+      programId: ATA_PROGRAM,
+      keys: [
+        { pubkey: fromPubkey,              isSigner: true,  isWritable: true  },
+        { pubkey: toAta,                   isSigner: false, isWritable: true  },
+        { pubkey: toPubkey,                isSigner: false, isWritable: false },
+        { pubkey: mintPubkey,              isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: tokenProgramId,          isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from([1]), // 1 = CreateIdempotent
+    }));
+  }
+
+  const transferData = Buffer.alloc(9);
+  transferData[0] = 3; // Transfer (instruction 3) — standard Token program
+  transferData.writeBigUInt64LE(BigInt(amountAtoms), 1);
+  instructions.push(new TransactionInstruction({
+    programId: tokenProgramId,
+    keys: [
+      { pubkey: fromAta,    isSigner: false, isWritable: true  },
+      { pubkey: toAta,      isSigner: false, isWritable: true  },
+      { pubkey: fromPubkey, isSigner: true,  isWritable: false },
+    ],
+    data: transferData,
+  }));
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  const message = new TransactionMessage({
+    payerKey: fromPubkey,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message();
+
+  const tx = new VersionedTransaction(message);
+  tx.sign([sponsor]);
+  const sig = await connection.sendRawTransaction(tx.serialize());
+  await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+  console.log(`[referral-payout] sent ${amountAtoms} USDC atoms sponsor→${short(toAddress)} sig=${sig}`);
+  return sig;
+}
+
 app.post("/api/withdraw", requireAuth, requireAllowedGeo, requireActiveAccount, orderLimiter, async (req, res) => {
   try {
     const { transaction } = await buildTransferTx(req.body || {});
@@ -2395,12 +2489,177 @@ app.get("/api/referrals/dashboard", requireAuth, async (req, res) => {
       kaminoFees: acc.kaminoFees + r.kaminoFees,
     }), { volume: 0, equitiesFees: 0, perpsFees: 0, kaminoFees: 0 });
 
+    // Reuses the fan-out totals already computed above (no extra fetch) —
+    // just subtracts what's already been paid out per fee_source, so the
+    // client displays a server-computed number rather than re-deriving
+    // claim eligibility itself. /api/referrals/claim and /request-payout
+    // still do their OWN fresh authoritative computation at click-time —
+    // this is display-only, a few seconds of staleness between page-load
+    // and clicking Claim is fine (same tolerance the live "total earned"
+    // figure above already has).
+    const [kaminoPaid, perpsPaid, equitiesPaid] = await Promise.all([
+      getReferralPayoutsTotal(req.privyUserId, "kamino"),
+      getReferralPayoutsTotal(req.privyUserId, "perps"),
+      getReferralPayoutsTotal(req.privyUserId, "equities"),
+    ]);
+    const payable = {
+      kamino: Math.max(0, 0.5 * totals.kaminoFees - kaminoPaid),
+      perps: Math.max(0, 0.5 * totals.perpsFees - perpsPaid),
+      equities: Math.max(0, 0.5 * totals.equitiesFees - equitiesPaid),
+    };
+
     res.json({
       code,
       signupCount: rows.length,
       totals: { ...totals, totalEarned: 0.5 * (totals.equitiesFees + totals.perpsFees + totals.kaminoFees) },
       referrals: rows,
+      payable,
     });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Referral payouts —————
+ * Kamino fees land immediately in the sponsor wallet with no manual claim
+ * step (see server/src/index.js's Kamino fee-charging code) — the ONLY one
+ * of the 3 fee sources that's genuinely liquid on demand, so it's the only
+ * one auto-paid here. Perps (Arbitrum, needs 2 manual admin steps) and
+ * Equities (needs an admin sweep first) go through /api/referrals/
+ * request-payout instead — reviewed and paid by hand. */
+app.post("/api/referrals/claim", requireAuth, bridgeGasLimiter, async (req, res) => {
+  try {
+    if (!sponsor) return res.status(503).json({ error: "Payouts are temporarily unavailable." });
+
+    const referred = await getReferralsFor(req.privyUserId);
+    const kaminoStats = await Promise.all(
+      referred.map((r) => getKaminoFeeStatsForWallet(r.referred_wallet_address, r.created_at, KAMINO_FEE_BPS)),
+    );
+    const totalEarned = 0.5 * kaminoStats.reduce((sum, s) => sum + s.fees, 0);
+    const alreadyPaid = await getReferralPayoutsTotal(req.privyUserId, "kamino");
+    const payableNow = totalEarned - alreadyPaid;
+
+    const MIN_CLAIM_USD = 2;
+    const MAX_CLAIM_USD = 500;
+    if (payableNow < MIN_CLAIM_USD) {
+      return res.status(400).json({ error: `Minimum claim is $${MIN_CLAIM_USD} — you have $${Math.max(0, payableNow).toFixed(2)} available.` });
+    }
+    if (payableNow > MAX_CLAIM_USD) {
+      // An anomalously large figure more likely means an accounting bug
+      // than a legitimate claim — refuse and flag for manual review
+      // rather than auto-paying an unverified amount (or silently
+      // capping it, which could mask the same underlying bug).
+      console.error(`[referral-payout] ANOMALY privyUserId=${req.privyUserId} payable=$${payableNow.toFixed(2)} exceeds $${MAX_CLAIM_USD} max — refusing auto-pay, needs manual review`);
+      return res.status(400).json({ error: "This claim needs manual review — contact support." });
+    }
+    if (!referralPayoutBudgetOk(payableNow)) {
+      return res.status(503).json({ error: "Daily payout budget reached — try again tomorrow." });
+    }
+
+    const user = await privyClient.getUserById(req.privyUserId).catch(() => null);
+    const walletAddress = user?.linkedAccounts.find((a) => a.type === "wallet" && a.chainType === "solana")?.address;
+    if (!walletAddress) return res.status(400).json({ error: "No Solana wallet found on your account." });
+
+    let payoutId;
+    try {
+      payoutId = await insertPendingReferralPayout({
+        referrerPrivyUserId: req.privyUserId, feeSource: "kamino", amountUsd: payableNow,
+        method: "auto_onchain", walletAddress,
+      });
+    } catch (e) {
+      if (e.code === "23505") return res.status(409).json({ error: "A claim is already in progress." });
+      throw e;
+    }
+
+    try {
+      const amountAtoms = Math.floor(payableNow * 10 ** USDC.decimals);
+      const sig = await sendSponsorUsdc(walletAddress, amountAtoms);
+      await markReferralPayoutSent(payoutId, sig);
+      trackReferralPayoutSpend(payableNow);
+      res.json({ amountPaid: payableNow, txSignature: sig });
+    } catch (sendErr) {
+      await markReferralPayoutFailed(payoutId);
+      throw sendErr;
+    }
+  } catch (e) {
+    console.error("[referral-payout] claim failed:", e.message);
+    res.status(502).json({ error: "Payout failed — please try again." });
+  }
+});
+
+/* ————— Referral manual payout requests (Perps + Equities) —————
+ * Both need a manual admin claim step before the money is even liquid
+ * (Hyperliquid builder-fee sweep+withdraw on Arbitrum; Jupiter referral
+ * account sweep on Solana) — this queues a request for the admin to
+ * review and pay by hand, rather than pretending they're instant like
+ * the Kamino path above. */
+app.post("/api/referrals/request-payout", requireAuth, bridgeGasLimiter, async (req, res) => {
+  try {
+    const { feeSource } = req.body || {};
+    if (!["perps", "equities"].includes(feeSource)) {
+      return res.status(400).json({ error: "feeSource must be 'perps' or 'equities'" });
+    }
+
+    const referred = await getReferralsFor(req.privyUserId);
+    const stats = await Promise.all(referred.map(async (r) => {
+      if (feeSource === "perps") {
+        if (!r.referred_evm_address) return { fees: 0 };
+        return getUserPerpsStats(r.referred_evm_address, new Date(r.created_at).getTime()).catch(() => ({ fees: 0 }));
+      }
+      return getEquitiesStatsForWallet(r.referred_wallet_address, r.created_at);
+    }));
+    const totalEarned = 0.5 * stats.reduce((sum, s) => sum + s.fees, 0);
+    const alreadyPaid = await getReferralPayoutsTotal(req.privyUserId, feeSource);
+    const requestable = totalEarned - alreadyPaid;
+
+    const MIN_REQUEST_USD = 5;
+    if (requestable < MIN_REQUEST_USD) {
+      return res.status(400).json({ error: `Minimum payout request is $${MIN_REQUEST_USD} — you have $${Math.max(0, requestable).toFixed(2)} available.` });
+    }
+
+    const user = await privyClient.getUserById(req.privyUserId).catch(() => null);
+    const walletAddress = user?.linkedAccounts.find((a) => a.type === "wallet" && a.chainType === "solana")?.address;
+
+    try {
+      await insertPendingReferralPayout({
+        referrerPrivyUserId: req.privyUserId, feeSource, amountUsd: requestable,
+        method: "manual_request", walletAddress: walletAddress || null,
+      });
+    } catch (e) {
+      if (e.code === "23505") return res.status(409).json({ error: "A payout request is already pending for this." });
+      throw e;
+    }
+    res.json({ requested: requestable });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.get("/api/referrals/payouts", requireAuth, async (req, res) => {
+  try {
+    const payouts = await getReferralPayoutsFor(req.privyUserId);
+    res.json({ payouts });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// Ranked by signup count, not $ earned (see getTopReferrers' own comment on
+// why) — truncated wallet address only, resolved server-side, so a full
+// address for someone who ISN'T the caller never goes over the wire (this
+// is visible to any authenticated user, not just the referrer themselves).
+app.get("/api/referrals/leaderboard", requireAuth, async (req, res) => {
+  try {
+    const top = await getTopReferrers(10);
+    const rows = await Promise.all(top.map(async (r) => {
+      const user = await privyClient.getUserById(r.privyUserId).catch(() => null);
+      const address = user?.linkedAccounts.find((a) => a.type === "wallet" && a.chainType === "solana")?.address;
+      return {
+        wallet: address ? `${address.slice(0, 4)}…${address.slice(-4)}` : "—",
+        referralCount: r.referralCount,
+      };
+    }));
+    res.json({ leaderboard: rows });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
@@ -2723,6 +2982,34 @@ app.post("/api/admin/hl-builder/withdraw", requireAdmin, async (req, res) => {
     if (!destination || !amountUsdc) return res.status(400).json({ error: "destination and amountUsdc required" });
     const result = await withdrawFromSponsor(destination, amountUsdc);
     res.json({ ok: true, result });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Admin / ops: referral manual payout requests —————
+ * The Perps/Equities queue from /api/referrals/request-payout above —
+ * pay the referrer by hand however's appropriate (their fees may be sat
+ * on Arbitrum or need a Jupiter sweep first, see that endpoint's own
+ * comment) and mark the request paid with whatever reference you want
+ * for your own records. */
+app.get("/api/admin/referral-payouts/pending", requireAdmin, async (req, res) => {
+  try {
+    const pending = await getPendingManualPayoutRequests();
+    res.json({ pending });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.post("/api/admin/referral-payouts/:id/mark-paid", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid id" });
+    const { txSignature } = req.body || {};
+    const updatedId = await markReferralPayoutPaidManually(id, txSignature || null);
+    if (!updatedId) return res.status(404).json({ error: "no pending payout with that id" });
+    res.json({ ok: true, id: updatedId });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
