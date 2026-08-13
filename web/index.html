@@ -11,13 +11,29 @@
   </head>
   <body>
     <script>
+      // Catches errors that happen before main.jsx even runs (e.g. the
+      // bundle itself failing to load/parse) — separate from and earlier
+      // than main.jsx's own error handling, which is why it's a plain
+      // classic script here rather than sharing that code directly.
+      // import.meta.env.DEV isn't available in a non-module script like
+      // this one, so production is detected by hostname instead — only
+      // the real production domains stay quiet; anything else (localhost,
+      // Vercel preview URLs) still gets the loud full-screen dump.
+      var _isProd = /^(bonzaitrading\.com|www\.bonzaitrading\.com)$/.test(location.hostname);
       function _showErr(text) {
+        if (_isProd) return;
         var el = document.getElementById('_dev_err');
         if (!el) { el = document.createElement('div'); el.id = '_dev_err'; el.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;padding:32px;'; document.body.appendChild(el); }
         el.innerHTML = '<pre style="color:red;font-size:13px;white-space:pre-wrap">' + text + '</pre>';
       }
-      window.onerror = function(msg, src, line, col, err) { _showErr(err ? err.stack : msg); };
-      window.addEventListener('unhandledrejection', function(e) { _showErr('Unhandled rejection:\n' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason))); });
+      window.onerror = function(msg, src, line, col, err) {
+        if (_isProd) console.error('Uncaught error:', err || msg);
+        _showErr(err ? err.stack : msg);
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        if (_isProd) console.error('Unhandled rejection:', e.reason);
+        _showErr('Unhandled rejection:\n' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason)));
+      });
     </script>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
