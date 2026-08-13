@@ -1130,7 +1130,20 @@ a.trow { color: inherit; text-decoration: none; }
 }
 
 /* ——— Deposit modal ——— */
-.deposit-modal { max-width: 380px; text-align: center; }
+.deposit-modal { max-width: 380px; text-align: center; transition: max-width .2s ease; }
+.deposit-modal-wide { max-width: 440px; }
+
+.deposit-tab-row { display: flex; gap: 8px; }
+.deposit-tab-btn {
+  flex: 1; border: 1px solid var(--line); background: var(--offwhite); border-radius: 999px;
+  padding: 8px 12px; font-family: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--moss); cursor: pointer; transition: all .15s;
+}
+.deposit-tab-btn:hover { border-color: var(--moss); }
+.deposit-tab-btn.active { background: var(--pine); border-color: var(--pine); color: #fff; }
+
+.cross-chain-deposit { display: flex; flex-direction: column; align-items: center; margin-top: 14px; }
+
 .deposit-qr-wrap {
   display: flex; justify-content: center; align-items: center;
   background: var(--paper); border-radius: 16px;

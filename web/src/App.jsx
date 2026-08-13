@@ -19,6 +19,7 @@ import ShareModal from "./components/ShareCard.jsx";
 import DemoAnimation from "./components/DemoAnimation.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import HelpChatWidget from "./components/HelpChatWidget.jsx";
+import CrossChainDeposit from "./components/CrossChainDeposit.jsx";
 import PerpsApp from "./perps/PerpsApp.jsx";
 import { PerpsCloseCell } from "./perps/PerpsPanel.jsx";
 import EquitiesMarketsApp from "./EquitiesMarketsApp.jsx";
@@ -417,6 +418,7 @@ export default function App() {
   const [customAllocs, setCustomAllocs] = useState([]);
   const [assetSearch, setAssetSearch] = useState("");
   const [depositOpen, setDepositOpen] = useState(false);
+  const [depositTab, setDepositTab] = useState("solana"); // "solana" | "bridge"
   const [usdtToken, setUsdtToken] = useState(null); // holdings entry for a detected USDT deposit
   const [usdtModalOpen, setUsdtModalOpen] = useState(false);
   const [usdtHandledAmount, setUsdtHandledAmount] = useState(0); // uiAmount already prompted/converted — don't re-nag for the same deposit
@@ -3300,7 +3302,7 @@ export default function App() {
 
           {depositOpen && (
             <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setDepositOpen(false)}>
-              <div className="modal-box card deposit-modal">
+              <div className={`modal-box card deposit-modal ${depositTab === "bridge" ? "deposit-modal-wide" : ""}`}>
                 <div className="answer-header">
                   <p className="tiny label" style={{ margin: 0 }}>Deposit USDC</p>
                   <button className="x" onClick={() => setDepositOpen(false)}>×</button>
@@ -3309,24 +3311,38 @@ export default function App() {
                   onClick={() => fundWallet(address, { defaultFundingMethod: "card" })}>
                   <span className="fund-apple-icon">􀠦</span> Buy with Apple Pay / Card
                 </button>
-                <p className="tiny muted center" style={{ marginBottom: 20 }}>
+                <p className="tiny muted center" style={{ marginBottom: 16 }}>
                   Powered by Privy · no crypto needed to start
                 </p>
-                <p className="tiny muted" style={{ marginBottom: 8 }}>
-                  Or send USDC on Solana to your self-custodied wallet:
-                </p>
-                <div className="deposit-qr-wrap">
-                  <QRCodeSVG value={address} size={180} bgColor="transparent" fgColor="var(--ink)" level="M" />
+
+                <div className="deposit-tab-row">
+                  <button className={`deposit-tab-btn ${depositTab === "solana" ? "active" : ""}`}
+                    onClick={() => setDepositTab("solana")}>Solana</button>
+                  <button className={`deposit-tab-btn ${depositTab === "bridge" ? "active" : ""}`}
+                    onClick={() => setDepositTab("bridge")}>From another chain</button>
                 </div>
-                <div className="deposit-addr-row">
-                  <span className="mono deposit-addr">{address}</span>
-                  <button className="btn ghost deposit-copy-btn" onClick={copy}>
-                    {copied ? "Copied ✓" : "Copy"}
-                  </button>
-                </div>
-                <p className="tiny muted center" style={{ marginTop: 12 }}>
-                  Solana network only — do not send from other chains
-                </p>
+
+                {depositTab === "solana" ? (
+                  <>
+                    <p className="tiny muted" style={{ margin: "14px 0 8px" }}>
+                      Or send USDC on Solana to your self-custodied wallet:
+                    </p>
+                    <div className="deposit-qr-wrap">
+                      <QRCodeSVG value={address} size={180} bgColor="transparent" fgColor="var(--ink)" level="M" />
+                    </div>
+                    <div className="deposit-addr-row">
+                      <span className="mono deposit-addr">{address}</span>
+                      <button className="btn ghost deposit-copy-btn" onClick={copy}>
+                        {copied ? "Copied ✓" : "Copy"}
+                      </button>
+                    </div>
+                    <p className="tiny muted center" style={{ marginTop: 12 }}>
+                      Solana network only — do not send from other chains
+                    </p>
+                  </>
+                ) : (
+                  <CrossChainDeposit solanaAddress={address} />
+                )}
               </div>
             </div>
           )}
