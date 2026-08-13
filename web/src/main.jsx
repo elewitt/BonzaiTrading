@@ -1,8 +1,15 @@
 import { Buffer } from "buffer";
 window.Buffer = window.Buffer || Buffer;
 
-// Catch any uncaught error and paint it to the screen (overlay, not innerHTML on root)
+// Catch any uncaught error and paint it to the screen (overlay, not innerHTML
+// on root) — but only in dev. A production user has no use for a raw stack
+// trace, and painting one full-screen hides whatever's underneath even when
+// it's still working fine (confirmed against a real case: an unhandled
+// rejection from a benign, unrelated background call inside a third-party
+// SDK covered up an otherwise-functional modal). Production just logs to
+// the console instead — still inspectable via devtools, doesn't block the UI.
 function showDevError(text) {
+  if (!import.meta.env.DEV) return;
   let el = document.getElementById("_dev_err");
   if (!el) {
     el = document.createElement("div");
@@ -13,9 +20,11 @@ function showDevError(text) {
   el.innerHTML = `<pre style="color:red;font-family:monospace;white-space:pre-wrap">${text}</pre>`;
 }
 window.onerror = (msg, src, line, col, err) => {
+  console.error("Uncaught error:", err || msg);
   showDevError(`<b>Uncaught error:</b>\n${err ? err.stack : msg}`);
 };
 window.onunhandledrejection = (e) => {
+  console.error("Unhandled promise rejection:", e.reason);
   showDevError(`<b>Unhandled promise rejection:</b>\n${e.reason?.stack || e.reason}`);
 };
 
