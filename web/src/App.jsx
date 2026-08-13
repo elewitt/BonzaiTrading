@@ -517,7 +517,12 @@ export default function App() {
   const handleFundWallet = async () => {
     setFundWalletError(null);
     try {
-      await fundWallet(address, { defaultFundingMethod: "card" });
+      // asset:"USDC" + cluster locks the funding flow straight to Solana
+      // mainnet USDC — per @privy-io/react-auth/solana's own
+      // SolanaFundingConfig type, this is the one config shape that
+      // actually reaches the popup; there's no separate "network" picker
+      // to lock elsewhere. Without it the flow defaults to native SOL.
+      await fundWallet(address, { defaultFundingMethod: "card", asset: "USDC", cluster: { name: "mainnet-beta" } });
     } catch (e) {
       setFundWalletError(e instanceof Error ? e.message : String(e));
     }
