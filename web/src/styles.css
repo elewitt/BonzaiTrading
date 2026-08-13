@@ -1144,11 +1144,6 @@ a.trow { color: inherit; text-decoration: none; }
 
 .cross-chain-deposit { display: flex; flex-direction: column; align-items: center; margin-top: 14px; width: 100%; }
 
-.moonpay-frame {
-  width: 100%; max-width: 400px; height: 600px; border: 1px solid var(--line);
-  border-radius: 12px; background: var(--card);
-}
-
 .cc-chain-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; width: 100%; }
 .cc-chain-btn {
   border: 1px solid var(--line); background: var(--card); border-radius: 12px;

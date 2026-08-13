@@ -50,7 +50,6 @@ export const api = {
   requestReferralPayout: (feeSource) => post("/api/referrals/request-payout", { feeSource }),
   referralPayouts: ()             => get("/api/referrals/payouts"),
   helpChat: (messages)            => post("/api/help-chat", { messages }),
-  moonpayWidgetUrl: ()             => get("/api/moonpay/widget-url"),
   order:    (q)                  => get(`/api/order?${new URLSearchParams(q)}`),
   quotePreview: (q)              => get(`/api/quote-preview?${new URLSearchParams(q)}`),
   liquidityFlags: ()             => get("/api/liquidity-flags"),

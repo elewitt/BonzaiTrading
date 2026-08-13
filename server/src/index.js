@@ -54,16 +54,6 @@ const PORT = process.env.PORT || 8787;
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 
-// MoonPay fiat on-ramp. Requires a real MoonPay business account (KYB
-// verification) — until MOONPAY_API_KEY/MOONPAY_SECRET_KEY are set, the
-// signing endpoint below just returns 503, same "not configured yet, don't
-// crash" convention as ANTHROPIC_KEY/PRIVY_APP_SECRET above. Test-mode keys
-// (pk_test_/sk_test_) automatically route to MoonPay's sandbox host —
-// switching to live keys later needs no code change.
-const MOONPAY_API_KEY = process.env.MOONPAY_API_KEY || "";
-const MOONPAY_SECRET_KEY = process.env.MOONPAY_SECRET_KEY || "";
-const MOONPAY_USDC_SOL_CODE = "usdc_sol"; // verified against MoonPay's /v3/currencies — contractAddress matches our own USDC mint exactly
-
 // Optional gas sponsor. If set, this wallet is passed to Jupiter Ultra as the
 // integrator fee payer and co-signs every swap, so users never need SOL.
 // Fund it with a little SOL and keep the key ONLY on the server.
@@ -2083,41 +2073,6 @@ app.post("/api/help-chat", helpChatLimiter, async (req, res) => {
     res.json({ reply });
   } catch (e) {
     res.status(422).json({ error: String(e.message || e) });
-  }
-});
-
-/* ————— MoonPay: signed on-ramp widget URL —————
- * currencyCode + walletAddress must be pre-filled AND signed for MoonPay
- * to lock them (no UI to change them) — an unsigned URL with those params
- * either gets rejected or falls back to letting the user edit them, which
- * would defeat "USDC only, straight into your own wallet". Signing needs
- * the secret key, so it happens here, never client-side. baseCurrencyCode
- * is deliberately left unset — MoonPay auto-picks the visitor's local
- * fiat currency/payment methods from their IP, which is what makes this
- * work for non-US buyers without us hand-listing supported currencies. */
-app.get("/api/moonpay/widget-url", requireAuth, parseLimiter, async (req, res) => {
-  try {
-    if (!MOONPAY_API_KEY || !MOONPAY_SECRET_KEY) {
-      return res.status(503).json({ error: "Card on-ramp isn't set up yet — check back soon." });
-    }
-    const user = await privyClient.getUserById(req.privyUserId).catch(() => null);
-    const walletAddress = user?.linkedAccounts.find((a) => a.type === "wallet" && a.chainType === "solana")?.address;
-    if (!walletAddress) return res.status(400).json({ error: "No Solana wallet found on your account." });
-
-    const isTestKey = MOONPAY_API_KEY.startsWith("pk_test_");
-    const base = isTestKey ? "https://buy-sandbox.moonpay.com" : "https://buy.moonpay.com";
-
-    const params = new URLSearchParams({
-      apiKey: MOONPAY_API_KEY,
-      currencyCode: MOONPAY_USDC_SOL_CODE,
-      walletAddress,
-      theme: "light",
-    });
-    const query = `?${params.toString()}`;
-    const signature = crypto.createHmac("sha256", MOONPAY_SECRET_KEY).update(query).digest("base64");
-    res.json({ url: `${base}/${query}&signature=${encodeURIComponent(signature)}` });
-  } catch (e) {
-    res.status(502).json({ error: String(e.message || e) });
   }
 });
 

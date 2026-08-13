@@ -20,7 +20,6 @@ import DemoAnimation from "./components/DemoAnimation.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import HelpChatWidget from "./components/HelpChatWidget.jsx";
 import CrossChainDeposit from "./components/CrossChainDeposit.jsx";
-import MoonPayDeposit from "./components/MoonPayDeposit.jsx";
 import PerpsApp from "./perps/PerpsApp.jsx";
 import { PerpsCloseCell } from "./perps/PerpsPanel.jsx";
 import EquitiesMarketsApp from "./EquitiesMarketsApp.jsx";
@@ -419,7 +418,7 @@ export default function App() {
   const [customAllocs, setCustomAllocs] = useState([]);
   const [assetSearch, setAssetSearch] = useState("");
   const [depositOpen, setDepositOpen] = useState(false);
-  const [depositTab, setDepositTab] = useState("solana"); // "solana" | "moonpay" | "bridge"
+  const [depositTab, setDepositTab] = useState("solana"); // "solana" | "bridge"
   const [usdtToken, setUsdtToken] = useState(null); // holdings entry for a detected USDT deposit
   const [usdtModalOpen, setUsdtModalOpen] = useState(false);
   const [usdtHandledAmount, setUsdtHandledAmount] = useState(0); // uiAmount already prompted/converted — don't re-nag for the same deposit
@@ -3303,7 +3302,7 @@ export default function App() {
 
           {depositOpen && (
             <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setDepositOpen(false)}>
-              <div className={`modal-box card deposit-modal ${depositTab !== "solana" ? "deposit-modal-wide" : ""}`}>
+              <div className={`modal-box card deposit-modal ${depositTab === "bridge" ? "deposit-modal-wide" : ""}`}>
                 <div className="answer-header">
                   <p className="tiny label" style={{ margin: 0 }}>Deposit USDC</p>
                   <button className="x" onClick={() => setDepositOpen(false)}>×</button>
@@ -3319,10 +3318,8 @@ export default function App() {
                 <div className="deposit-tab-row">
                   <button className={`deposit-tab-btn ${depositTab === "solana" ? "active" : ""}`}
                     onClick={() => setDepositTab("solana")}>Solana</button>
-                  <button className={`deposit-tab-btn ${depositTab === "moonpay" ? "active" : ""}`}
-                    onClick={() => setDepositTab("moonpay")}>Card</button>
                   <button className={`deposit-tab-btn ${depositTab === "bridge" ? "active" : ""}`}
-                    onClick={() => setDepositTab("bridge")}>Bridge</button>
+                    onClick={() => setDepositTab("bridge")}>From another chain</button>
                 </div>
 
                 {depositTab === "solana" && (
@@ -3344,7 +3341,6 @@ export default function App() {
                     </p>
                   </>
                 )}
-                {depositTab === "moonpay" && <MoonPayDeposit />}
                 {depositTab === "bridge" && <CrossChainDeposit solanaAddress={address} />}
               </div>
             </div>
