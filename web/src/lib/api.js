@@ -49,6 +49,7 @@ export const api = {
   claimReferralPayout: ()         => post("/api/referrals/claim", {}),
   requestReferralPayout: (feeSource) => post("/api/referrals/request-payout", { feeSource }),
   referralPayouts: ()             => get("/api/referrals/payouts"),
+  helpChat: (messages)            => post("/api/help-chat", { messages }),
   order:    (q)                  => get(`/api/order?${new URLSearchParams(q)}`),
   quotePreview: (q)              => get(`/api/quote-preview?${new URLSearchParams(q)}`),
   liquidityFlags: ()             => get("/api/liquidity-flags"),

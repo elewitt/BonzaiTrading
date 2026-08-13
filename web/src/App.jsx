@@ -18,6 +18,7 @@ import HistoryScreen from "./components/HistoryScreen.jsx";
 import ShareModal from "./components/ShareCard.jsx";
 import DemoAnimation from "./components/DemoAnimation.jsx";
 import LandingPage from "./components/LandingPage.jsx";
+import HelpChatWidget from "./components/HelpChatWidget.jsx";
 import PerpsApp from "./perps/PerpsApp.jsx";
 import { PerpsCloseCell } from "./perps/PerpsPanel.jsx";
 import EquitiesMarketsApp from "./EquitiesMarketsApp.jsx";
@@ -3429,6 +3430,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <HelpChatWidget />
     </div>
   );
 }

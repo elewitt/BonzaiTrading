@@ -154,6 +154,18 @@ const strategyLimiter = rateLimit({
   keyGenerator: rateKey,
   skip: skipForQaBypass,
 });
+// No requireAuth on /api/help-chat (logged-out visitors evaluating the
+// product should be able to ask "how do I..." too) — this limiter is the
+// only abuse guard, so it's IP-keyed even for logged-in users (rateKey
+// would otherwise key on privyUserId, letting one signed-in account open
+// unlimited tabs/sessions against the LLM at no extra cost).
+const helpChatLimiter = rateLimit({
+  windowMs: 60_000,
+  max: Number(process.env.RATE_LIMIT_HELP_CHAT || 15),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+});
 
 /* ————— auth: verify Privy access tokens on state-changing / paid routes —————
  * Requires PRIVY_APP_ID + PRIVY_APP_SECRET (dashboard.privy.io → your app →
@@ -2000,6 +2012,65 @@ If relevant, mention specific available symbols the user could trade — but alw
     // Deduplicate sources
     const sources = [...new Map(allSources.map((s) => [s.url, s])).values()].slice(0, 5);
     res.json({ answer: finalText, sources, mentionedSymbols });
+  } catch (e) {
+    res.status(422).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— Claude: site-help chat widget (bottom-right bubble) —————
+ * Purely a "how do I find X" / "what does Y do" navigator — it never signs
+ * or executes anything. Deliberately told to redirect any actual trading
+ * intent back to the main prompt bar rather than trying to act itself, so
+ * this stays a second read-only surface, not a second place a user has to
+ * trust with a transaction. No web_search tool (unlike /api/ask above) —
+ * everything it needs to answer is static knowledge about this app's own
+ * layout, so skipping tool-use keeps replies fast and keeps it from
+ * wandering off into general internet Q&A it wasn't built for. */
+const HELP_CHAT_SYSTEM = `You are the site-help assistant for Bonzai Trading, a web app (bonzaitrading.com) for trading tokenized stocks, crypto/equity perpetual futures, and borrow/lend — all from one wallet.
+
+Your ONLY job is helping the user find their way around the app and understand what things do. You are NOT a financial advisor and you NEVER place trades, move funds, or take any action yourself — you only explain and point. If someone asks you to actually do something ("buy $100 of TSLA", "close my SOL long", "deposit into perps"), tell them to type that directly into the main prompt bar at the top of the Home screen ("What would you like to do?") — that bar (and only that bar) understands natural-language commands and actually executes them.
+
+App layout, for reference when answering:
+- **Home dashboard**: shows Total Portfolio Value at the top, the main prompt bar ("What would you like to do?" + Go button) for natural-language trading/deposit/withdraw commands, Deposit/Withdraw buttons, a History icon (transaction history), and a product-tab switcher (Brokerage / Perpetual Futures / Borrow-Lend) each showing that product's own holdings card.
+- **Brokerage** (tokenized stocks, "xStocks"): buy/sell fractional shares of real companies and ETFs (e.g. Tesla → TSLAx) on Solana. Reachable via the Home dashboard's Brokerage tab or the top-nav "Markets" menu → "Equities Markets".
+- **Perpetual Futures**: leveraged long/short trading on crypto and equities, powered by Hyperliquid. Reachable via the top-nav "Markets" menu → "Perpetual Futures Markets", or the bottom nav "Perps" tab (mobile). Depositing/withdrawing perps margin can be done by typing it into the main prompt bar (e.g. "deposit $50 into perps") or from inside the Perps screen itself.
+- **Borrow / Lend**: post crypto/stock collateral and borrow against it, powered by Kamino. Reachable via "Markets" menu → "Borrow / Lend Markets", or the bottom nav "Borrow" tab (mobile).
+- **Prediction Markets**: reachable via "Markets" menu → "Prediction Markets".
+- **Trading Agent**: an automated bot the user can link to Telegram and toggle on/off to trade on their behalf. Reachable via the bottom nav "Agent" tab (mobile) or the profile/account menu.
+- **Refer & Earn**: share link + QR code, a leaderboard of top referrers, and a "Get Paid" section for claiming referral rewards (instant on-chain claim for Borrow/Lend-sourced rewards; a Request Payout queue for Perps/Equities-sourced rewards, reviewed by the team). Reachable from the profile menu (top-right, desktop) → "Refer & Earn".
+- **Account/profile menu** (top-right avatar/name on desktop): My Account, Settings, Transaction History, Refer & Earn, Sign Out.
+- Gas fees are sponsored — users don't need to hold SOL to transact.
+
+Answer in 2-4 short sentences, plain language, concrete ("tap the Markets menu at the top, then Borrow / Lend Markets" rather than vague hand-waving). If you don't know something about the app, say so plainly rather than guessing. Reply in plain prose only — no markdown (no headers, no bullet lists, no bold/italic asterisks) — your answer is shown in a small plain-text chat bubble.`;
+
+app.post("/api/help-chat", helpChatLimiter, async (req, res) => {
+  try {
+    if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set");
+    const incoming = Array.isArray(req.body?.messages) ? req.body.messages : null;
+    if (!incoming || incoming.length === 0) return res.status(400).json({ error: "messages required" });
+
+    // Bound both turn count and per-message size before they ever reach
+    // Claude — this endpoint has no auth gate, so it's the only thing
+    // standing between an anonymous caller and unbounded token spend.
+    const messages = incoming
+      .slice(-20)
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
+    if (messages.length === 0) return res.status(400).json({ error: "messages required" });
+    if (messages[messages.length - 1].role !== "user") return res.status(400).json({ error: "last message must be from the user" });
+
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 400, system: HELP_CHAT_SYSTEM, messages }),
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const reply = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+    if (!reply) throw new Error("no response from Claude");
+
+    res.json({ reply });
   } catch (e) {
     res.status(422).json({ error: String(e.message || e) });
   }
