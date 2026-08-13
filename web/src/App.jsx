@@ -419,6 +419,7 @@ export default function App() {
   const [assetSearch, setAssetSearch] = useState("");
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositTab, setDepositTab] = useState("solana"); // "solana" | "bridge"
+  const [fundWalletError, setFundWalletError] = useState(null);
   const [usdtToken, setUsdtToken] = useState(null); // holdings entry for a detected USDT deposit
   const [usdtModalOpen, setUsdtModalOpen] = useState(false);
   const [usdtHandledAmount, setUsdtHandledAmount] = useState(0); // uiAmount already prompted/converted — don't re-nag for the same deposit
@@ -506,6 +507,21 @@ export default function App() {
   }, [address, refreshHoldings]);
 
   const { fundWallet } = useFundWallet({ onUserExited: refreshHoldings });
+  // fundWallet rejects rather than resolves when it can't open (e.g. the
+  // Privy Dashboard's Account Funding page hasn't had a method enabled
+  // yet — "Wallet funding is not enabled" — or a blocked popup); left
+  // unhandled that's an uncaught promise rejection, which this app's own
+  // window.onunhandledrejection (main.jsx) paints as a raw full-page
+  // stack-trace dump. Catch it here so a real user gets an inline
+  // message instead.
+  const handleFundWallet = async () => {
+    setFundWalletError(null);
+    try {
+      await fundWallet(address, { defaultFundingMethod: "card" });
+    } catch (e) {
+      setFundWalletError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // ——— USDT deposits: not a supported holding on this platform, so any
   // USDT that lands in the wallet (e.g. sent to the deposit address by
@@ -3308,12 +3324,16 @@ export default function App() {
                   <button className="x" onClick={() => setDepositOpen(false)}>×</button>
                 </div>
                 <button className="btn primary fund-pay-btn" style={{ width: "100%", marginBottom: 12 }}
-                  onClick={() => fundWallet(address, { defaultFundingMethod: "card" })}>
+                  onClick={handleFundWallet}>
                   <span className="fund-apple-icon">􀠦</span> Buy with Apple Pay / Card
                 </button>
-                <p className="tiny muted center" style={{ marginBottom: 16 }}>
-                  Powered by Privy · no crypto needed to start
-                </p>
+                {fundWalletError ? (
+                  <p className="err tiny center" style={{ marginBottom: 16 }}>{fundWalletError}</p>
+                ) : (
+                  <p className="tiny muted center" style={{ marginBottom: 16 }}>
+                    Powered by Privy · no crypto needed to start
+                  </p>
+                )}
 
                 <div className="deposit-tab-row">
                   <button className={`deposit-tab-btn ${depositTab === "solana" ? "active" : ""}`}
