@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useId } from "react";
 import { usd } from "../lib/api.js";
 
 const SEG_COLORS = ["#1C4A38", "#2F6B50", "#4C8A69", "#71A987", "#9AC4A8", "#C6DCCC", "#173B2D", "#3E7A5C", "#5E9578", "#86B497"];
@@ -32,6 +32,14 @@ function shade(hex, percent) {
 
 export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick }) {
   const [active, setActive] = useState(null);
+  // Dashboard cards render the same Donut twice at once (mobile + desktop
+  // copies, CSS-toggled rather than removed from the DOM — see
+  // .product-hero-mobile/-desktop in App.jsx) — hardcoded ids on the
+  // gradients/filter below would collide between the two instances and
+  // url(#id) fills silently fail (text labels still render since they
+  // don't depend on the id lookup), leaving wedges invisible. useId()
+  // gives each mounted instance its own namespace.
+  const uid = useId();
 
   const segs = useMemo(() => {
     const items = rows.map((r, i) => ({
@@ -77,15 +85,12 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
       <svg width={S} height={S} viewBox={`0 0 ${S} ${S}`} role="img"
         aria-label="Portfolio allocation" onMouseLeave={() => setActive(null)}>
         <defs>
-          <filter id="donutShadow" x="-40%" y="-40%" width="180%" height="180%">
-            <feDropShadow dx="0" dy="5" stdDeviation="5" floodColor="#0A1812" floodOpacity="0.30" />
-          </filter>
-          <radialGradient id="donutHole" cx="42%" cy="38%" r="70%">
+          <radialGradient id={`donutHole-${uid}`} cx="42%" cy="38%" r="70%">
             <stop offset="55%" stopColor="#0A1812" stopOpacity="0" />
             <stop offset="100%" stopColor="#0A1812" stopOpacity="0.14" />
           </radialGradient>
           {segs.map((s) => (
-            <linearGradient key={`grad-${s.key}`} id={`grad-${s.key}`}
+            <linearGradient key={`grad-${s.key}`} id={`grad-${uid}-${s.key}`}
               gradientUnits="userSpaceOnUse"
               x1={cx - R} y1={cy - R} x2={cx + R} y2={cy + R}>
               <stop offset="0%" stopColor={shade(s.color, 20)} />
@@ -95,14 +100,19 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
           ))}
         </defs>
 
-        <circle cx={cx} cy={cy} r={r + 1} fill="url(#donutHole)" />
+        <circle cx={cx} cy={cy} r={r + 1} fill={`url(#donutHole-${uid})`} />
 
-        <g filter="url(#donutShadow)">
+        {/* Plain CSS drop-shadow instead of an SVG <filter>+url(#id) — same
+            visual result with no id-lookup in the path, so a decorative
+            shadow can never take the whole wedge down with it if a url(#id)
+            reference ever fails to resolve (stale defs during a fast
+            re-render, a browser-specific SVG filter quirk, etc). */}
+        <g style={{ filter: "drop-shadow(0px 5px 5px rgba(10,24,18,.30))" }}>
           {segs.map((s) => {
             const mid = (s.a0 + s.a1) / 2;
             const on = active === s.key;
             return (
-              <path key={s.key} d={arcPath(s.a0, s.a1)} fill={`url(#grad-${s.key})`}
+              <path key={s.key} d={arcPath(s.a0, s.a1)} fill={`url(#grad-${uid}-${s.key})`}
                 stroke="rgba(255,255,255,.35)" strokeWidth="1"
                 opacity={active && !on ? 0.3 : 1}
                 style={{
