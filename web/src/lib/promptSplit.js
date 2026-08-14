@@ -44,10 +44,20 @@ function mergeRuns(triggers) {
   return runs;
 }
 
+// Used to label a segment that a connector couldn't cleanly split apart
+// (two adjacent runs of different domains with no comma/"and"/etc. between
+// them, e.g. "remove my Tesla as collateral" — a TRADE_RE word ("remove")
+// and a BORROW_RE word ("collateral") in the same clause). Order matters:
+// BORROW_RE/PERP_RE vocabulary (collateral, kamino, leverage, perps, 5x,
+// ...) is domain-specific and essentially never shows up outside its own
+// domain, while TRADE_RE's word list (buy/sell/remove/make/build/...) is
+// broad and generic enough to false-trigger inside other domains' phrasing
+// — so the specific signal should win over the generic one, not "trade"
+// by default just because it's checked first.
 function classify(text, { TRADE_RE, PERP_RE, BORROW_RE }) {
-  if (TRADE_RE.test(text)) return "trade";
-  if (PERP_RE.test(text)) return "perp";
   if (BORROW_RE.test(text)) return "borrow";
+  if (PERP_RE.test(text)) return "perp";
+  if (TRADE_RE.test(text)) return "trade";
   return null;
 }
 

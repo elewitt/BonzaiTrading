@@ -565,6 +565,39 @@ app.get("/api/holdings/:address", async (req, res) => {
  *      and the raw text is logged either way so a persistent failure is
  *      actually debuggable next time instead of a bare error string.
  */
+// Finds the first complete, balanced {...} object in text and returns its
+// source substring, or null if none closes. Replaces a naive
+// /\{[\s\S]*\}/ regex, which greedily matches from the FIRST "{" to the
+// LAST "}" anywhere in the response — if Claude adds any trailing prose
+// after the real JSON that happens to contain a stray "}" (or another
+// unrelated {...} aside), the greedy match swallows everything up through
+// that later brace too, producing a malformed string that fails to parse
+// with "Unexpected non-whitespace character after JSON at position N".
+// Confirmed as a real, live failure, not a hypothetical — this scans
+// character-by-character with brace-depth + string/escape tracking so
+// trailing text after a genuinely complete object can never corrupt it.
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, inString = false, escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null; // never closed — genuinely incomplete/truncated response
+}
+
 async function callClaudeForJson({ system, prompt, maxTokens, label }) {
   const MAX_ATTEMPTS = 2;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -594,8 +627,16 @@ async function callClaudeForJson({ system, prompt, maxTokens, label }) {
     }
     const raw_text = (data.content || [])
       .filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    const jsonMatch = raw_text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    const jsonStr = extractFirstJsonObject(raw_text);
+    if (jsonStr) {
+      try {
+        return JSON.parse(jsonStr);
+      } catch (e) {
+        console.error(`[${label}] extracted JSON failed to parse (attempt ${attempt}/${MAX_ATTEMPTS}):`, e.message, "extracted:", jsonStr.slice(0, 500));
+        if (attempt < MAX_ATTEMPTS) continue;
+        throw new Error("Claude returned malformed JSON");
+      }
+    }
     console.error(`[${label}] Claude returned no JSON (attempt ${attempt}/${MAX_ATTEMPTS}), raw text:`, raw_text.slice(0, 500));
     if (attempt < MAX_ATTEMPTS) continue;
     throw new Error("Claude returned no JSON");
