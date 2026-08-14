@@ -958,7 +958,13 @@ export default function App() {
   // it's safe to route here without touching the brokerage case. Confirmed
   // as a real gap: "can you close my SOL long position" matched no trigger
   // word and fell all the way through to the generic Q&A research assistant.
-  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\bhyperliquid\b|\b\d+(\.\d+)?x\b|\b(long|short)\s+position\b|\bclose\s+(my|the)\s+(long|short)\b/i;
+  // The exact-adjacency "close (my|the) (long|short)" alternative below was
+  // that fix, but confirmed as its own real gap: "close my BTC long" has
+  // the asset ticker sitting between "my" and "long", so it didn't match
+  // either — added a same-sentence proximity match (close ↔ long/short
+  // within ~25 chars, either order) to cover an asset name/other words in
+  // between, without the exact-adjacency version's brittleness.
+  const PERP_RE = /\bleverage\b|\bperps?\b|\bfutures?\b|\bhyperliquid\b|\b\d+(\.\d+)?x\b|\b(long|short)\s+position\b|\bclose\s+(my|the)\s+(long|short)\b|\bclose\b[^.!?]{0,25}\b(long|short)\b|\b(long|short)\b[^.!?]{0,25}\bclose\b/i;
   const HL_MIN_NOTIONAL_USD = 10; // Hyperliquid's own exchange-wide minimum order value
   // Kamino borrow/lend signal — "borrow" alone is unambiguous (no other
   // flow in this app uses that verb); "collateral"/"kamino"/"ltv" cover
