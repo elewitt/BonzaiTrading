@@ -30,6 +30,7 @@ import PositionCard from "./borrow/PositionCard.jsx";
 import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
 import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, setAuthTokenProvider } from "./lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials, hasQaBypassCredentials } from "./lib/qaBypass.js";
+import { splitIntoDomainSegments } from "./lib/promptSplit.js";
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -45,6 +46,126 @@ function impactBadge(impact) {
   if (pct >= 2) return { label: `${pct.toFixed(1)}% impact`, className: "gold" };
   return null; // normal — no badge needed
 }
+// Proposal-body renderers, shared between each domain's own single-prompt
+// confirm modal and the compound multi-op review modal (App body, below) —
+// same markup either way, just no action buttons here (each caller wires
+// up its own Discard/Execute vs. the multi-op list's single "Confirm N of
+// M" action).
+function TradeProposalBody({ proposal, proposalImpacts }) {
+  return (
+    <>
+      {proposal.summary && <p className="lede sm">{proposal.summary}</p>}
+      <div className="trades">
+        {proposal.trades.map((t, i) => {
+          const badge = impactBadge(proposalImpacts?.[t.symbol]);
+          return (
+            <span key={i} className={`trade-chip mono tiny ${t.side}`}>
+              {t.side === "buy" ? "Buy" : "Sell"} ${usd(t.usd)} {t.symbol}
+              {badge && <span className={`tiny ${badge.className}`} style={{ marginLeft: 6 }}>· {badge.label}</span>}
+            </span>
+          );
+        })}
+        {!proposal.trades.length && (
+          <span className="tiny muted">
+            {proposal.maxSkippedDelta > 0
+              ? `Proposed change is too small to execute (largest leg: $${usd(proposal.maxSkippedDelta)} — minimum is $0.25). Try a larger rebalance.`
+              : "No trades needed — you're already there."}
+          </span>
+        )}
+      </div>
+      {proposal.pendingWithdrawal && (
+        <p className="tiny muted" style={{ marginTop: 6 }}>
+          Then withdraw proceeds → <span className="mono">{short(proposal.pendingWithdrawal.to)}</span>
+        </p>
+      )}
+    </>
+  );
+}
+
+function PerpProposalBody({ proposal }) {
+  return (
+    <>
+      {proposal.summary && <p className="lede sm">{proposal.summary}</p>}
+      <div className="borrow-field" style={{ marginTop: 10 }}>
+        <span className="tiny muted">Position size</span>
+        <span className="mono">
+          {proposal.action === "close" ? proposal.closeSize : proposal.formattedSize} {proposal.asset.displayName} (${usd(proposal.notionalUsd)})
+        </span>
+      </div>
+      {proposal.action !== "close" && (
+        <div className="borrow-field">
+          <span className="tiny muted">Margin required</span>
+          <span className="mono">${usd(proposal.marginUsd)}</span>
+        </div>
+      )}
+      <div className="borrow-field">
+        <span className="tiny muted">Mark price</span>
+        <span className="mono">${usd(proposal.markPrice)}</span>
+      </div>
+      {proposal.liqPrice != null && (
+        <div className="borrow-field">
+          <span className="tiny muted">Est. liquidation price</span>
+          <span className="mono">${usd(proposal.liqPrice)}</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+function BorrowProposalBody({ proposal }) {
+  return (
+    <>
+      {proposal.summary && <p className="lede sm">{proposal.summary}</p>}
+      {(proposal.action === "deposit" || proposal.action === "deposit_and_borrow") && (
+        <div className="borrow-field" style={{ marginTop: 10 }}>
+          <span className="tiny muted">Deposit</span>
+          <span className="mono">
+            {proposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {proposal.row.symbol} (${usd(proposal.depositValueUsd)}) · max LTV {(proposal.maxLtv * 100).toFixed(0)}% · no deposit fee
+          </span>
+        </div>
+      )}
+      {(proposal.action === "borrow" || proposal.action === "deposit_and_borrow") && (<>
+        <div className="borrow-field">
+          <span className="tiny muted">Borrow</span>
+          <span className="mono">${usd(proposal.borrowUsd)} USDC (of ${usd(proposal.maxBorrowUsd)} available)</span>
+        </div>
+        <div className="borrow-field">
+          <span className="tiny muted">Platform fee ({(KAMINO_FEE_BPS / 100).toFixed(2)}%)</span>
+          <span className="mono">${usd(proposal.borrowFeeUsd)} · ${usd(proposal.netBorrowUsd)} net received</span>
+        </div>
+      </>)}
+      {(proposal.action === "repay" || proposal.action === "repay_and_withdraw") && (
+        <div className="borrow-field" style={{ marginTop: 10 }}>
+          <span className="tiny muted">Repay</span>
+          <span className="mono">{proposal.repayAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC (of {proposal.repayMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} owed)</span>
+        </div>
+      )}
+      {(proposal.action === "withdraw" || proposal.action === "repay_and_withdraw") && (
+        <div className="borrow-field">
+          <span className="tiny muted">Withdraw</span>
+          <span className="mono">{proposal.withdrawAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {proposal.withdrawDeposit.tokenName} (of {proposal.withdrawMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} available)</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+function borrowProposalTitle(proposal) {
+  if (proposal.action === "deposit") return `Deposit ${proposal.row.symbol} as collateral`;
+  if (proposal.action === "borrow") return "Borrow USDC";
+  if (proposal.action === "deposit_and_borrow") return `Deposit ${proposal.row.symbol} & borrow USDC`;
+  if (proposal.action === "repay") return "Repay loan";
+  if (proposal.action === "withdraw") return `Withdraw ${proposal.withdrawDeposit.tokenName}`;
+  if (proposal.action === "repay_and_withdraw") return `Repay loan & withdraw ${proposal.withdrawDeposit.tokenName}`;
+  return "Borrow/Lend";
+}
+
+function perpProposalTitle(proposal) {
+  return proposal.action === "close"
+    ? `Close ${proposal.side} ${proposal.asset.displayName}`
+    : `${proposal.side === "long" ? "Long" : "Short"} ${proposal.asset.displayName} ${proposal.leverage}x`;
+}
+
 // USDT isn't a supported holding here — any that arrives gets auto-offered
 // a one-click convert to USDC instead.
 const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
@@ -368,6 +489,17 @@ export default function App() {
   const [perpsFundIntent, setPerpsFundIntent] = useState(null); // { view, account, amount } | null
   const [borrowProposal, setBorrowProposal] = useState(null); // resolved Kamino deposit/borrow intent
   const [borrowActionBusy, setBorrowActionBusy] = useState(false);
+
+  // Compound prompts ("Buy TSLA with all my cash, go 5x long BTC") split
+  // into per-domain segments (see lib/promptSplit.js) — each resolved via
+  // the same single-domain resolvers above (resolveTradeSegment/
+  // resolvePerpSegment/resolveBorrowSegment), collected here instead of
+  // going straight into proposal/perpProposal/borrowProposal, so the user
+  // reviews every item together before anything executes.
+  const [multiItems, setMultiItems] = useState(null);
+  // null | Array<{ id, domain: 'trade'|'perp'|'borrow', text, proposal,
+  //   error, status: 'ready'|'error'|'running'|'done'|'failed'|'skipped' }>
+  const [multiRunning, setMultiRunning] = useState(false);
 
   // Fires once per new proposal (rebalance or build) — not on every weight/
   // slider change, since a proposal is only (re)computed on a real user
@@ -996,6 +1128,21 @@ export default function App() {
       return;
     }
 
+    // Compound prompts ("Buy TSLA with all my cash, go 5x long BTC") —
+    // only from the main dashboard bar (isRebalance), which is the only
+    // place perps/borrow context even applies. Single-domain prompts
+    // (including multi-asset brokerage ones like "50% TSLA and 50% AAPL")
+    // fall straight through unchanged — splitIntoDomainSegments only ever
+    // returns 2+ segments when the prompt genuinely spans different
+    // domains with a clean connector between them.
+    if (isRebalance) {
+      const segments = splitIntoDomainSegments(text, { TRADE_RE, PERP_RE, BORROW_RE }).filter((s) => s.domain);
+      if (segments.length > 1 && segments.length <= 4) {
+        await resolveMultiPrompt(segments);
+        return;
+      }
+    }
+
     if (isPerp) {
       await runPerpPrompt(text);
       return;
@@ -1095,12 +1242,12 @@ export default function App() {
       const current = isRebalance
         ? portfolio.rows.map((r) => ({ symbol: r.symbol, weight: r.weight }))
         : undefined;
-      const result = await api.parse(text, current, portfolio?.total);
       if (isRebalance) {
-        const { trades, maxSkippedDelta } = planTrades({ allocations: result.allocations, portfolio, prices, registry });
-        setProposal({ ...result, trades, maxSkippedDelta });
+        const proposalResult = await resolveTradeSegment(text, current, portfolio?.total);
+        setProposal(proposalResult);
         setAnswer(null);
       } else {
+        const result = await api.parse(text, current, portfolio?.total);
         setPlan(result);
         setView("weights");
       }
@@ -1109,6 +1256,17 @@ export default function App() {
     } finally {
       setThinking(false);
     }
+  };
+
+  // Pure resolver used both by the single-domain path above and by the
+  // multi-op compound-prompt orchestrator below — same shape either way
+  // (target allocations -> concrete buy/sell legs via planTrades), just
+  // returned instead of pushed straight into setProposal so a compound
+  // prompt can collect several of these before showing anything.
+  const resolveTradeSegment = async (text, current, total) => {
+    const result = await api.parse(text, current, total);
+    const { trades, maxSkippedDelta } = planTrades({ allocations: result.allocations, portfolio, prices, registry });
+    return { ...result, trades, maxSkippedDelta };
   };
 
   /* ——— perps-via-prompt: "buy SOL perp at 5x with all my cash" ———
@@ -1122,118 +1280,14 @@ export default function App() {
   const runPerpPrompt = async (text) => {
     setThinking(true); setError("");
     try {
-      const intent = await api.parsePerp(text);
-
-      if (intent.action === "deposit" || intent.action === "withdraw") {
-        // Not a single sign-and-execute action like every other prompt-
-        // driven flow — perps funding is a real multi-signature bridging
-        // wizard (DepositWizard/WithdrawWizard), so this resolves a real
-        // amount from live balances (same "never trust Claude's own math"
-        // rule every other flow follows) and hands off to that existing,
-        // fully-tested flow rather than duplicating it inline here.
-        const isEquity = intent.account === "equity";
-        let amount = null;
-        if (intent.action === "deposit") {
-          const cash = portfolio?.cashUsdc ?? 0;
-          if (intent.sizeType === "all") amount = cash;
-          else if (intent.sizeType === "percent") amount = (intent.sizeValue / 100) * cash;
-          else if (intent.sizeType === "usd") amount = intent.sizeValue;
-        } else {
-          const withdrawable = (isEquity ? equityPerps : cryptoPerps)?.withdrawable ?? 0;
-          if (intent.sizeType === "all") amount = withdrawable;
-          else if (intent.sizeType === "percent") amount = (intent.sizeValue / 100) * withdrawable;
-          else if (intent.sizeType === "usd") amount = intent.sizeValue;
-        }
-        // A bad/zero resolved amount (e.g. "all" against a $0 balance)
-        // still opens the wizard — just with a blank field instead of a
-        // stale prefill — rather than erroring out short of a screen that
-        // can show the user their real balance directly.
-        if (amount != null && !(amount > 0)) amount = null;
-        setPerpsFundIntent({ view: intent.action, account: isEquity ? "equity" : "crypto", amount });
+      const r = await resolvePerpSegment(text);
+      if (r.kind === "wizard") {
+        setPerpsFundIntent({ view: r.view, account: r.account, amount: r.amount });
         setRebalPrompt("");
         setView("perps");
-        return;
-      }
-
-      const wantedAsset = String(intent.asset || "").toUpperCase();
-      const asset = perpAssets.find(
-        (a) => a.name.toUpperCase() === wantedAsset || a.displayName.toUpperCase() === wantedAsset
-      );
-      if (!asset) throw new Error(`"${intent.asset}" isn't tradable as a perp here.`);
-
-      const isEquity = asset.category === "equity";
-      const markPrice = perpMarkPrices[asset.name];
-
-      if (intent.action === "close") {
-        const positions = (isEquity ? equityPerps : cryptoPerps)?.positions || [];
-        const pos = positions.find((p) => p.coin === asset.name);
-        if (!pos) throw new Error(`No open ${asset.displayName} position to close.`);
-        setPerpProposal({
-          action: "close", asset, side: pos.side,
-          markPrice: pos.markPx, notionalUsd: pos.size * pos.markPx,
-          closeSize: pos.size, closeAssetIndex: pos.assetIndex, closeSzDecimals: pos.szDecimals,
-          summary: intent.summary,
-        });
-        return;
-      }
-
-      if (intent.leverage == null) throw new Error('Say how much leverage to use, e.g. "at 5x leverage".');
-      if (intent.sizeType === "unspecified") throw new Error('Say how much to trade, e.g. "with all my cash" or "$500".');
-
-      const leverage = Math.max(1, Math.min(Math.round(intent.leverage), asset.maxLeverage || 20));
-      if (!markPrice) throw new Error("No live price available for that asset right now — try again in a moment.");
-
-      const withdrawable = (isEquity ? equityPerps : cryptoPerps)?.withdrawable ?? 0;
-
-      let marginUsd, notionalUsd, size;
-      if (intent.sizeType === "all") {
-        marginUsd = withdrawable;
-        size = (marginUsd * leverage) / markPrice;
-      } else if (intent.sizeType === "percent") {
-        marginUsd = (intent.sizeValue / 100) * withdrawable;
-        size = (marginUsd * leverage) / markPrice;
-      } else if (intent.sizeType === "asset_amount") {
-        size = intent.sizeValue;
-        marginUsd = (size * markPrice) / leverage;
       } else {
-        // "usd" — a spoken dollar amount ("$500 of SOL") reads as the
-        // position's notional value, not the margin behind it (unlike the
-        // manual order ticket's own $ field, which pairs live with an
-        // asset-amount field a user is actively watching update).
-        marginUsd = intent.sizeValue / leverage;
-        size = intent.sizeValue / markPrice;
+        setPerpProposal(r.proposal);
       }
-      notionalUsd = size * markPrice;
-
-      if (!(marginUsd > 0) || !(size > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
-      if (marginUsd > withdrawable + 0.01)
-        throw new Error(`That needs $${marginUsd.toFixed(2)} margin but only $${withdrawable.toFixed(2)} is available to trade.`);
-      // Hyperliquid rejects any order under $10 notional — catch it here with
-      // a plain-English message instead of letting the raw exchange error
-      // ("Order must have minimum value of $10. asset=5") reach the user.
-      if (notionalUsd < HL_MIN_NOTIONAL_USD)
-        throw new Error(`That's a $${notionalUsd.toFixed(2)} position — Hyperliquid requires at least $${HL_MIN_NOTIONAL_USD} per order. Try a larger amount or higher leverage.`);
-
-      let formattedSize;
-      try { formattedSize = formatSize(String(size), asset.szDecimals ?? 0); }
-      catch { throw new Error("That size is too small to place at this asset's precision."); }
-      if (!(Number(formattedSize) > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
-
-      let liqPrice = null;
-      try {
-        liqPrice = liquidationPrice({
-          side: intent.side === "long" ? 1 : -1,
-          size: Number(formattedSize),
-          markPrice,
-          marginAvailable: marginUsd,
-          tiers: [{ lowerBound: 0, maxLeverage: asset.maxLeverage || leverage }],
-        });
-      } catch { liqPrice = null; }
-
-      setPerpProposal({
-        action: "open", asset, leverage, isBuy: intent.side === "long", side: intent.side,
-        markPrice, marginUsd, notionalUsd, formattedSize, liqPrice, summary: intent.summary,
-      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1241,28 +1295,163 @@ export default function App() {
     }
   };
 
-  const executePerpOrder = async () => {
-    if (!perpProposal || !perpsWallet || !evmAddress) return;
+  // Pure resolver behind runPerpPrompt above and the multi-op compound-
+  // prompt orchestrator below — identical resolution logic either way,
+  // just returned (or thrown) instead of pushed straight into component
+  // state. Deposit/withdraw resolves to a "wizard" result rather than a
+  // proposal (that flow is a real multi-signature bridging wizard, not a
+  // single sign-and-execute action — see the wizard branch's own reasoning,
+  // preserved below) — the compound orchestrator treats that kind as
+  // unsupported in a multi-item review rather than trying to open a wizard
+  // mid-list; the single-domain caller above still opens it exactly as
+  // before.
+  const resolvePerpSegment = async (text) => {
+    const intent = await api.parsePerp(text);
+
+    if (intent.action === "deposit" || intent.action === "withdraw") {
+      // Not a single sign-and-execute action like every other prompt-
+      // driven flow — perps funding is a real multi-signature bridging
+      // wizard (DepositWizard/WithdrawWizard), so this resolves a real
+      // amount from live balances (same "never trust Claude's own math"
+      // rule every other flow follows) and hands off to that existing,
+      // fully-tested flow rather than duplicating it inline here.
+      const isEquity = intent.account === "equity";
+      let amount = null;
+      if (intent.action === "deposit") {
+        const cash = portfolio?.cashUsdc ?? 0;
+        if (intent.sizeType === "all") amount = cash;
+        else if (intent.sizeType === "percent") amount = (intent.sizeValue / 100) * cash;
+        else if (intent.sizeType === "usd") amount = intent.sizeValue;
+      } else {
+        const withdrawable = (isEquity ? equityPerps : cryptoPerps)?.withdrawable ?? 0;
+        if (intent.sizeType === "all") amount = withdrawable;
+        else if (intent.sizeType === "percent") amount = (intent.sizeValue / 100) * withdrawable;
+        else if (intent.sizeType === "usd") amount = intent.sizeValue;
+      }
+      // A bad/zero resolved amount (e.g. "all" against a $0 balance)
+      // still opens the wizard — just with a blank field instead of a
+      // stale prefill — rather than erroring out short of a screen that
+      // can show the user their real balance directly.
+      if (amount != null && !(amount > 0)) amount = null;
+      return { kind: "wizard", view: intent.action, account: isEquity ? "equity" : "crypto", amount };
+    }
+
+    const wantedAsset = String(intent.asset || "").toUpperCase();
+    const asset = perpAssets.find(
+      (a) => a.name.toUpperCase() === wantedAsset || a.displayName.toUpperCase() === wantedAsset
+    );
+    if (!asset) throw new Error(`"${intent.asset}" isn't tradable as a perp here.`);
+
+    const isEquity = asset.category === "equity";
+    const markPrice = perpMarkPrices[asset.name];
+
+    if (intent.action === "close") {
+      const positions = (isEquity ? equityPerps : cryptoPerps)?.positions || [];
+      const pos = positions.find((p) => p.coin === asset.name);
+      if (!pos) throw new Error(`No open ${asset.displayName} position to close.`);
+      return {
+        kind: "proposal",
+        proposal: {
+          action: "close", asset, side: pos.side,
+          markPrice: pos.markPx, notionalUsd: pos.size * pos.markPx,
+          closeSize: pos.size, closeAssetIndex: pos.assetIndex, closeSzDecimals: pos.szDecimals,
+          summary: intent.summary,
+        },
+      };
+    }
+
+    if (intent.leverage == null) throw new Error('Say how much leverage to use, e.g. "at 5x leverage".');
+    if (intent.sizeType === "unspecified") throw new Error('Say how much to trade, e.g. "with all my cash" or "$500".');
+
+    const leverage = Math.max(1, Math.min(Math.round(intent.leverage), asset.maxLeverage || 20));
+    if (!markPrice) throw new Error("No live price available for that asset right now — try again in a moment.");
+
+    const withdrawable = (isEquity ? equityPerps : cryptoPerps)?.withdrawable ?? 0;
+
+    let marginUsd, notionalUsd, size;
+    if (intent.sizeType === "all") {
+      marginUsd = withdrawable;
+      size = (marginUsd * leverage) / markPrice;
+    } else if (intent.sizeType === "percent") {
+      marginUsd = (intent.sizeValue / 100) * withdrawable;
+      size = (marginUsd * leverage) / markPrice;
+    } else if (intent.sizeType === "asset_amount") {
+      size = intent.sizeValue;
+      marginUsd = (size * markPrice) / leverage;
+    } else {
+      // "usd" — a spoken dollar amount ("$500 of SOL") reads as the
+      // position's notional value, not the margin behind it (unlike the
+      // manual order ticket's own $ field, which pairs live with an
+      // asset-amount field a user is actively watching update).
+      marginUsd = intent.sizeValue / leverage;
+      size = intent.sizeValue / markPrice;
+    }
+    notionalUsd = size * markPrice;
+
+    if (!(marginUsd > 0) || !(size > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
+    if (marginUsd > withdrawable + 0.01)
+      throw new Error(`That needs $${marginUsd.toFixed(2)} margin but only $${withdrawable.toFixed(2)} is available to trade.`);
+    // Hyperliquid rejects any order under $10 notional — catch it here with
+    // a plain-English message instead of letting the raw exchange error
+    // ("Order must have minimum value of $10. asset=5") reach the user.
+    if (notionalUsd < HL_MIN_NOTIONAL_USD)
+      throw new Error(`That's a $${notionalUsd.toFixed(2)} position — Hyperliquid requires at least $${HL_MIN_NOTIONAL_USD} per order. Try a larger amount or higher leverage.`);
+
+    let formattedSize;
+    try { formattedSize = formatSize(String(size), asset.szDecimals ?? 0); }
+    catch { throw new Error("That size is too small to place at this asset's precision."); }
+    if (!(Number(formattedSize) > 0)) throw new Error("That works out to a zero-size order — try a larger amount.");
+
+    let liqPrice = null;
+    try {
+      liqPrice = liquidationPrice({
+        side: intent.side === "long" ? 1 : -1,
+        size: Number(formattedSize),
+        markPrice,
+        marginAvailable: marginUsd,
+        tiers: [{ lowerBound: 0, maxLeverage: asset.maxLeverage || leverage }],
+      });
+    } catch { liqPrice = null; }
+
+    return {
+      kind: "proposal",
+      proposal: {
+        action: "open", asset, leverage, isBuy: intent.side === "long", side: intent.side,
+        markPrice, marginUsd, notionalUsd, formattedSize, liqPrice, summary: intent.summary,
+      },
+    };
+  };
+
+  // proposalOverride lets the multi-op compound orchestrator execute an
+  // item's own resolved proposal directly, without going through
+  // setPerpProposal first (which would be a stale-closure trap here — this
+  // function still reads perpProposal for the single-domain call sites,
+  // which never pass an override). Returns {ok, message} so a caller other
+  // than the single-domain modal can tell what happened; existing call
+  // sites don't use the return value, so this is additive only.
+  const executePerpOrder = async (proposalOverride) => {
+    const activeProposal = proposalOverride || perpProposal;
+    if (!activeProposal || !perpsWallet || !evmAddress) return { ok: false, message: "Nothing to execute." };
     setPerpOrderBusy(true); setError("");
     try {
-      if (perpProposal.action === "close") {
+      if (activeProposal.action === "close") {
         // Mirrors PerpsCloseCell's close() exactly — same call, just
         // triggered from a parsed prompt instead of the Positions table.
         await hl.closePosition(perpsWallet, evmAddress, {
-          assetIndex: perpProposal.closeAssetIndex,
-          isLong: perpProposal.side === "long",
-          size: perpProposal.closeSize,
-          markPrice: perpProposal.markPrice,
-          szDecimals: perpProposal.closeSzDecimals,
+          assetIndex: activeProposal.closeAssetIndex,
+          isLong: activeProposal.side === "long",
+          size: activeProposal.closeSize,
+          markPrice: activeProposal.markPrice,
+          szDecimals: activeProposal.closeSzDecimals,
         });
       } else {
-        await hl.setLeverage(perpsWallet, perpProposal.asset.index, perpProposal.leverage);
-        const rawPrice = perpProposal.isBuy ? perpProposal.markPrice * 1.02 : perpProposal.markPrice * 0.98;
-        const price = formatPrice(rawPrice, perpProposal.asset.szDecimals ?? 0);
+        await hl.setLeverage(perpsWallet, activeProposal.asset.index, activeProposal.leverage);
+        const rawPrice = activeProposal.isBuy ? activeProposal.markPrice * 1.02 : activeProposal.markPrice * 0.98;
+        const price = formatPrice(rawPrice, activeProposal.asset.szDecimals ?? 0);
         await hl.placeOrder(perpsWallet, evmAddress, {
-          assetIndex: perpProposal.asset.index,
-          isBuy: perpProposal.isBuy,
-          size: perpProposal.formattedSize,
+          assetIndex: activeProposal.asset.index,
+          isBuy: activeProposal.isBuy,
+          size: activeProposal.formattedSize,
           price,
           tif: "Ioc",
         });
@@ -1270,12 +1459,13 @@ export default function App() {
       setPerpProposal(null);
       setRebalPrompt("");
       await refreshHoldings();
+      return { ok: true };
     } catch (e) {
-      setError(
-        e?.name === "BuilderApprovalRequiredError"
-          ? "Approve perps trading first from the Perps tab, then try again."
-          : (e instanceof Error ? e.message : "Order failed")
-      );
+      const message = e?.name === "BuilderApprovalRequiredError"
+        ? "Approve perps trading first from the Perps tab, then try again."
+        : (e instanceof Error ? e.message : "Order failed");
+      setError(message);
+      return { ok: false, message };
     } finally {
       setPerpOrderBusy(false);
     }
@@ -1290,9 +1480,22 @@ export default function App() {
   const runBorrowPrompt = async (text) => {
     setThinking(true); setError("");
     try {
-      const intent = await api.parseBorrow(text);
-      const usdcReserve = kaminoReserves.find((r) => r.liquidityToken === "USDC");
-      if (!usdcReserve) throw new Error("Borrow market data isn't available right now — try again in a moment.");
+      const proposalResult = await resolveBorrowSegment(text);
+      setBorrowProposal(proposalResult);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  // Pure resolver behind runBorrowPrompt above and the multi-op compound-
+  // prompt orchestrator below — same resolution logic either way, just
+  // returned instead of pushed straight into setBorrowProposal.
+  const resolveBorrowSegment = async (text) => {
+    const intent = await api.parseBorrow(text);
+    const usdcReserve = kaminoReserves.find((r) => r.liquidityToken === "USDC");
+    if (!usdcReserve) throw new Error("Borrow market data isn't available right now — try again in a moment.");
 
       if (["repay", "withdraw", "repay_and_withdraw"].includes(intent.action)) {
         // Repay uses Kamino's own quoted outstanding balance (tokenAmount) —
@@ -1391,12 +1594,11 @@ export default function App() {
           }
         }
 
-        setBorrowProposal({
+        return {
           action: intent.action, repayReserve, repayAmt, repayAmtStr, repayMax,
           withdrawDeposit, withdrawReserve, withdrawAmt, withdrawAmtStr, withdrawMax,
           summary: intent.summary,
-        });
-        return;
+        };
       }
 
       let row = null, reserve = null, depositAmt = 0, depositValueUsd = 0, kaminoDepositAmount = 0;
@@ -1443,107 +1645,118 @@ export default function App() {
       const borrowFeeUsd = borrowUsd * (KAMINO_FEE_BPS / 10000);
       const netBorrowUsd = borrowUsd - borrowFeeUsd;
 
-      setBorrowProposal({
-        action: intent.action, row, reserve, usdcReserveKey: usdcReserve.reserve,
-        depositAmt, depositValueUsd, kaminoDepositAmount, maxLtv,
-        borrowUsd, borrowFeeUsd, netBorrowUsd, maxBorrowUsd, summary: intent.summary,
-      });
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setThinking(false);
-    }
+    return {
+      action: intent.action, row, reserve, usdcReserveKey: usdcReserve.reserve,
+      depositAmt, depositValueUsd, kaminoDepositAmount, maxLtv,
+      borrowUsd, borrowFeeUsd, netBorrowUsd, maxBorrowUsd, summary: intent.summary,
+    };
   };
 
-  const executeBorrowProposal = async () => {
-    if (!borrowProposal || !address) return;
+  // proposalOverride: same reasoning as executePerpOrder above — lets the
+  // multi-op orchestrator execute an item's own proposal without a stale-
+  // closure round-trip through setBorrowProposal. Returns {ok, message};
+  // existing single-domain call sites ignore the return value.
+  const executeBorrowProposal = async (proposalOverride) => {
+    const activeProposal = proposalOverride || borrowProposal;
+    if (!activeProposal || !address) return { ok: false, message: "Nothing to execute." };
     setBorrowActionBusy(true); setError("");
 
-    if (["repay", "withdraw", "repay_and_withdraw"].includes(borrowProposal.action)) {
+    if (["repay", "withdraw", "repay_and_withdraw"].includes(activeProposal.action)) {
       try {
-        if (borrowProposal.action !== "withdraw") {
+        if (activeProposal.action !== "withdraw") {
           await executeKaminoAction("repay", {
-            wallet: address, reserve: borrowProposal.repayReserve.reserve,
-            amount: borrowProposal.repayAmtStr,
+            wallet: address, reserve: activeProposal.repayReserve.reserve,
+            amount: activeProposal.repayAmtStr,
             signWithWallet: signKaminoTx,
           });
         }
       } catch (e) {
         setBorrowActionBusy(false);
-        setError(e instanceof Error ? e.message : "Repay failed");
-        return;
+        const message = e instanceof Error ? e.message : "Repay failed";
+        setError(message);
+        return { ok: false, message };
       }
+      let ok = true, message = null;
       try {
-        if (borrowProposal.action !== "repay") {
+        if (activeProposal.action !== "repay") {
           await executeKaminoAction("withdraw", {
-            wallet: address, reserve: borrowProposal.withdrawReserve.reserve,
-            amount: borrowProposal.withdrawAmtStr,
+            wallet: address, reserve: activeProposal.withdrawReserve.reserve,
+            amount: activeProposal.withdrawAmtStr,
             signWithWallet: signKaminoTx,
           });
         }
         setBorrowProposal(null);
         setRebalPrompt("");
       } catch (e) {
-        setError(
-          borrowProposal.action === "repay_and_withdraw"
-            ? `Repaid, but withdraw failed: ${e instanceof Error ? e.message : "unknown error"}. Check My Positions — you can withdraw from there.`
-            : (e instanceof Error ? e.message : "Withdraw failed")
-        );
+        ok = false;
+        message = activeProposal.action === "repay_and_withdraw"
+          ? `Repaid, but withdraw failed: ${e instanceof Error ? e.message : "unknown error"}. Check My Positions — you can withdraw from there.`
+          : (e instanceof Error ? e.message : "Withdraw failed");
+        setError(message);
       } finally {
         setBorrowActionBusy(false);
         await refreshKaminoLoans();
         await refreshHoldings();
       }
-      return;
+      return { ok, message };
     }
 
     try {
-      if (borrowProposal.action !== "borrow") {
+      if (activeProposal.action !== "borrow") {
         await executeKaminoAction("deposit", {
-          wallet: address, reserve: borrowProposal.reserve.reserve,
-          amount: String(borrowProposal.kaminoDepositAmount),
+          wallet: address, reserve: activeProposal.reserve.reserve,
+          amount: String(activeProposal.kaminoDepositAmount),
           signWithWallet: signKaminoTx,
-          mint: borrowProposal.row.mint, decimals: borrowProposal.row.decimals,
-          usdValue: borrowProposal.depositValueUsd,
+          mint: activeProposal.row.mint, decimals: activeProposal.row.decimals,
+          usdValue: activeProposal.depositValueUsd,
         });
       }
     } catch (e) {
       setBorrowActionBusy(false);
-      setError(e instanceof Error ? e.message : "Deposit failed");
-      return;
+      const message = e instanceof Error ? e.message : "Deposit failed";
+      setError(message);
+      return { ok: false, message };
     }
+    let ok = true, message = null;
     try {
-      if (borrowProposal.action !== "deposit") {
+      if (activeProposal.action !== "deposit") {
         await executeKaminoAction("borrow", {
-          wallet: address, reserve: borrowProposal.usdcReserveKey,
-          amount: String(borrowProposal.borrowUsd),
+          wallet: address, reserve: activeProposal.usdcReserveKey,
+          amount: String(activeProposal.borrowUsd),
           signWithWallet: signKaminoTx,
         });
       }
       setBorrowProposal(null);
       setRebalPrompt("");
     } catch (e) {
-      setError(
-        borrowProposal.action === "deposit_and_borrow"
-          ? `Deposited, but borrow failed: ${e instanceof Error ? e.message : "unknown error"}. Check My Positions — you can borrow from there.`
-          : (e instanceof Error ? e.message : "Borrow failed")
-      );
+      ok = false;
+      message = activeProposal.action === "deposit_and_borrow"
+        ? `Deposited, but borrow failed: ${e instanceof Error ? e.message : "unknown error"}. Check My Positions — you can borrow from there.`
+        : (e instanceof Error ? e.message : "Borrow failed");
+      setError(message);
     } finally {
       setBorrowActionBusy(false);
       await refreshKaminoLoans();
       await refreshHoldings();
     }
+    return { ok, message };
   };
 
   /* ——— execute a list of trades sequentially, for real ——— */
   const runTrades = async (trades, { afterWithdrawTo = null, groupLabel = "Rebalance" } = {}) => {
-    if (busy.current) return;
+    if (busy.current) return { anyFailed: true };
     busy.current = true;
     setLegs(trades.map((t) => ({ ...t, status: "queued", sig: null })));
     setExecuteOpen(true);
     setError("");
     const groupId = `grp_${Date.now()}`;
     let totalLegs = trades.length;
+    // Each leg's failure is caught and recorded on that leg alone (so the
+    // rest of the run keeps going) rather than thrown — this flag is the
+    // only way a caller (the multi-op orchestrator below) can tell whether
+    // the whole trade item should count as succeeded or failed. The
+    // existing single-domain caller ignores the return value, unaffected.
+    let anyFailed = false;
     try {
       const firstBuyIdx = trades.findIndex((t) => t.side === "buy");
       const splitIdx = firstBuyIdx === -1 ? trades.length : firstBuyIdx;
@@ -1563,6 +1776,7 @@ export default function App() {
           setLeg({ status: "confirmed", sig: result.signature });
           appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: t.side, symbol: t.symbol, usd: t.usd, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
         } catch (e) {
+          anyFailed = true;
           setLeg({ status: "failed", err: e.message });
           appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: t.side, symbol: t.symbol, usd: t.usd, signature: null, status: "failed", timestamp: Date.now() }]);
         }
@@ -1600,6 +1814,7 @@ export default function App() {
               const h2 = await api.holdings(address);
               usdcBal = h2.tokens?.find((t) => t.mint === registry.USDC.mint)?.uiAmount || 0;
             } catch (e) {
+              anyFailed = true;
               setPre({ status: "failed", err: e.message });
             }
           }
@@ -1623,6 +1838,7 @@ export default function App() {
             setLeg({ status: "confirmed", sig: result.signature });
             appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: t.side, symbol: t.symbol, usd: t.usd, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
           } catch (e) {
+            anyFailed = true;
             setLeg({ status: "failed", err: e.message });
             appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: t.side, symbol: t.symbol, usd: t.usd, signature: null, status: "failed", timestamp: Date.now() }]);
           }
@@ -1654,6 +1870,7 @@ export default function App() {
               setSweep({ status: "confirmed", sig: result.signature });
               appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, groupId, groupLabel, type: "swap", side: "buy", symbol: "USDY", usd: usdcBal, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
             } catch (e) {
+              anyFailed = true;
               setSweep({ status: "failed", err: e.message });
             }
             await refreshHoldings();
@@ -1677,6 +1894,7 @@ export default function App() {
               const result = await executeSwap({ inputMint: registry.USDY.mint, outputMint: registry.USDC.mint, amount: usdyAtoms, taker: address, signWithWallet, onStatus: (s) => setConv({ status: s }), usdValue: usdyUsd });
               setConv({ status: "confirmed", sig: result.signature });
             } catch (e) {
+              anyFailed = true;
               setConv({ status: "failed", err: e.message });
             }
             await refreshHoldings();
@@ -1694,16 +1912,96 @@ export default function App() {
             setW({ status: "confirmed", sig: result.signature });
             appendTxHistory([{ id: `txn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, type: "withdrawal", symbol: "USDC", usd: usdcBal, to: afterWithdrawTo, signature: result.signature, status: "confirmed", timestamp: Date.now() }]);
           } catch (e) {
+            anyFailed = true;
             setW({ status: "failed", err: e.message });
           }
           await refreshHoldings();
         }
       }
+      return { anyFailed };
     } finally {
       busy.current = false;
       setProposal(null); setRebalPrompt(""); setPlan(null);
       await refreshHoldings();
     }
+  };
+
+  /* ——— compound prompts: "Buy TSLA with all my cash, go 5x long BTC" ———
+   * Each segment resolves through the exact same per-domain resolver used
+   * for a single-domain prompt (resolveTradeSegment/resolvePerpSegment/
+   * resolveBorrowSegment) — the only new work here is collecting the
+   * results so they're all reviewed together before anything executes,
+   * and then running each one in turn. Segments resolve in parallel
+   * (Promise.allSettled) so one segment's parse failure doesn't block the
+   * others from being reviewable. */
+  const resolveMultiPrompt = async (segments) => {
+    setThinking(true); setError("");
+    const current = portfolio.rows.map((r) => ({ symbol: r.symbol, weight: r.weight }));
+    const results = await Promise.allSettled(segments.map((s) => {
+      if (s.domain === "trade") return resolveTradeSegment(s.text, current, portfolio?.total);
+      if (s.domain === "perp") {
+        // Perps deposit/withdraw resolves to a "wizard" hand-off, not a
+        // proposal — there's no single sign-and-execute shape to put in a
+        // multi-item list, so that's treated as unsupported here even
+        // though it works fine as a single-domain prompt on its own.
+        return resolvePerpSegment(s.text).then((r) => {
+          if (r.kind === "wizard") throw new Error("Perps funding needs its own step — try that part separately.");
+          return r.proposal;
+        });
+      }
+      return resolveBorrowSegment(s.text);
+    }));
+    setMultiItems(segments.map((s, i) => {
+      const r = results[i];
+      return {
+        id: `mi_${i}`, domain: s.domain, text: s.text,
+        proposal: r.status === "fulfilled" ? r.value : null,
+        error: r.status === "rejected" ? (r.reason?.message || String(r.reason)) : null,
+        status: r.status === "fulfilled" ? "ready" : "error",
+      };
+    }));
+    setThinking(false);
+  };
+
+  // Sequential, fail-stop: each item runs through its own domain's real
+  // execute function (unchanged from the single-domain path) in original
+  // prompt order. If one fails, later ready items are marked 'skipped'
+  // rather than attempted — money-safety default, not a technical
+  // limitation (there's no dependency between items requiring this, it's
+  // just the safer behavior when something has already gone wrong).
+  const runMultiItems = async () => {
+    if (multiRunning || busy.current || !multiItems) return;
+    setMultiRunning(true);
+    for (const item of multiItems) {
+      if (item.status !== "ready") continue;
+      setMultiItems((L) => L.map((x) => (x.id === item.id ? { ...x, status: "running" } : x)));
+      let ok = false, message = null;
+      try {
+        if (item.domain === "trade") {
+          const { anyFailed } = await runTrades(item.proposal.trades, {
+            groupLabel: item.proposal.summary,
+            afterWithdrawTo: item.proposal.pendingWithdrawal?.to || null,
+          });
+          setExecuteOpen(false); // runTrades' own leg-list modal shouldn't linger over the combined review
+          ok = !anyFailed;
+        } else if (item.domain === "perp") {
+          const r = await executePerpOrder(item.proposal);
+          ok = r.ok; message = r.message;
+        } else {
+          const r = await executeBorrowProposal(item.proposal);
+          ok = r.ok; message = r.message;
+        }
+      } catch (e) {
+        ok = false;
+        message = e instanceof Error ? e.message : String(e);
+      }
+      setMultiItems((L) => L.map((x) => (x.id === item.id ? { ...x, status: ok ? "done" : "failed", error: message } : x)));
+      if (!ok) {
+        setMultiItems((L) => L.map((x) => (x.status === "ready" ? { ...x, status: "skipped" } : x)));
+        break;
+      }
+    }
+    setMultiRunning(false);
   };
 
   const executeBuild = async () => {
@@ -2859,37 +3157,11 @@ export default function App() {
           {perpProposal && (
             <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !perpOrderBusy && setPerpProposal(null)}>
               <div className="modal-box card" style={{ maxWidth: 380 }}>
-                <p className="tiny label">
-                  {perpProposal.action === "close"
-                    ? `Close ${perpProposal.side} ${perpProposal.asset.displayName}`
-                    : `${perpProposal.side === "long" ? "Long" : "Short"} ${perpProposal.asset.displayName} ${perpProposal.leverage}x`}
-                </p>
-                {perpProposal.summary && <p className="lede sm">{perpProposal.summary}</p>}
-                <div className="borrow-field" style={{ marginTop: 10 }}>
-                  <span className="tiny muted">Position size</span>
-                  <span className="mono">
-                    {perpProposal.action === "close" ? perpProposal.closeSize : perpProposal.formattedSize} {perpProposal.asset.displayName} (${usd(perpProposal.notionalUsd)})
-                  </span>
-                </div>
-                {perpProposal.action !== "close" && (
-                  <div className="borrow-field">
-                    <span className="tiny muted">Margin required</span>
-                    <span className="mono">${usd(perpProposal.marginUsd)}</span>
-                  </div>
-                )}
-                <div className="borrow-field">
-                  <span className="tiny muted">Mark price</span>
-                  <span className="mono">${usd(perpProposal.markPrice)}</span>
-                </div>
-                {perpProposal.liqPrice != null && (
-                  <div className="borrow-field">
-                    <span className="tiny muted">Est. liquidation price</span>
-                    <span className="mono">${usd(perpProposal.liqPrice)}</span>
-                  </div>
-                )}
+                <p className="tiny label">{perpProposalTitle(perpProposal)}</p>
+                <PerpProposalBody proposal={perpProposal} />
                 <div className="wfoot" style={{ marginTop: 12 }}>
                   <button className="btn ghost" disabled={perpOrderBusy} onClick={() => setPerpProposal(null)}>Discard</button>
-                  <button className="btn primary" disabled={perpOrderBusy} onClick={executePerpOrder}>
+                  <button className="btn primary" disabled={perpOrderBusy} onClick={() => executePerpOrder()}>
                     {perpOrderBusy
                       ? (perpProposal.action === "close" ? "Closing…" : "Placing…")
                       : (perpProposal.action === "close" ? "Close position →" : `${perpProposal.side === "long" ? "Long" : "Short"} ${perpProposal.asset.displayName} →`)}
@@ -2902,50 +3174,61 @@ export default function App() {
           {borrowProposal && (
             <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !borrowActionBusy && setBorrowProposal(null)}>
               <div className="modal-box card" style={{ maxWidth: 380 }}>
-                <p className="tiny label">
-                  {borrowProposal.action === "deposit" && `Deposit ${borrowProposal.row.symbol} as collateral`}
-                  {borrowProposal.action === "borrow" && "Borrow USDC"}
-                  {borrowProposal.action === "deposit_and_borrow" && `Deposit ${borrowProposal.row.symbol} & borrow USDC`}
-                  {borrowProposal.action === "repay" && "Repay loan"}
-                  {borrowProposal.action === "withdraw" && `Withdraw ${borrowProposal.withdrawDeposit.tokenName}`}
-                  {borrowProposal.action === "repay_and_withdraw" && `Repay loan & withdraw ${borrowProposal.withdrawDeposit.tokenName}`}
-                </p>
-                {borrowProposal.summary && <p className="lede sm">{borrowProposal.summary}</p>}
-
-                {(borrowProposal.action === "deposit" || borrowProposal.action === "deposit_and_borrow") && (
-                  <div className="borrow-field" style={{ marginTop: 10 }}>
-                    <span className="tiny muted">Deposit</span>
-                    <span className="mono">
-                      {borrowProposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {borrowProposal.row.symbol} (${usd(borrowProposal.depositValueUsd)}) · max LTV {(borrowProposal.maxLtv * 100).toFixed(0)}% · no deposit fee
-                    </span>
-                  </div>
-                )}
-                {(borrowProposal.action === "borrow" || borrowProposal.action === "deposit_and_borrow") && (<>
-                  <div className="borrow-field">
-                    <span className="tiny muted">Borrow</span>
-                    <span className="mono">${usd(borrowProposal.borrowUsd)} USDC (of ${usd(borrowProposal.maxBorrowUsd)} available)</span>
-                  </div>
-                  <div className="borrow-field">
-                    <span className="tiny muted">Platform fee ({(KAMINO_FEE_BPS / 100).toFixed(2)}%)</span>
-                    <span className="mono">${usd(borrowProposal.borrowFeeUsd)} · ${usd(borrowProposal.netBorrowUsd)} net received</span>
-                  </div>
-                </>)}
-                {(borrowProposal.action === "repay" || borrowProposal.action === "repay_and_withdraw") && (
-                  <div className="borrow-field" style={{ marginTop: 10 }}>
-                    <span className="tiny muted">Repay</span>
-                    <span className="mono">{borrowProposal.repayAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC (of {borrowProposal.repayMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} owed)</span>
-                  </div>
-                )}
-                {(borrowProposal.action === "withdraw" || borrowProposal.action === "repay_and_withdraw") && (
-                  <div className="borrow-field">
-                    <span className="tiny muted">Withdraw</span>
-                    <span className="mono">{borrowProposal.withdrawAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {borrowProposal.withdrawDeposit.tokenName} (of {borrowProposal.withdrawMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} available)</span>
-                  </div>
-                )}
+                <p className="tiny label">{borrowProposalTitle(borrowProposal)}</p>
+                <BorrowProposalBody proposal={borrowProposal} />
                 <div className="wfoot" style={{ marginTop: 12 }}>
                   <button className="btn ghost" disabled={borrowActionBusy} onClick={() => setBorrowProposal(null)}>Discard</button>
-                  <button className="btn primary" disabled={borrowActionBusy} onClick={executeBorrowProposal}>
+                  <button className="btn primary" disabled={borrowActionBusy} onClick={() => executeBorrowProposal()}>
                     {borrowActionBusy ? "Waiting for signature…" : "Confirm →"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {multiItems && (
+            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !multiRunning && setMultiItems(null)}>
+              <div className="modal-box card" style={{ maxWidth: 460 }}>
+                <div className="answer-header">
+                  <p className="tiny label" style={{ margin: 0 }}>Multiple actions</p>
+                  {!multiRunning && <button className="x" onClick={() => setMultiItems(null)}>×</button>}
+                </div>
+                {multiItems.map((item) => {
+                  const domainLabel = item.domain === "trade" ? "Brokerage" : item.domain === "perp" ? "Perps" : "Borrow/Lend";
+                  const poolLabel = item.domain === "trade" ? "from your Solana USDC cash"
+                    : item.domain === "perp" ? "from your Hyperliquid margin (perps)"
+                    : "via Kamino";
+                  const statusGlyph = { ready: "○", running: "↻", done: "✓", failed: "×", skipped: "–", error: "×" }[item.status];
+                  return (
+                    <div key={item.id} className="card" style={{ marginTop: 10, padding: 14, opacity: item.status === "skipped" ? 0.5 : 1 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span className="tiny label" style={{ margin: 0 }}>{domainLabel} · {poolLabel}</span>
+                        <span className={`mono tiny ${item.status === "failed" || item.status === "error" ? "err" : item.status === "done" ? "gain" : "muted"}`}>
+                          {statusGlyph}
+                        </span>
+                      </div>
+                      <p className="tiny muted" style={{ margin: "0 0 8px" }}>"{item.text}"</p>
+                      {item.status === "error" ? (
+                        <p className="tiny err" style={{ margin: 0 }}>{item.error}</p>
+                      ) : (
+                        <>
+                          {item.domain === "trade" && <TradeProposalBody proposal={item.proposal} proposalImpacts={proposalImpacts} />}
+                          {item.domain === "perp" && <PerpProposalBody proposal={item.proposal} />}
+                          {item.domain === "borrow" && <BorrowProposalBody proposal={item.proposal} />}
+                          {(item.status === "failed" || item.status === "skipped") && item.error && (
+                            <p className="tiny err" style={{ marginTop: 6 }}>{item.error}</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="wfoot" style={{ marginTop: 14 }}>
+                  <button className="btn ghost" disabled={multiRunning} onClick={() => setMultiItems(null)}>Discard</button>
+                  <button className="btn primary" disabled={multiRunning || !multiItems.some((i) => i.status === "ready")} onClick={runMultiItems}>
+                    {multiRunning
+                      ? "Running…"
+                      : `Confirm ${multiItems.filter((i) => i.status === "ready").length} of ${multiItems.length} →`}
                   </button>
                 </div>
               </div>
@@ -3032,30 +3315,7 @@ export default function App() {
 
                 {proposal && (<>
                   <p className="tiny label">Proposed change</p>
-                  {proposal.summary && <p className="lede sm">{proposal.summary}</p>}
-                  <div className="trades">
-                    {proposal.trades.map((t, i) => {
-                      const badge = impactBadge(proposalImpacts[t.symbol]);
-                      return (
-                        <span key={i} className={`trade-chip mono tiny ${t.side}`}>
-                          {t.side === "buy" ? "Buy" : "Sell"} ${usd(t.usd)} {t.symbol}
-                          {badge && <span className={`tiny ${badge.className}`} style={{ marginLeft: 6 }}>· {badge.label}</span>}
-                        </span>
-                      );
-                    })}
-                    {!proposal.trades.length && (
-                      <span className="tiny muted">
-                        {proposal.maxSkippedDelta > 0
-                          ? `Proposed change is too small to execute (largest leg: $${usd(proposal.maxSkippedDelta)} — minimum is $0.25). Try a larger rebalance.`
-                          : "No trades needed — you're already there."}
-                      </span>
-                    )}
-                  </div>
-                  {proposal.pendingWithdrawal && (
-                    <p className="tiny muted" style={{ marginTop: 6 }}>
-                      Then withdraw proceeds → <span className="mono">{short(proposal.pendingWithdrawal.to)}</span>
-                    </p>
-                  )}
+                  <TradeProposalBody proposal={proposal} proposalImpacts={proposalImpacts} />
                   <div className="wfoot">
                     <button className="btn ghost" onClick={() => setProposal(null)}>Discard</button>
                     {(proposal.trades.length > 0 || proposal.pendingWithdrawal) && (
