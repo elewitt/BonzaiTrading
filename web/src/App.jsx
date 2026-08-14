@@ -150,6 +150,30 @@ function BorrowProposalBody({ proposal }) {
   );
 }
 
+// Lets a user refine a proposal before confirming it ("actually make it 3x
+// leverage instead") without discarding the whole thing and retyping from
+// scratch — shared by all three single-domain confirm modals and each item
+// in the multi-op review below. The correction text is combined with the
+// proposal's own sourceText and re-run through the same resolver that
+// built the original proposal, so it's genuinely re-parsed against live
+// data again, never patched in place client-side.
+function CorrectionBox({ value, onChange, onSubmit, busy, error }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="text" className="field correction-input" placeholder="Make a correction, e.g. &quot;use 3x leverage instead&quot;"
+          value={value} disabled={busy}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && value.trim() && !busy) onSubmit(); }} />
+        <button className="btn ghost" disabled={busy || !value.trim()} onClick={onSubmit}>
+          {busy ? "Updating…" : "Update"}
+        </button>
+      </div>
+      {error && <p className="tiny err" style={{ marginTop: 6 }}>{error}</p>}
+    </div>
+  );
+}
+
 function borrowProposalTitle(proposal) {
   if (proposal.action === "deposit") return `Deposit ${proposal.row.symbol} as collateral`;
   if (proposal.action === "borrow") return "Borrow USDC";
@@ -500,6 +524,20 @@ export default function App() {
   // null | Array<{ id, domain: 'trade'|'perp'|'borrow', text, proposal,
   //   error, status: 'ready'|'error'|'running'|'done'|'failed'|'skipped' }>
   const [multiRunning, setMultiRunning] = useState(false);
+
+  // Correction-box state for each of the 3 single-domain confirm modals —
+  // kept separate (not shared) since nothing else in this file shares
+  // state across proposal/perpProposal/borrowProposal either, and they can
+  // in principle be open independently.
+  const [tradeCorrection, setTradeCorrection] = useState("");
+  const [tradeCorrectionBusy, setTradeCorrectionBusy] = useState(false);
+  const [tradeCorrectionError, setTradeCorrectionError] = useState(null);
+  const [perpCorrection, setPerpCorrection] = useState("");
+  const [perpCorrectionBusy, setPerpCorrectionBusy] = useState(false);
+  const [perpCorrectionError, setPerpCorrectionError] = useState(null);
+  const [borrowCorrection, setBorrowCorrection] = useState("");
+  const [borrowCorrectionBusy, setBorrowCorrectionBusy] = useState(false);
+  const [borrowCorrectionError, setBorrowCorrectionError] = useState(null);
 
   // Fires once per new proposal (rebalance or build) — not on every weight/
   // slider change, since a proposal is only (re)computed on a real user
@@ -1171,7 +1209,7 @@ export default function App() {
         const result = await api.parse(tradePart, current, portfolio?.total);
         if (isRebalance) {
           const { trades, maxSkippedDelta } = planTrades({ allocations: result.allocations, portfolio, prices, registry });
-          setProposal({ ...result, trades, maxSkippedDelta, pendingWithdrawal: { to } });
+          setProposal({ ...result, trades, maxSkippedDelta, pendingWithdrawal: { to }, sourceText: text });
         } else {
           setPlan({ ...result, pendingWithdrawal: { to } });
           setView("weights");
@@ -1266,7 +1304,7 @@ export default function App() {
   const resolveTradeSegment = async (text, current, total) => {
     const result = await api.parse(text, current, total);
     const { trades, maxSkippedDelta } = planTrades({ allocations: result.allocations, portfolio, prices, registry });
-    return { ...result, trades, maxSkippedDelta };
+    return { ...result, trades, maxSkippedDelta, sourceText: text };
   };
 
   /* ——— perps-via-prompt: "buy SOL perp at 5x with all my cash" ———
@@ -1355,7 +1393,7 @@ export default function App() {
           action: "close", asset, side: pos.side,
           markPrice: pos.markPx, notionalUsd: pos.size * pos.markPx,
           closeSize: pos.size, closeAssetIndex: pos.assetIndex, closeSzDecimals: pos.szDecimals,
-          summary: intent.summary,
+          summary: intent.summary, sourceText: text,
         },
       };
     }
@@ -1417,7 +1455,7 @@ export default function App() {
       kind: "proposal",
       proposal: {
         action: "open", asset, leverage, isBuy: intent.side === "long", side: intent.side,
-        markPrice, marginUsd, notionalUsd, formattedSize, liqPrice, summary: intent.summary,
+        markPrice, marginUsd, notionalUsd, formattedSize, liqPrice, summary: intent.summary, sourceText: text,
       },
     };
   };
@@ -1597,7 +1635,7 @@ export default function App() {
         return {
           action: intent.action, repayReserve, repayAmt, repayAmtStr, repayMax,
           withdrawDeposit, withdrawReserve, withdrawAmt, withdrawAmtStr, withdrawMax,
-          summary: intent.summary,
+          summary: intent.summary, sourceText: text,
         };
       }
 
@@ -1648,8 +1686,95 @@ export default function App() {
     return {
       action: intent.action, row, reserve, usdcReserveKey: usdcReserve.reserve,
       depositAmt, depositValueUsd, kaminoDepositAmount, maxLtv,
-      borrowUsd, borrowFeeUsd, netBorrowUsd, maxBorrowUsd, summary: intent.summary,
+      borrowUsd, borrowFeeUsd, netBorrowUsd, maxBorrowUsd, summary: intent.summary, sourceText: text,
     };
+  };
+
+  // Re-resolves a proposal after a user-typed correction, by combining it
+  // with the proposal's own sourceText and running the WHOLE thing back
+  // through the same resolver that built the original — Claude reads both
+  // together ("go 5x long BTC with all my cash. Actually make it 3x
+  // leverage instead") and produces the corrected intent itself, rather
+  // than this code trying to patch fields in place. Perps deposit/withdraw
+  // has no proposal shape to correct into (see resolvePerpSegment) — same
+  // "do that as its own step" guidance as the multi-op resolver gives it.
+  const resolveCorrection = async (domain, sourceText, correctionText) => {
+    const combinedText = `${sourceText}. ${correctionText}`.trim();
+    if (domain === "trade") {
+      const current = portfolio.rows.map((r) => ({ symbol: r.symbol, weight: r.weight }));
+      return resolveTradeSegment(combinedText, current, portfolio?.total);
+    }
+    if (domain === "perp") {
+      const r = await resolvePerpSegment(combinedText);
+      if (r.kind === "wizard") throw new Error("That reads like a deposit/withdraw request — try that as its own separate action.");
+      return r.proposal;
+    }
+    return resolveBorrowSegment(combinedText);
+  };
+
+  const submitTradeCorrection = async () => {
+    if (!proposal || !tradeCorrection.trim()) return;
+    setTradeCorrectionBusy(true); setTradeCorrectionError(null);
+    try {
+      const next = await resolveCorrection("trade", proposal.sourceText, tradeCorrection);
+      setProposal(next);
+      setTradeCorrection("");
+    } catch (e) {
+      setTradeCorrectionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTradeCorrectionBusy(false);
+    }
+  };
+
+  const submitPerpCorrection = async () => {
+    if (!perpProposal || !perpCorrection.trim()) return;
+    setPerpCorrectionBusy(true); setPerpCorrectionError(null);
+    try {
+      const next = await resolveCorrection("perp", perpProposal.sourceText, perpCorrection);
+      setPerpProposal(next);
+      setPerpCorrection("");
+    } catch (e) {
+      setPerpCorrectionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPerpCorrectionBusy(false);
+    }
+  };
+
+  const submitBorrowCorrection = async () => {
+    if (!borrowProposal || !borrowCorrection.trim()) return;
+    setBorrowCorrectionBusy(true); setBorrowCorrectionError(null);
+    try {
+      const next = await resolveCorrection("borrow", borrowProposal.sourceText, borrowCorrection);
+      setBorrowProposal(next);
+      setBorrowCorrection("");
+    } catch (e) {
+      setBorrowCorrectionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBorrowCorrectionBusy(false);
+    }
+  };
+
+  const setMultiItemCorrectionText = (itemId, text) => {
+    setMultiItems((L) => L.map((x) => (x.id === itemId ? { ...x, correctionText: text } : x)));
+  };
+
+  // Corrects a single item inside the multi-op review without touching the
+  // others — the item's own accumulated text (its original segment plus
+  // any prior corrections) is what gets combined with the new correction,
+  // so a second correction builds on the first rather than losing it.
+  const submitMultiItemCorrection = async (itemId, correctionText) => {
+    const item = multiItems?.find((x) => x.id === itemId);
+    if (!item || !correctionText.trim()) return;
+    setMultiItems((L) => L.map((x) => (x.id === itemId ? { ...x, correctionBusy: true, correctionError: null } : x)));
+    try {
+      const nextProposal = await resolveCorrection(item.domain, item.text, correctionText);
+      setMultiItems((L) => L.map((x) => (x.id === itemId
+        ? { ...x, proposal: nextProposal, text: `${x.text}. ${correctionText}`.trim(), status: "ready", error: null, correctionBusy: false, correctionText: "" }
+        : x)));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setMultiItems((L) => L.map((x) => (x.id === itemId ? { ...x, correctionBusy: false, correctionError: message } : x)));
+    }
   };
 
   // proposalOverride: same reasoning as executePerpOrder above — lets the
@@ -1958,6 +2083,7 @@ export default function App() {
         proposal: r.status === "fulfilled" ? r.value : null,
         error: r.status === "rejected" ? (r.reason?.message || String(r.reason)) : null,
         status: r.status === "fulfilled" ? "ready" : "error",
+        correctionText: "", correctionBusy: false, correctionError: null,
       };
     }));
     setThinking(false);
@@ -3155,13 +3281,15 @@ export default function App() {
           )}
 
           {perpProposal && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !perpOrderBusy && setPerpProposal(null)}>
+            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !perpOrderBusy && !perpCorrectionBusy && setPerpProposal(null)}>
               <div className="modal-box card" style={{ maxWidth: 380 }}>
                 <p className="tiny label">{perpProposalTitle(perpProposal)}</p>
                 <PerpProposalBody proposal={perpProposal} />
+                <CorrectionBox value={perpCorrection} onChange={setPerpCorrection} onSubmit={submitPerpCorrection}
+                  busy={perpCorrectionBusy} error={perpCorrectionError} />
                 <div className="wfoot" style={{ marginTop: 12 }}>
-                  <button className="btn ghost" disabled={perpOrderBusy} onClick={() => setPerpProposal(null)}>Discard</button>
-                  <button className="btn primary" disabled={perpOrderBusy} onClick={() => executePerpOrder()}>
+                  <button className="btn ghost" disabled={perpOrderBusy || perpCorrectionBusy} onClick={() => { setPerpProposal(null); setPerpCorrection(""); setPerpCorrectionError(null); }}>Discard</button>
+                  <button className="btn primary" disabled={perpOrderBusy || perpCorrectionBusy} onClick={() => executePerpOrder()}>
                     {perpOrderBusy
                       ? (perpProposal.action === "close" ? "Closing…" : "Placing…")
                       : (perpProposal.action === "close" ? "Close position →" : `${perpProposal.side === "long" ? "Long" : "Short"} ${perpProposal.asset.displayName} →`)}
@@ -3172,13 +3300,15 @@ export default function App() {
           )}
 
           {borrowProposal && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !borrowActionBusy && setBorrowProposal(null)}>
+            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !borrowActionBusy && !borrowCorrectionBusy && setBorrowProposal(null)}>
               <div className="modal-box card" style={{ maxWidth: 380 }}>
                 <p className="tiny label">{borrowProposalTitle(borrowProposal)}</p>
                 <BorrowProposalBody proposal={borrowProposal} />
+                <CorrectionBox value={borrowCorrection} onChange={setBorrowCorrection} onSubmit={submitBorrowCorrection}
+                  busy={borrowCorrectionBusy} error={borrowCorrectionError} />
                 <div className="wfoot" style={{ marginTop: 12 }}>
-                  <button className="btn ghost" disabled={borrowActionBusy} onClick={() => setBorrowProposal(null)}>Discard</button>
-                  <button className="btn primary" disabled={borrowActionBusy} onClick={() => executeBorrowProposal()}>
+                  <button className="btn ghost" disabled={borrowActionBusy || borrowCorrectionBusy} onClick={() => { setBorrowProposal(null); setBorrowCorrection(""); setBorrowCorrectionError(null); }}>Discard</button>
+                  <button className="btn primary" disabled={borrowActionBusy || borrowCorrectionBusy} onClick={() => executeBorrowProposal()}>
                     {borrowActionBusy ? "Waiting for signature…" : "Confirm →"}
                   </button>
                 </div>
@@ -3186,12 +3316,14 @@ export default function App() {
             </div>
           )}
 
-          {multiItems && (
-            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !multiRunning && setMultiItems(null)}>
+          {multiItems && (() => {
+            const anyCorrectionBusy = multiItems.some((i) => i.correctionBusy);
+            return (
+            <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !multiRunning && !anyCorrectionBusy && setMultiItems(null)}>
               <div className="modal-box card" style={{ maxWidth: 460 }}>
                 <div className="answer-header">
                   <p className="tiny label" style={{ margin: 0 }}>Multiple actions</p>
-                  {!multiRunning && <button className="x" onClick={() => setMultiItems(null)}>×</button>}
+                  {!multiRunning && !anyCorrectionBusy && <button className="x" onClick={() => setMultiItems(null)}>×</button>}
                 </div>
                 {multiItems.map((item) => {
                   const domainLabel = item.domain === "trade" ? "Brokerage" : item.domain === "perp" ? "Perps" : "Borrow/Lend";
@@ -3220,12 +3352,18 @@ export default function App() {
                           )}
                         </>
                       )}
+                      {(item.status === "ready" || item.status === "error") && (
+                        <CorrectionBox value={item.correctionText}
+                          onChange={(v) => setMultiItemCorrectionText(item.id, v)}
+                          onSubmit={() => submitMultiItemCorrection(item.id, item.correctionText)}
+                          busy={item.correctionBusy} error={item.correctionError} />
+                      )}
                     </div>
                   );
                 })}
                 <div className="wfoot" style={{ marginTop: 14 }}>
-                  <button className="btn ghost" disabled={multiRunning} onClick={() => setMultiItems(null)}>Discard</button>
-                  <button className="btn primary" disabled={multiRunning || !multiItems.some((i) => i.status === "ready")} onClick={runMultiItems}>
+                  <button className="btn ghost" disabled={multiRunning || anyCorrectionBusy} onClick={() => setMultiItems(null)}>Discard</button>
+                  <button className="btn primary" disabled={multiRunning || anyCorrectionBusy || !multiItems.some((i) => i.status === "ready")} onClick={runMultiItems}>
                     {multiRunning
                       ? "Running…"
                       : `Confirm ${multiItems.filter((i) => i.status === "ready").length} of ${multiItems.length} →`}
@@ -3233,7 +3371,8 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           </div>{/* dash-main */}
 
@@ -3249,7 +3388,7 @@ export default function App() {
 
           {(proposal || withdrawalProposal || answer) && (
             <div className="modal-overlay" onClick={(e) => {
-              if (e.target === e.currentTarget) {
+              if (e.target === e.currentTarget && !tradeCorrectionBusy) {
                 setProposal(null); setWithdrawalProposal(null); setAnswer(null);
               }
             }}>
@@ -3316,10 +3455,20 @@ export default function App() {
                 {proposal && (<>
                   <p className="tiny label">Proposed change</p>
                   <TradeProposalBody proposal={proposal} proposalImpacts={proposalImpacts} />
+                  {/* Not offered when a withdraw is chained on (pendingWithdrawal) —
+                      resolveCorrection's trade branch re-resolves through the plain
+                      allocation parser, which doesn't know about the withdraw-to-
+                      address half of a compound "trade then send" prompt, and
+                      re-deriving that safely isn't worth the risk of silently
+                      dropping it. */}
+                  {proposal.sourceText && !proposal.pendingWithdrawal && (
+                    <CorrectionBox value={tradeCorrection} onChange={setTradeCorrection} onSubmit={submitTradeCorrection}
+                      busy={tradeCorrectionBusy} error={tradeCorrectionError} />
+                  )}
                   <div className="wfoot">
-                    <button className="btn ghost" onClick={() => setProposal(null)}>Discard</button>
+                    <button className="btn ghost" disabled={tradeCorrectionBusy} onClick={() => { setProposal(null); setTradeCorrection(""); setTradeCorrectionError(null); }}>Discard</button>
                     {(proposal.trades.length > 0 || proposal.pendingWithdrawal) && (
-                      <button className="btn primary" onClick={() => runTrades(proposal.trades, { afterWithdrawTo: proposal.pendingWithdrawal?.to || null, groupLabel: proposal.summary || "Rebalance" })}>
+                      <button className="btn primary" disabled={tradeCorrectionBusy} onClick={() => runTrades(proposal.trades, { afterWithdrawTo: proposal.pendingWithdrawal?.to || null, groupLabel: proposal.summary || "Rebalance" })}>
                         {proposal.trades.length > 0
                           ? `Execute ${proposal.trades.length} swap${proposal.trades.length > 1 ? "s" : ""}${proposal.pendingWithdrawal ? " + withdraw" : ""} →`
                           : "Withdraw →"}

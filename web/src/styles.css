@@ -383,6 +383,7 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   transition: border-color .15s, box-shadow .15s;
 }
 .field:focus { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(26,68,51,.1); }
+.correction-input { font-size: 13px; padding: 8px 12px; }
 
 /* ——— Global mobile rescale ———
    The mobile work up to this point (bottom nav, bottom sheets, card-stack
