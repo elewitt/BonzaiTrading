@@ -159,17 +159,23 @@ function BorrowProposalBody({ proposal }) {
 // data again, never patched in place client-side.
 function CorrectionBox({ value, onChange, onSubmit, busy, error }) {
   return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input type="text" className="field correction-input" placeholder="Make a correction, e.g. &quot;use 3x leverage instead&quot;"
+    <div className="correction-panel">
+      <div className="correction-label">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+        Not quite right?
+      </div>
+      <div className="correction-row">
+        <input type="text" className="correction-input" placeholder="e.g. &quot;use 3x leverage instead&quot;"
           value={value} disabled={busy}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && value.trim() && !busy) onSubmit(); }} />
-        <button className="btn ghost" disabled={busy || !value.trim()} onClick={onSubmit}>
+        <button className="btn ghost correction-btn" disabled={busy || !value.trim()} onClick={onSubmit}>
           {busy ? "Updating…" : "Update"}
         </button>
       </div>
-      {error && <p className="tiny err" style={{ marginTop: 6 }}>{error}</p>}
+      {error && <p className="tiny err" style={{ marginTop: 8 }}>{error}</p>}
     </div>
   );
 }
@@ -3282,7 +3288,7 @@ export default function App() {
 
           {perpProposal && (
             <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !perpOrderBusy && !perpCorrectionBusy && setPerpProposal(null)}>
-              <div className="modal-box card" style={{ maxWidth: 380 }}>
+              <div className="modal-box card" style={{ maxWidth: 460 }}>
                 <p className="tiny label">{perpProposalTitle(perpProposal)}</p>
                 <PerpProposalBody proposal={perpProposal} />
                 <CorrectionBox value={perpCorrection} onChange={setPerpCorrection} onSubmit={submitPerpCorrection}
@@ -3301,7 +3307,7 @@ export default function App() {
 
           {borrowProposal && (
             <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !borrowActionBusy && !borrowCorrectionBusy && setBorrowProposal(null)}>
-              <div className="modal-box card" style={{ maxWidth: 380 }}>
+              <div className="modal-box card" style={{ maxWidth: 460 }}>
                 <p className="tiny label">{borrowProposalTitle(borrowProposal)}</p>
                 <BorrowProposalBody proposal={borrowProposal} />
                 <CorrectionBox value={borrowCorrection} onChange={setBorrowCorrection} onSubmit={submitBorrowCorrection}
