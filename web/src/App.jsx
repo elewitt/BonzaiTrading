@@ -569,7 +569,7 @@ export default function App() {
   }, [proposal]);
   const [legs, setLegs] = useState([]);
   const [error, setError] = useState("");
-  const [investPct, setInvestPct] = useState(100);
+  const [investAmountInput, setInvestAmountInput] = useState("");
   const [statsFlipped, setStatsFlipped] = useState(false);
   const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow" | "markets"
   const [newsSearchInput, setNewsSearchInput] = useState("");
@@ -1219,6 +1219,7 @@ export default function App() {
           setProposal({ ...result, trades, maxSkippedDelta, pendingWithdrawal: { to }, sourceText: text });
         } else {
           setPlan({ ...result, pendingWithdrawal: { to } });
+          setInvestAmountInput((portfolio?.cash || 0).toFixed(2));
           setView("weights");
         }
       } catch (e) {
@@ -1301,6 +1302,7 @@ export default function App() {
       } else {
         const result = await api.parse(text, current, portfolio?.total);
         setPlan(result);
+        setInvestAmountInput((portfolio?.cash || 0).toFixed(2));
         setView("weights");
       }
     } catch (e) {
@@ -2154,7 +2156,11 @@ export default function App() {
     const usdyUsd = usdyToken ? (usdyToken.uiAmount || 0) * (prices[registry.USDY.mint] || 1) : 0;
 
     const totalCash = usdcBal + usdyUsd;
-    const investable = (totalCash * investPct) / 100 * 0.995;
+    // Clamp to the freshly-refetched totalCash defensively — the button
+    // itself is already disabled once the typed amount exceeds the
+    // render-time portfolio.cash (see overCash below), but that figure can
+    // be a few seconds stale against this live re-fetch.
+    const investable = Math.min(Number(investAmountInput) || 0, totalCash) * 0.995;
     const weightSum = plan.allocations.reduce((s, a) => s + (+a.weight || 0), 0) || 100;
     const buyTrades = plan.allocations
       .map((a) => {
@@ -2187,6 +2193,7 @@ export default function App() {
   // already returns into `plan` above.
   const onAssemblePortfolio = (allocations, summary) => {
     setPlan({ allocations: allocations.map((a) => ({ ...a })), summary });
+    setInvestAmountInput((portfolio?.cash || 0).toFixed(2));
     setView("weights");
   };
 
@@ -2247,6 +2254,8 @@ export default function App() {
       return { ...p, allocations: p.allocations.map((a) => ({ ...a, weight: w })) };
     });
   const weightSum = plan ? plan.allocations.reduce((a, x) => a + (+x.weight || 0), 0) : 0;
+  const investAmountNum = Number(investAmountInput) || 0;
+  const overCash = portfolio ? investAmountNum > (portfolio.cash || 0) + 0.005 : false;
 
   // Derived from the name rather than a hardcoded symbol list — every ETF in
   // the registry has "ETF" in its name (VOOx "Vanguard S&P 500 ETF", XLEx
@@ -2834,12 +2843,31 @@ export default function App() {
                 <button className="x" onClick={() => removeSymbol(a.symbol)} title="Remove">×</button>
               </div>
             ))}
-            <div className="wrow">
-              <div className="wname"><span className="serif">Invest</span><span className="mono tiny muted"> of cash</span></div>
-              <input type="range" min="1" max="100" step="1" className="slider"
-                value={investPct} onChange={(e) => setInvestPct(+e.target.value)} />
-              <div className="wnum"><span className="mono">{investPct}%</span></div>
-              <span className="x" style={{ visibility: "hidden" }}>×</span>
+            {/* Stacked, not a single-line .wrow like the asset rows above —
+                a label + $ input + 4 preset buttons genuinely doesn't fit
+                on one line at .stage.narrow's width (confirmed: flex:1 on
+                the input was being correctly applied but only had ~30px of
+                real estate left after the label and 4 buttons, rendering
+                it unusably tiny). Mirrors EquitiesMarketsApp.jsx's
+                BuyPopup, which already solves "type a $ amount, with %
+                shortcuts, validated against available cash" with this
+                exact vertical layout. */}
+            <div className="wrow" style={{ flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="wname"><span className="serif">Invest</span><span className="mono tiny muted"> from cash</span></div>
+                <span className="tiny muted">${usd(portfolio.cash, 0)} available</span>
+              </div>
+              <input className="field mono" inputMode="decimal" placeholder="0.00"
+                value={investAmountInput} onChange={(e) => setInvestAmountInput(e.target.value)} />
+              <div className="lvp-pct-presets" style={{ margin: 0 }}>
+                {[25, 50, 75, 100].map((pct) => (
+                  <button key={pct} type="button" className="lvp-pct-btn" style={{ flex: 1 }}
+                    disabled={!portfolio.cash}
+                    onClick={() => setInvestAmountInput(((portfolio.cash || 0) * (pct / 100)).toFixed(2))}>
+                    {pct === 100 ? "Max" : `${pct}%`}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="wfoot">
               <button className="btn ghost" onClick={equalize}>Equal weights</button>
@@ -2847,11 +2875,16 @@ export default function App() {
                 Total {weightSum.toFixed(1)}%
               </span>
               <button className="btn primary"
-                disabled={Math.abs(weightSum - 100) > 0.5 || !plan.allocations.length}
+                disabled={Math.abs(weightSum - 100) > 0.5 || !plan.allocations.length || investAmountNum <= 0 || overCash}
                 onClick={executeBuild}>
-                Invest ${usd((portfolio.cash * investPct) / 100, 0)} →
+                Invest ${usd(investAmountNum, 0)} →
               </button>
             </div>
+            {overCash && (
+              <p className="tiny warn" style={{ margin: "10px 0 0" }}>
+                Exceeds available cash (${usd(portfolio.cash, 0)}).
+              </p>
+            )}
           </div>
           <button className="linkish" onClick={() => setView("build")}>← Change the lineup</button>
         </main>
