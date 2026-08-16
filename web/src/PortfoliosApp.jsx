@@ -6,7 +6,6 @@ import { api, displayTicker } from "./lib/api.js";
 // an actual holdings chart read as the same visual language.
 const SEG_COLORS = ["#1C4A38", "#2F6B50", "#4C8A69", "#71A987", "#9AC4A8", "#C6DCCC", "#173B2D", "#3E7A5C", "#5E9578", "#86B497"];
 
-const LEGENDARY_CATEGORY = "Legendary Investors";
 const MAX_CHIPS = 8;
 
 function WeightBar({ allocations }) {
@@ -78,6 +77,7 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
   const [registry, setRegistry] = useState(null);
   const [baskets, setBaskets] = useState(null);
   const [investorPortfolios, setInvestorPortfolios] = useState(null);
+  const [tab, setTab] = useState("themes"); // "themes" | "investors"
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
 
@@ -105,13 +105,11 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
   }, [registry]);
 
   const themePortfolios = useMemo(() => [...(baskets || []), ...etfPortfolios], [baskets, etfPortfolios]);
-  const totalCount = themePortfolios.length + (investorPortfolios || []).length;
 
   const categories = useMemo(() => {
     const cats = new Set(themePortfolios.map((p) => p.category));
-    if ((investorPortfolios || []).length > 0) cats.add(LEGENDARY_CATEGORY);
     return ["All", ...Array.from(cats).sort()];
-  }, [themePortfolios, investorPortfolios]);
+  }, [themePortfolios]);
 
   const q = search.trim().toLowerCase();
   const matchesSearch = (p, nameField) => !q
@@ -119,20 +117,18 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
     || p.tagline.toLowerCase().includes(q)
     || p.allocations.some((a) => displayTicker(a.symbol).toLowerCase().includes(q));
 
-  const filteredInvestors = useMemo(() => {
-    if (category !== "All" && category !== LEGENDARY_CATEGORY) return [];
-    return (investorPortfolios || []).filter((p) => matchesSearch(p, "investor"));
-  }, [investorPortfolios, search, category]);
+  const filteredThemes = useMemo(() => themePortfolios
+    .filter((p) => category === "All" || p.category === category)
+    .filter((p) => matchesSearch(p, "name")), [themePortfolios, search, category]);
 
-  const filteredThemes = useMemo(() => {
-    if (category === LEGENDARY_CATEGORY) return [];
-    return themePortfolios
-      .filter((p) => category === "All" || p.category === category)
-      .filter((p) => matchesSearch(p, "name"));
-  }, [themePortfolios, search, category]);
+  const filteredInvestors = useMemo(() =>
+    (investorPortfolios || []).filter((p) => matchesSearch(p, "investor")),
+  [investorPortfolios, search]);
 
   const loading = !registry || baskets === null || investorPortfolios === null;
-  const shownCount = filteredInvestors.length + filteredThemes.length;
+  const onThemes = tab === "themes";
+  const shownCount = onThemes ? filteredThemes.length : filteredInvestors.length;
+  const totalCount = onThemes ? themePortfolios.length : (investorPortfolios || []).length;
 
   return (
     <div className="stage dash-wide">
@@ -147,48 +143,45 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
         Bonzai Trading's broad ETFs — pick one and adjust the weights and invest amount before you buy.
       </p>
 
+      <div className="perps-tabs card" style={{ marginBottom: 20, borderRadius: 12, padding: "0 8px" }}>
+        <button className={`perps-tab ${onThemes ? "active" : ""}`} onClick={() => setTab("themes")}>Themes &amp; ETFs</button>
+        <button className={`perps-tab ${!onThemes ? "active" : ""}`} onClick={() => setTab("investors")}>Legendary Investors</button>
+      </div>
+
       <div className="card" style={{ marginBottom: 24 }}>
-        <div className="perps-category-toggle" style={{ flexWrap: "wrap", marginBottom: 10 }}>
-          {categories.map((c) => (
-            <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>{c}</button>
-          ))}
-        </div>
-        <input className="perps-asset-search" placeholder="Search by name, investor, theme, or ticker…" value={search}
-          onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360, marginBottom: 0 }} />
+        {onThemes && (
+          <div className="perps-category-toggle" style={{ flexWrap: "wrap", marginBottom: 10 }}>
+            {categories.map((c) => (
+              <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>{c}</button>
+            ))}
+          </div>
+        )}
+        <input className="perps-asset-search"
+          placeholder={onThemes ? "Search by name, theme, or ticker…" : "Search by investor, fund, or ticker…"}
+          value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360, marginBottom: 0 }} />
       </div>
 
       {loading ? (
         <p className="muted">Loading…</p>
       ) : shownCount === 0 ? (
         <p className="muted">No matches.</p>
+      ) : onThemes ? (
+        <div className="portfolio-grid">
+          {filteredThemes.map((p) => <PortfolioCard key={p.id} p={p} onAssemble={onAssemble} />)}
+        </div>
       ) : (
-        <>
-          {filteredInvestors.length > 0 && (
-            <div className="portfolio-section">
-              <p className="table-card-title" style={{ marginBottom: 2 }}>Legendary Investor Portfolios</p>
-              <p className="tiny muted portfolio-disclaimer">
-                Inspired by real, public SEC 13F disclosures (ARK: its own published holdings) —
-                limited to holdings also tradeable here, so each is a partial reflection of the
-                real portfolio, not a full replica. Not affiliated with, endorsed by, or reviewed
-                by these investors or funds.
-              </p>
-              <div className="portfolio-grid">
-                {filteredInvestors.map((p) => <InvestorCard key={p.id} p={p} onAssemble={onAssemble} />)}
-              </div>
-            </div>
-          )}
-
-          {filteredThemes.length > 0 && (
-            <div className="portfolio-section">
-              {filteredInvestors.length > 0 && (
-                <p className="table-card-title" style={{ marginBottom: 10 }}>Themes &amp; Broad ETFs</p>
-              )}
-              <div className="portfolio-grid">
-                {filteredThemes.map((p) => <PortfolioCard key={p.id} p={p} onAssemble={onAssemble} />)}
-              </div>
-            </div>
-          )}
-        </>
+        <div>
+          <p className="tiny muted portfolio-disclaimer">
+            Inspired by real, public SEC 13F disclosures (ARK: its own published holdings; Nancy
+            Pelosi: a STOCK Act congressional disclosure, not a managed fund) — limited to
+            holdings also tradeable here, so each is a partial reflection of the real portfolio,
+            not a full replica. Not affiliated with, endorsed by, or reviewed by these investors,
+            funds, or public officials.
+          </p>
+          <div className="portfolio-grid">
+            {filteredInvestors.map((p) => <InvestorCard key={p.id} p={p} onAssemble={onAssemble} />)}
+          </div>
+        </div>
       )}
     </div>
   );
