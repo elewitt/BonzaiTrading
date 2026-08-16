@@ -197,7 +197,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
   }, [detailRow?.symbol]);
 
   return (
-    <div className="stage wide">
+    <div className="stage dash-wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
       <div className="card-toprow" style={{ marginTop: 16, marginBottom: 4 }}>
