@@ -1,5 +1,5 @@
 import { useState, useMemo, useId } from "react";
-import { usd } from "../lib/api.js";
+import { usd, displayTicker } from "../lib/api.js";
 
 const SEG_COLORS = ["#1C4A38", "#2F6B50", "#4C8A69", "#71A987", "#9AC4A8", "#C6DCCC", "#173B2D", "#3E7A5C", "#5E9578", "#86B497"];
 const ETFS = new Set(["SPYx", "QQQx", "GLDx"]);
@@ -43,7 +43,7 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
 
   const segs = useMemo(() => {
     const items = rows.map((r, i) => ({
-      key: r.symbol, label: r.name || r.symbol, sub: r.symbol,
+      key: r.symbol, label: r.name || displayTicker(r.symbol), sub: displayTicker(r.symbol),
       value: r.value, price: r.price || 0, priceUnavailable: !!r.priceUnavailable,
       color: SEG_COLORS[i % SEG_COLORS.length],
       cat: category(r.symbol),

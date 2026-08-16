@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useKaminoAction } from "./useKamino.js";
-import { KAMINO_FEE_BPS } from "../lib/api.js";
+import { KAMINO_FEE_BPS, displayTicker } from "../lib/api.js";
 
 // Kamino creates a new on-chain "Obligation" account the first time a wallet
 // deposits into this market, PLUS a token account for the collateral mint —
@@ -156,7 +156,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
       <div className="card">
         <p className="card-title">No eligible collateral</p>
         <p className="muted">
-          You don't currently hold any xStocks that Kamino's xStocks Market accepts as collateral.
+          You don't currently hold any tokenized stocks that Kamino's market accepts as collateral.
           Buy one of the supported stocks/ETFs first, then come back here to borrow against it.
         </p>
       </div>
@@ -170,7 +170,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
         <p className="card-title">{viaFreshDeposit ? "Position opened" : "Borrow complete"}</p>
         <p className="muted">
           {viaFreshDeposit
-            ? `Deposited ${depositAmount} ${row?.symbol} as collateral and borrowed $${borrowAmt.toFixed(2)} USDC. `
+            ? `Deposited ${depositAmount} ${displayTicker(row?.symbol)} as collateral and borrowed $${borrowAmt.toFixed(2)} USDC. `
             : `Borrowed $${quickBorrowAmt.toFixed(2)} USDC against your existing collateral. `}
           Check "My Positions" to monitor your loan-to-value.
         </p>
@@ -189,7 +189,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
     <div className="card card-pop">
       <p className="card-title">Borrow against your holdings</p>
       <p className="lede sm">
-        Post an xStock you already hold as collateral and borrow USDC against it — rates and limits are
+        Post a tokenized stock you already hold as collateral and borrow USDC against it — rates and limits are
         set per asset by Kamino's live market data.
       </p>
 
@@ -250,7 +250,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
                   <button key={r.mint} className={`borrow-asset-row ${r.mint === selectedMint ? "sel" : ""}`}
                     onClick={() => { setSelectedMint(r.mint); setDepositAmount(""); }}>
                     <div className="borrow-asset-row-top">
-                      <span className="borrow-asset-symbol mono">{r.symbol}</span>
+                      <span className="borrow-asset-symbol mono">{displayTicker(r.symbol)}</span>
                       <span className="tiny muted">{r.uiAmount} held · ${r.value.toFixed(2)}</span>
                     </div>
                     {res && (
@@ -280,7 +280,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
           {reserve && row && (
             <>
               <div className="borrow-field">
-                <span className="tiny muted">Deposit amount ({row.symbol}) · max LTV {(maxLtv * 100).toFixed(0)}%</span>
+                <span className="tiny muted">Deposit amount ({displayTicker(row.symbol)}) · max LTV {(maxLtv * 100).toFixed(0)}%</span>
                 <div className="borrow-input-wrap">
                   <input className="field" inputMode="decimal" value={depositAmount}
                     onChange={(e) => setDepositAmount(e.target.value)} placeholder="0" />
@@ -313,7 +313,7 @@ export default function BorrowTicket({ eligibleRows, reserves, wallet, signWithW
       {step === "borrow" && (
         <>
           <p className="tiny muted">
-            Collateral deposited. Up to ${postDepositMaxBorrowUsd.toFixed(2)} USDC borrowable at {depositedInfo?.symbol ?? "this asset"}'s {(postDepositMaxLtv * 100).toFixed(0)}% max LTV —
+            Collateral deposited. Up to ${postDepositMaxBorrowUsd.toFixed(2)} USDC borrowable at {displayTicker(depositedInfo?.symbol) || "this asset"}'s {(postDepositMaxLtv * 100).toFixed(0)}% max LTV —
             borrowing less than the max keeps a bigger safety margin from liquidation.
           </p>
           <div className="borrow-field">

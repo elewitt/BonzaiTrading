@@ -28,7 +28,7 @@ import ReferralsApp from "./ReferralsApp.jsx";
 import BorrowApp from "./borrow/BorrowApp.jsx";
 import PositionCard from "./borrow/PositionCard.jsx";
 import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
-import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, setAuthTokenProvider } from "./lib/api.js";
+import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, displayTicker, XSTOCK_TICKER_RE, setAuthTokenProvider } from "./lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials, hasQaBypassCredentials } from "./lib/qaBypass.js";
 import { splitIntoDomainSegments } from "./lib/promptSplit.js";
 
@@ -60,7 +60,7 @@ function TradeProposalBody({ proposal, proposalImpacts }) {
           const badge = impactBadge(proposalImpacts?.[t.symbol]);
           return (
             <span key={i} className={`trade-chip mono tiny ${t.side}`}>
-              {t.side === "buy" ? "Buy" : "Sell"} ${usd(t.usd)} {t.symbol}
+              {t.side === "buy" ? "Buy" : "Sell"} ${usd(t.usd)} {displayTicker(t.symbol)}
               {badge && <span className={`tiny ${badge.className}`} style={{ marginLeft: 6 }}>· {badge.label}</span>}
             </span>
           );
@@ -120,7 +120,7 @@ function BorrowProposalBody({ proposal }) {
         <div className="borrow-field" style={{ marginTop: 10 }}>
           <span className="tiny muted">Deposit</span>
           <span className="mono">
-            {proposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {proposal.row.symbol} (${usd(proposal.depositValueUsd)}) · max LTV {(proposal.maxLtv * 100).toFixed(0)}% · no deposit fee
+            {proposal.depositAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {displayTicker(proposal.row.symbol)} (${usd(proposal.depositValueUsd)}) · max LTV {(proposal.maxLtv * 100).toFixed(0)}% · no deposit fee
           </span>
         </div>
       )}
@@ -143,7 +143,7 @@ function BorrowProposalBody({ proposal }) {
       {(proposal.action === "withdraw" || proposal.action === "repay_and_withdraw") && (
         <div className="borrow-field">
           <span className="tiny muted">Withdraw</span>
-          <span className="mono">{proposal.withdrawAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {proposal.withdrawDeposit.tokenName} (of {proposal.withdrawMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} available)</span>
+          <span className="mono">{proposal.withdrawAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {displayTicker(proposal.withdrawDeposit.tokenName)} (of {proposal.withdrawMax.toLocaleString(undefined, { maximumFractionDigits: 6 })} available)</span>
         </div>
       )}
     </>
@@ -181,12 +181,12 @@ function CorrectionBox({ value, onChange, onSubmit, busy, error }) {
 }
 
 function borrowProposalTitle(proposal) {
-  if (proposal.action === "deposit") return `Deposit ${proposal.row.symbol} as collateral`;
+  if (proposal.action === "deposit") return `Deposit ${displayTicker(proposal.row.symbol)} as collateral`;
   if (proposal.action === "borrow") return "Borrow USDC";
-  if (proposal.action === "deposit_and_borrow") return `Deposit ${proposal.row.symbol} & borrow USDC`;
+  if (proposal.action === "deposit_and_borrow") return `Deposit ${displayTicker(proposal.row.symbol)} & borrow USDC`;
   if (proposal.action === "repay") return "Repay loan";
-  if (proposal.action === "withdraw") return `Withdraw ${proposal.withdrawDeposit.tokenName}`;
-  if (proposal.action === "repay_and_withdraw") return `Repay loan & withdraw ${proposal.withdrawDeposit.tokenName}`;
+  if (proposal.action === "withdraw") return `Withdraw ${displayTicker(proposal.withdrawDeposit.tokenName)}`;
+  if (proposal.action === "repay_and_withdraw") return `Repay loan & withdraw ${displayTicker(proposal.withdrawDeposit.tokenName)}`;
   return "Borrow/Lend";
 }
 
@@ -248,23 +248,23 @@ function SellModal({ row, onClose, onConfirm }) {
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal-box card" style={{ maxWidth: 380 }}>
         <div className="card-toprow">
-          <p className="card-title">Sell {row.symbol}</p>
+          <p className="card-title">Sell {displayTicker(row.symbol)}</p>
           <button className="x" onClick={onClose}>×</button>
         </div>
         <p className="tiny muted" style={{ margin: "0 0 4px" }}>{row.name} · ${usd(row.price)} current price</p>
         <p className="tiny muted" style={{ margin: "0 0 10px" }}>
-          You hold {Number(row.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {row.symbol} (${usd(row.value)})
+          You hold {Number(row.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {displayTicker(row.symbol)} (${usd(row.value)})
         </p>
 
         <div className="lvp-pct-presets" style={{ marginBottom: 10 }}>
           <button type="button" className={`lvp-pct-btn ${mode === "usd" ? "sel" : ""}`}
             onClick={() => { setMode("usd"); setInput(""); }} style={{ flex: 1 }}>$</button>
           <button type="button" className={`lvp-pct-btn ${mode === "units" ? "sel" : ""}`} disabled={!row.price}
-            onClick={() => { setMode("units"); setInput(""); }} style={{ flex: 1 }}>{row.symbol}</button>
+            onClick={() => { setMode("units"); setInput(""); }} style={{ flex: 1 }}>{displayTicker(row.symbol)}</button>
         </div>
 
         <div className="borrow-field">
-          <span className="tiny muted">{mode === "usd" ? "Amount (USD)" : `Amount (${row.symbol})`}</span>
+          <span className="tiny muted">{mode === "usd" ? "Amount (USD)" : `Amount (${displayTicker(row.symbol)})`}</span>
           <input className="field" inputMode="decimal" autoFocus placeholder={mode === "usd" ? "100" : "1.5"}
             value={input} onChange={(e) => setInput(e.target.value)} />
         </div>
@@ -339,14 +339,14 @@ function LendModal({ row, reserve, wallet, signWithWallet, solBalance = 0, onClo
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal-box card" style={{ maxWidth: 380 }}>
         <div className="card-toprow">
-          <p className="card-title">Lend {row.symbol}</p>
+          <p className="card-title">Lend {displayTicker(row.symbol)}</p>
           <button className="x" onClick={onClose}>×</button>
         </div>
 
         {done ? (
           <>
             <p className="muted">
-              Deposited {depositAmount} {row.symbol} as collateral on Kamino's xStocks Market — up to
+              Deposited {depositAmount} {displayTicker(row.symbol)} as collateral on Kamino's tokenized-stocks market — up to
               ${maxBorrowUsd.toFixed(2)} USDC now borrowable against it. Check the Borrow / Lend tab to
               monitor your position or borrow against it.
             </p>
@@ -355,12 +355,12 @@ function LendModal({ row, reserve, wallet, signWithWallet, solBalance = 0, onClo
         ) : (
           <>
             <p className="tiny muted" style={{ margin: "0 0 10px" }}>
-              You hold {Number(row.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {row.symbol} (${usd(row.value)}) ·
+              You hold {Number(row.uiAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {displayTicker(row.symbol)} (${usd(row.value)}) ·
               {" "}{supplyApyPct > 0 ? `${supplyApyPct.toFixed(2)}% supply APY · ` : ""}max LTV {(maxLtv * 100).toFixed(0)}%
             </p>
 
             <div className="borrow-field">
-              <span className="tiny muted">Deposit amount ({row.symbol})</span>
+              <span className="tiny muted">Deposit amount ({displayTicker(row.symbol)})</span>
               <div className="borrow-input-wrap">
                 <input className="field" inputMode="decimal" autoFocus value={depositAmount}
                   onChange={(e) => setDepositAmount(e.target.value)} placeholder="0" />
@@ -1233,11 +1233,18 @@ export default function App() {
       const to = addrMatch[0];
       const beforeAddr = text.slice(0, text.indexOf(to));
 
-      // Find first registry symbol mentioned (longest match first to avoid prefix collisions)
+      // Find first registry symbol mentioned (longest match first to avoid prefix collisions).
+      // The trailing x on xStock tickers is made optional in the match (and
+      // escaped along with any other regex-special char in the symbol,
+      // e.g. the "." in "BRK.Bx") — tickers now DISPLAY without it, so
+      // "send my AAPL to <addr>" needs to resolve the same as "send my
+      // AAPLx to <addr>" once users stop seeing the x on screen.
+      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const symbolsByLength = Object.keys(registry).sort((a, b) => b.length - a.length);
-      const foundSymbol = symbolsByLength.find((sym) =>
-        new RegExp(`\\b${sym}\\b`, "i").test(text)
-      ) || "USDC";
+      const foundSymbol = symbolsByLength.find((sym) => {
+        const base = XSTOCK_TICKER_RE.test(sym) ? sym.slice(0, -1) : sym;
+        return new RegExp(`\\b${escapeRegex(base)}x?\\b`, "i").test(text);
+      }) || "USDC";
 
       const tok = registry[foundSymbol];
       const isStable = foundSymbol === "USDC" || foundSymbol === "USDY";
@@ -1613,7 +1620,7 @@ export default function App() {
           }
           if (!(withdrawAmt > 0)) throw new Error("That works out to a zero-size withdrawal — try a larger amount.");
           if (withdrawAmt > withdrawMax + 1e-6)
-            throw new Error(`Only ${withdrawMax.toFixed(6)} ${withdrawDeposit.tokenName} is withdrawable right now${needsRepay ? " after that repay" : ""}.`);
+            throw new Error(`Only ${withdrawMax.toFixed(6)} ${displayTicker(withdrawDeposit.tokenName)} is withdrawable right now${needsRepay ? " after that repay" : ""}.`);
 
           const isFullWithdraw = withdrawAmt >= withdrawMax - 1e-9;
           if (isFullWithdraw && willFullyRepay) {
@@ -1651,14 +1658,14 @@ export default function App() {
         row = (portfolio?.rows || []).find((r) => r.symbol.toUpperCase().replace(/X$/, "") === wanted);
         if (!row) throw new Error(`You don't hold ${intent.asset} — nothing to deposit.`);
         reserve = kaminoReserves.find((r) => r.liquidityTokenMint === row.mint);
-        if (!reserve) throw new Error(`${row.symbol} isn't accepted as collateral on Kamino's xStocks market.`);
+        if (!reserve) throw new Error(`${displayTicker(row.symbol)} isn't accepted as collateral on Kamino's tokenized-stocks market.`);
 
         if (intent.depositSizeType === "all") depositAmt = row.uiAmount;
         else if (intent.depositSizeType === "percent") depositAmt = (intent.depositSizeValue / 100) * row.uiAmount;
         else if (intent.depositSizeType === "units") depositAmt = intent.depositSizeValue;
         else if (intent.depositSizeType === "usd") depositAmt = row.price ? intent.depositSizeValue / row.price : 0;
         if (!(depositAmt > 0)) throw new Error("That works out to a zero-size deposit — try a larger amount.");
-        if (depositAmt > row.uiAmount + 1e-9) throw new Error(`You only hold ${row.uiAmount} ${row.symbol}.`);
+        if (depositAmt > row.uiAmount + 1e-9) throw new Error(`You only hold ${row.uiAmount} ${displayTicker(row.symbol)}.`);
         depositValueUsd = depositAmt * row.price;
 
         // Same Token-2022 ScaledUiAmount correction BorrowTicket.jsx uses —
@@ -2766,7 +2773,7 @@ export default function App() {
         <main className="stage narrow">
           <p className="eyebrow">${usd(portfolio.cash, 0)} {yieldMode ? "Yield Cash" : "USDC"} ready to invest</p>
           <h2 className="display sm">What do you want to hold?</h2>
-          <p className="lede">Name companies, indexes, even a rough thesis. Claude maps it to available xStocks.</p>
+          <p className="lede">Name companies, indexes, even a rough thesis. Claude maps it to available tokenized stocks.</p>
           <div className="prompt-wrap">
             <textarea className="prompt-box" rows={3}
               placeholder={'"A portfolio of Apple, Tesla, Nvidia, QQQ and SPY"'}
@@ -2783,7 +2790,7 @@ export default function App() {
               {Object.values(registry).filter((t) => t.symbol !== "USDC").map((t) => (
                 <button key={t.symbol} className="uni-chip"
                   onClick={() => setPrompt((p) => (p ? p.replace(/\.?$/, "") + ", " + t.name : t.name))}>
-                  <span className="mono">{t.symbol}</span> {t.name}
+                  <span className="mono">{displayTicker(t.symbol)}</span> {t.name}
                 </button>
               ))}
             </div>
@@ -2802,7 +2809,7 @@ export default function App() {
               <div className="wrow" key={a.symbol}>
                 <div className="wname">
                   <span className="serif">{registry[a.symbol]?.name}</span>
-                  <span className="mono tiny muted"> {a.symbol}</span>
+                  <span className="mono tiny muted"> {displayTicker(a.symbol)}</span>
                 </div>
                 <input type="range" min="0" max="100" step="1" className="slider"
                   value={a.weight} onChange={(e) => setWeight(a.symbol, +e.target.value)} />
@@ -3072,10 +3079,10 @@ export default function App() {
                   onClick={clickable ? () => setAssetInfoSymbol(r.symbol) : undefined}>
                   <span className="asset">
                     <span className="serif">{r.name}</span>
-                    <span className="mono tiny muted">{r.symbol} · {category}</span>
+                    <span className="mono tiny muted">{displayTicker(r.symbol)} · {category}</span>
                   </span>
                   <span className="mono">{r.priceUnavailable ? "—" : `$${usd(r.price)}`}</span>
-                  <span className="mono">{fmtQty(r.uiAmount)}<span className="muted tiny"> {r.symbol}</span></span>
+                  <span className="mono">{fmtQty(r.uiAmount)}<span className="muted tiny"> {displayTicker(r.symbol)}</span></span>
                   <span className="mono">{r.priceUnavailable ? <span className="tiny muted">Price unavailable</span> : `$${usd(r.value)}`}</span>
                   <span className="mono">{r.priceUnavailable ? "—" : <>{r.weight.toFixed(1)}<span className="muted tiny">%</span></>}</span>
                   <span onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 6 }}>
@@ -3129,7 +3136,7 @@ export default function App() {
               <div className="trow dust-notice">
                 <span style={{ gridColumn: "1/-1" }} className="tiny muted">
                   {portfolio.dustRows.length} dust position{portfolio.dustRows.length !== 1 ? "s" : ""} hidden
-                  ({portfolio.dustRows.map((r) => r.symbol).join(", ")} · {"<"}$0.01)
+                  ({portfolio.dustRows.map((r) => displayTicker(r.symbol)).join(", ")} · {"<"}$0.01)
                 </span>
               </div>
             )}
@@ -3137,7 +3144,7 @@ export default function App() {
               <div className="trow dust-notice">
                 <span style={{ gridColumn: "1/-1" }} className="tiny muted">
                   {hiddenByToggle.length} position{hiddenByToggle.length !== 1 ? "s" : ""} hidden by "Hide Dust Amounts"
-                  ({hiddenByToggle.map((r) => r.symbol).join(", ")} · {"<"}$1)
+                  ({hiddenByToggle.map((r) => displayTicker(r.symbol)).join(", ")} · {"<"}$1)
                 </span>
               </div>
             )}
@@ -3431,7 +3438,7 @@ export default function App() {
                       {answer.mentionedSymbols.map((sym) => (
                         <button key={sym} className="uni-chip"
                           onClick={() => { setRebalPrompt(`add ${sym}`); setAnswer(null); }}>
-                          <span className="mono">{sym}</span> {registry[sym]?.name}
+                          <span className="mono">{displayTicker(sym)}</span> {registry[sym]?.name}
                         </button>
                       ))}
                     </div>
@@ -3443,8 +3450,8 @@ export default function App() {
                   <p className="lede sm">
                     Send{" "}
                     {withdrawalProposal.symbol === "USDC" || withdrawalProposal.symbol === "USDY" || !withdrawalProposal.symbol
-                      ? <><strong>${usd(withdrawalProposal.usd)}</strong> {withdrawalProposal.symbol || "USDC"}</>
-                      : <><strong>{fmtQty(withdrawalProposal.qty)}</strong> {withdrawalProposal.symbol} <span className="muted">(~${usd(withdrawalProposal.usd)})</span></>
+                      ? <><strong>${usd(withdrawalProposal.usd)}</strong> {displayTicker(withdrawalProposal.symbol) || "USDC"}</>
+                      : <><strong>{fmtQty(withdrawalProposal.qty)}</strong> {displayTicker(withdrawalProposal.symbol)} <span className="muted">(~${usd(withdrawalProposal.usd)})</span></>
                     }{" "}
                     to <span className="mono">{withdrawalProposal.to}</span>
                   </p>
@@ -3453,7 +3460,7 @@ export default function App() {
                     <button className="btn primary" onClick={() => runWithdraw(withdrawalProposal)}>
                       {withdrawalProposal.symbol === "USDC" || withdrawalProposal.symbol === "USDY" || !withdrawalProposal.symbol
                         ? `Send $${usd(withdrawalProposal.usd)} →`
-                        : `Send ${fmtQty(withdrawalProposal.qty)} ${withdrawalProposal.symbol} →`}
+                        : `Send ${fmtQty(withdrawalProposal.qty)} ${displayTicker(withdrawalProposal.symbol)} →`}
                     </button>
                   </div>
                 </>)}
@@ -3524,7 +3531,7 @@ export default function App() {
                       <div key={a.symbol} className="custom-alloc-row">
                         <div className="custom-alloc-label">
                           <span className="serif">{a.name}</span>
-                          <span className="mono tiny muted">{a.symbol}</span>
+                          <span className="mono tiny muted">{displayTicker(a.symbol)}</span>
                         </div>
                         <div className="custom-alloc-input-wrap">
                           <input
@@ -3568,7 +3575,7 @@ export default function App() {
                                 setCustomAllocs((prev) => [...prev, { symbol: t.symbol, name: t.name, weight: "0" }]);
                                 setAssetSearch("");
                               }}>
-                              <span className="mono">{t.symbol}</span> {t.name}
+                              <span className="mono">{displayTicker(t.symbol)}</span> {t.name}
                             </button>
                           ))}
                         </div>
@@ -3648,7 +3655,7 @@ export default function App() {
                       value={withdrawAsset}
                       onChange={(e) => { setWithdrawAsset(e.target.value); setWithdrawAmountStr(""); }}>
                       {withdrawableAssets.map((a) => (
-                        <option key={a.symbol} value={a.symbol}>{a.name} ({a.symbol}) — {a.uiAmount < 0.001 ? "<0.001" : floorTo(a.uiAmount, 4)}</option>
+                        <option key={a.symbol} value={a.symbol}>{a.name} ({displayTicker(a.symbol)}) — {a.uiAmount < 0.001 ? "<0.001" : floorTo(a.uiAmount, 4)}</option>
                       ))}
                     </select>
                   </div>
@@ -3684,7 +3691,7 @@ export default function App() {
                   <div className="withdraw-field">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                       <label className="tiny label withdraw-label">Amount</label>
-                      <span className="tiny muted">Available: {floorTo(available, asset?.decimals <= 6 ? 2 : 4)} {withdrawAsset}</span>
+                      <span className="tiny muted">Available: {floorTo(available, asset?.decimals <= 6 ? 2 : 4)} {displayTicker(withdrawAsset)}</span>
                     </div>
                     <div className="withdraw-amount-row">
                       <input className="withdraw-input withdraw-amount-input"
@@ -3730,7 +3737,7 @@ export default function App() {
                           decimals: asset.decimals,
                         });
                       }}>
-                      Send {withdrawAmountStr || "0"} {withdrawAsset} →
+                      Send {withdrawAmountStr || "0"} {displayTicker(withdrawAsset)} →
                     </button>
                   </div>
                 </div>
@@ -3795,7 +3802,7 @@ export default function App() {
       )}
 
       <footer className="lv-foot">
-        <span>xStocks by Backed</span>
+        <span>Tokenized stocks by Backed</span>
         <span className="foot-sep">·</span>
         <span>Routing by Jupiter</span>
         <span className="foot-sep">·</span>
@@ -3860,9 +3867,9 @@ export default function App() {
                   {l.status === "failed"    && "×"}
                 </span>
                 <span className="leg-route mono">
-                  {l.side === "send" ? `${l.symbol || "USDC"} → ${short(l.to)}`
-                    : l.side === "buy" ? `USDC → ${l.symbol}`
-                    : `${l.symbol} → USDC`}
+                  {l.side === "send" ? `${displayTicker(l.symbol) || "USDC"} → ${short(l.to)}`
+                    : l.side === "buy" ? `USDC → ${displayTicker(l.symbol)}`
+                    : `${displayTicker(l.symbol)} → USDC`}
                 </span>
                 <span className="mono tiny muted">${usd(l.usd)}</span>
                 <span className={`leg-status-badge ${l.status}`}>

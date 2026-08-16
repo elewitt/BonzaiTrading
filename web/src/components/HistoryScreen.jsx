@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { usd } from "../lib/api.js";
+import { usd, displayTicker } from "../lib/api.js";
 
 const SOLSCAN = (sig) => `https://solscan.io/tx/${sig}`;
 
@@ -190,7 +190,7 @@ export default function HistoryScreen({ txHistory, onBack }) {
                             <div className="hist-leg-left">
                               <span className={`hist-leg-dot ${leg.side} ${leg.status === "failed" ? "failed" : ""}`} />
                               <span className={`trade-chip mono tiny ${leg.side}`}>
-                                {leg.side === "buy" ? "Buy" : "Sell"} ${usd(leg.usd, 2)} {leg.symbol}
+                                {leg.side === "buy" ? "Buy" : "Sell"} ${usd(leg.usd, 2)} {displayTicker(leg.symbol)}
                               </span>
                             </div>
                             <div className="hist-leg-right">
@@ -246,7 +246,7 @@ export default function HistoryScreen({ txHistory, onBack }) {
                       </div>
                       <div>
                         <div className="hist-item-amount serif">
-                          {t.usd ? `$${usd(t.usd, 2)}` : t.uiAmount} <span className="hist-item-symbol">{t.symbol}</span>
+                          {t.usd ? `$${usd(t.usd, 2)}` : t.uiAmount} <span className="hist-item-symbol">{displayTicker(t.symbol)}</span>
                         </div>
                         <div className="hist-item-to tiny muted">
                           To <span className="mono hist-item-addr">{t.to ? `${t.to.slice(0, 6)}…${t.to.slice(-4)}` : "—"}</span>

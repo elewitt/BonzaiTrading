@@ -1,3 +1,5 @@
+import { displayTicker } from "../lib/api.js";
+
 function fmtPct(x) {
   return `${(Number(x) * 100).toFixed(2)}%`;
 }
@@ -21,7 +23,7 @@ export default function MarketsTable({ reserves }) {
   return (
     <div className="card table-card">
       <div className="card-toprow">
-        <p className="table-card-title">Kamino xStocks Market Rates</p>
+        <p className="table-card-title">Kamino Tokenized-Stocks Market Rates</p>
       </div>
       <div className="trow-kamino-rates-wrap">
       <div className="trow trow-kamino-rates thead tiny label">
@@ -40,7 +42,7 @@ export default function MarketsTable({ reserves }) {
         return (
           <div className="trow trow-kamino-rates" key={r.reserve}>
             <span className="asset">
-              <span className="serif">{r.liquidityToken}</span>
+              <span className="serif">{displayTicker(r.liquidityToken)}</span>
               {borrowable && <span className="mono tiny muted">Borrowable here</span>}
             </span>
             <span className="mono gain">{fmtPct(r.supplyApy)}</span>
@@ -53,7 +55,7 @@ export default function MarketsTable({ reserves }) {
       })}
       </div>
       <p className="tiny muted" style={{ marginTop: 14 }}>
-        Depositing an xStock as collateral also earns its Supply APY automatically —
+        Depositing a tokenized stock as collateral also earns its Supply APY automatically —
         posting collateral and supplying liquidity are the same action in this market.
         Bonzai Trading currently only lets you borrow USDC here; Kamino's own market
         supports borrowing other assets too, just not yet through this page.

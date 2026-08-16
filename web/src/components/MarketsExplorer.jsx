@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLongviewHl, useAssets, useAssetCandles } from "../perps/useHyperliquid.js";
 import { DEFAULT_CONFIG } from "../perps/config.js";
-import { api } from "../lib/api.js";
+import { api, displayTicker } from "../lib/api.js";
 import TimeSeriesChart, { priceLabel } from "./TimeSeriesChart.jsx";
 
 const PERIODS = [
@@ -169,7 +169,7 @@ export default function MarketsExplorer({ registry, autoFocusSearch = true }) {
                   onMouseDown={(e) => { e.preventDefault(); clearTimeout(blurTimer.current); pick(m); }}
                   className={`perps-asset-row ${i === activeIdx ? "active" : ""}`}>
                   <span className="perps-asset-name mono">
-                    {m.symbol}
+                    {displayTicker(m.symbol)}
                     <span className="tiny muted" style={{ marginLeft: 8, fontFamily: "inherit" }}>{m.name}</span>
                   </span>
                   <span className="markets-list-source tiny muted">

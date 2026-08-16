@@ -404,3 +404,19 @@ export function planTrades({ allocations, portfolio, prices, registry }) {
 export const usd = (v, d = 2) =>
   (v ?? 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const short = (a) => (a ? `${a.slice(0, 4)}…${a.slice(-4)}` : "");
+
+// xStock raw symbols are always <TICKER>x — e.g. "AAPLx", "BRK.Bx" — see
+// XSTOCKS_RAW in server/src/tokens.js. No non-xStock symbol (USDC, USDY,
+// KTB, CETES, TESOURO, GILTS, BTC, EURC) ends in a trailing lowercase x, so
+// this is a safe, registry-independent guard — confirmed neither USDC nor
+// the xStock entries carry a `category` field that could be used instead
+// (USDC has none; only USDY/KTB/CETES/TESOURO/GILTS/BTC/EURC do), so a
+// category-based guard would misfire on USDC.
+export const XSTOCK_TICKER_RE = /^[A-Z0-9.]+x$/;
+
+/** Strip the trailing xStock suffix for DISPLAY ONLY. Never use this on a
+ * value headed for a mint lookup, Jupiter route, Kamino reserve match, or
+ * the send/withdraw natural-language symbol match in App.jsx — those must
+ * keep the raw symbol (with the x), since that's the real on-chain ticker. */
+export const displayTicker = (symbol) =>
+  symbol && XSTOCK_TICKER_RE.test(symbol) ? symbol.slice(0, -1) : (symbol || "");

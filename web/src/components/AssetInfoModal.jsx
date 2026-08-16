@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { api } from "../lib/api.js";
+import { api, displayTicker } from "../lib/api.js";
 import TimeSeriesChart from "./TimeSeriesChart.jsx";
 
 // Same Day/Week/Month/All periods (and Twelve Data range mapping) as
@@ -68,7 +68,7 @@ export default function AssetInfoModal({ symbol, name, category, onClose }) {
       <div className="modal-box card asset-info-modal">
         <div className="answer-header">
           <div>
-            <p className="tiny label" style={{ margin: 0 }}>{info?.ticker || symbol}</p>
+            <p className="tiny label" style={{ margin: 0 }}>{info?.ticker || displayTicker(symbol)}</p>
             <h3 className="card-title" style={{ margin: "2px 0 0" }}>{profile?.name || name}</h3>
           </div>
           <button className="x" onClick={onClose}>×</button>

@@ -2073,7 +2073,7 @@ Your ONLY job is helping the user find their way around the app and understand w
 
 App layout, for reference when answering:
 - **Home dashboard**: shows Total Portfolio Value at the top, the main prompt bar ("What would you like to do?" + Go button) for natural-language trading/deposit/withdraw commands, Deposit/Withdraw buttons, a History icon (transaction history), and a product-tab switcher (Brokerage / Perpetual Futures / Borrow-Lend) each showing that product's own holdings card.
-- **Brokerage** (tokenized stocks, "xStocks"): buy/sell fractional shares of real companies and ETFs (e.g. Tesla → TSLAx) on Solana. Reachable via the Home dashboard's Brokerage tab or the top-nav "Markets" menu → "Equities Markets".
+- **Brokerage** (tokenized stocks): buy/sell fractional shares of real companies and ETFs (e.g. Tesla → TSLA) on Solana. Reachable via the Home dashboard's Brokerage tab or the top-nav "Markets" menu → "Equities Markets".
 - **Perpetual Futures**: leveraged long/short trading on crypto and equities, powered by Hyperliquid. Reachable via the top-nav "Markets" menu → "Perpetual Futures Markets", or the bottom nav "Perps" tab (mobile). Depositing/withdrawing perps margin can be done by typing it into the main prompt bar (e.g. "deposit $50 into perps") or from inside the Perps screen itself.
 - **Borrow / Lend**: post crypto/stock collateral and borrow against it, powered by Kamino. Reachable via "Markets" menu → "Borrow / Lend Markets", or the bottom nav "Borrow" tab (mobile).
 - **Prediction Markets**: reachable via "Markets" menu → "Prediction Markets".

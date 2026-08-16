@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, usd } from "./lib/api.js";
+import { api, usd, displayTicker } from "./lib/api.js";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
 
 function categoryOf(symbol, registry) {
@@ -38,7 +38,7 @@ function BuyPopup({ row, price, availableCash, flagged, onClose, onConfirm }) {
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal-box card" style={{ maxWidth: 380 }}>
         <div className="card-toprow">
-          <p className="card-title">Buy {row.symbol}</p>
+          <p className="card-title">Buy {displayTicker(row.symbol)}</p>
           <button className="x" onClick={onClose}>×</button>
         </div>
         <p className="tiny muted" style={{ margin: "0 0 4px" }}>{row.name}{price ? ` · $${usd(price)} current price` : ""}</p>
@@ -58,7 +58,7 @@ function BuyPopup({ row, price, availableCash, flagged, onClose, onConfirm }) {
         </div>
 
         <div className="borrow-field">
-          <span className="tiny muted">{mode === "usd" ? "Amount (USD)" : `Amount (${row.symbol})`}</span>
+          <span className="tiny muted">{mode === "usd" ? "Amount (USD)" : `Amount (${displayTicker(row.symbol)})`}</span>
           <input className="field" inputMode="decimal" autoFocus placeholder={mode === "usd" ? "100" : "1.5"}
             value={input} onChange={(e) => setInput(e.target.value)} />
         </div>
@@ -131,7 +131,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
           <span className="tiny muted">{filtered.length} of {rows.length}</span>
         </div>
         <p className="lede sm">
-          Every product tradeable on Bonzai Trading's brokerage — stocks, ETFs, and commodities via xStocks,
+          Every product tradeable on Bonzai Trading's brokerage — stocks, ETFs, and commodities,
           plus USDY, EURC, and Bitcoin. Click any row to open its price chart, or buy directly.
         </p>
 
@@ -170,7 +170,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
                 onClick={() => setChartSymbol(r.symbol)}>
                 <span className="asset">
                   <span className="serif">{r.name}</span>
-                  <span className="mono tiny muted">{r.symbol}</span>
+                  <span className="mono tiny muted">{displayTicker(r.symbol)}</span>
                 </span>
                 <span className="tiny muted">{r.category}</span>
                 <span className="mono">{price ? `$${usd(price)}` : "—"}</span>
@@ -201,7 +201,7 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
         return (
           <AssetInfoModal
             symbol={chartSymbol}
-            name={row?.name || chartSymbol}
+            name={row?.name || displayTicker(chartSymbol)}
             category={row?.category || ""}
             onClose={() => setChartSymbol(null)}
           />

@@ -116,7 +116,7 @@ function BorrowTopbar({ onBack }) {
     <div className="perps-topbar">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
       <span className="perps-wordmark">Bonzai Trading <span className="perps-tag">Borrow</span></span>
-      <div className="perps-network-badge">Kamino xStocks Market</div>
+      <div className="perps-network-badge">Kamino Tokenized-Stocks Market</div>
     </div>
   );
 }

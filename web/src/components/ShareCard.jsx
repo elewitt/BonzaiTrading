@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { toPng } from "html-to-image";
-import { usd } from "../lib/api.js";
+import { usd, displayTicker } from "../lib/api.js";
 
 const CARD_COLORS = [
   "#60A5FA", "#F87171", "#A78BFA", "#34D399",
@@ -32,7 +32,7 @@ function CardContent({ portfolio, history }) {
 
   const allRows = [
     ...rows.map((r, i) => ({
-      sym: r.symbol.replace(/x$/, ""),
+      sym: displayTicker(r.symbol),
       name: r.name,
       pct: total > 0 ? (r.value / total) * 100 : 0,
       color: CARD_COLORS[i % CARD_COLORS.length],

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../lib/api.js";
+import { api, displayTicker } from "../lib/api.js";
 import { executeStrategyProposal } from "./executeProposal.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -99,7 +99,7 @@ function triggerDescription(params) {
   const amount = params.side === "sell" && params.sellAll ? "entire position" : fmtUsd(params.usd);
   const move = params.direction === "below" ? "drops" : "rises";
   const level = params.thresholdType === "price" ? `to $${params.thresholdValue.toLocaleString()}` : `${params.thresholdValue}%`;
-  return `${verb} ${amount} of ${params.symbol} if price ${move} ${level}`;
+  return `${verb} ${amount} of ${displayTicker(params.symbol)} if price ${move} ${level}`;
 }
 
 function StrategyCard({ strategy: s, address, busy, onTransition }) {
@@ -121,17 +121,17 @@ function StrategyCard({ strategy: s, address, busy, onTransition }) {
         <div>
           {isDeltaNeutral ? (
             <p style={{ margin: 0, fontWeight: 600 }}>
-              {fmtUsd(s.params.notionalUsd)} delta-neutral {s.params.symbol} at {s.params.leverage}x
+              {fmtUsd(s.params.notionalUsd)} delta-neutral {displayTicker(s.params.symbol)} at {s.params.leverage}x
             </p>
           ) : isSliceExec ? (
             <p style={{ margin: 0, fontWeight: 600 }}>
-              {fmtUsd(s.params.totalUsd)} {s.type.toUpperCase()} into {s.params.symbol} over {s.params.durationHours}h
+              {fmtUsd(s.params.totalUsd)} {s.type.toUpperCase()} into {displayTicker(s.params.symbol)} over {s.params.durationHours}h
             </p>
           ) : isTrigger ? (
             <p style={{ margin: 0, fontWeight: 600 }}>{triggerDescription(s.params)}</p>
           ) : (
             <p style={{ margin: 0, fontWeight: 600 }}>
-              {fmtUsd(s.params.usdPerInterval)} of {s.params.symbol} {formatInterval(s.params.intervalDays)}
+              {fmtUsd(s.params.usdPerInterval)} of {displayTicker(s.params.symbol)} {formatInterval(s.params.intervalDays)}
             </p>
           )}
           <p className="lvp-muted tiny" style={{ margin: "2px 0 0" }}>
@@ -278,7 +278,7 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
               params: { symbol: plan.symbol, usdPerInterval: plan.usdPerInterval, intervalDays: plan.intervalDays },
             });
           } catch (e) {
-            failures.push(`${plan.symbol}: ${e.message}`);
+            failures.push(`${displayTicker(plan.symbol)}: ${e.message}`);
           }
         }
         if (failures.length > 0) {
@@ -402,12 +402,12 @@ export default function StrategiesPanel({ address, signWithWallet, evmAddress, h
           <div className="agents-parsed-preview">
             <p style={{ margin: 0 }}>
               {parsed.type === "dca" && parsed.plans.length === 1
-                ? `${fmtUsd(parsed.plans[0].usdPerInterval)} of ${parsed.plans[0].name} (${parsed.plans[0].symbol}) ${formatInterval(parsed.plans[0].intervalDays)}`
+                ? `${fmtUsd(parsed.plans[0].usdPerInterval)} of ${parsed.plans[0].name} (${displayTicker(parsed.plans[0].symbol)}) ${formatInterval(parsed.plans[0].intervalDays)}`
                 : parsed.summary}
             </p>
             {parsed.type === "dca" && parsed.plans.length > 1 && (
               <div className="agents-schedule-dates" style={{ marginTop: 8 }}>
-                {parsed.plans.map((p) => <span key={p.symbol} className="agents-schedule-chip">{p.symbol}</span>)}
+                {parsed.plans.map((p) => <span key={p.symbol} className="agents-schedule-chip">{displayTicker(p.symbol)}</span>)}
               </div>
             )}
             <div className="wfoot" style={{ marginTop: 10 }}>

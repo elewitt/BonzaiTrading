@@ -18,6 +18,11 @@ const usd = (n, dp = 2) =>
 const num = (n, dp = 4) => (n == null || Number.isNaN(Number(n)) ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: dp }));
 
 const short = (addr) => (addr ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : "—");
+// Same transform as displayTicker() in ../lib/api.js, duplicated rather
+// than imported to keep this admin tool fully decoupled from the
+// customer-facing app (see the file-header comment above).
+const XSTOCK_TICKER_RE = /^[A-Z0-9.]+x$/;
+const displayTicker = (symbol) => (symbol && XSTOCK_TICKER_RE.test(symbol) ? symbol.slice(0, -1) : (symbol || ""));
 
 async function adminFetch(path, password, opts = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -101,7 +106,7 @@ function HoldingsSection({ holdings }) {
       {tokens.length === 0 && <p className="muted tiny">No other token balances.</p>}
       {tokens.map((t) => (
         <div className="trow" key={t.mint}>
-          <span>{t.symbol || t.name || short(t.mint)}</span>
+          <span>{displayTicker(t.symbol) || t.name || short(t.mint)}</span>
           <span className="mono">{num(t.uiAmount, 4)}</span>
         </div>
       ))}
@@ -308,7 +313,7 @@ function ActivitySection({ activity }) {
           <span>
             {new Date(row.created_at).toLocaleString()} · {row.kind}
             {row.side ? ` · ${row.side}` : ""}
-            {row.symbol ? ` · ${row.symbol}` : ""}
+            {row.symbol ? ` · ${displayTicker(row.symbol)}` : ""}
           </span>
           <span className="mono tiny">
             {row.usd_value ? usd(row.usd_value) : ""}
@@ -559,7 +564,7 @@ function KaminoFeesSection({ password }) {
               <p className="tiny label" style={{ marginBottom: 6 }}>By asset</p>
               {status.byAsset.map((a) => (
                 <div className="trow" key={a.mint}>
-                  <span>{a.symbol || short(a.mint)}</span>
+                  <span>{displayTicker(a.symbol) || short(a.mint)}</span>
                   <span className="mono">{usd(a.usd)} <span className="tiny muted">({a.count})</span></span>
                 </div>
               ))}
@@ -772,7 +777,7 @@ function TradeRow({ t }) {
         ) : t.side ? (
           <span className="tiny muted">{t.side}</span>
         ) : null}
-        <span>{t.symbol || "—"}</span>
+        <span>{displayTicker(t.symbol) || "—"}</span>
         {t.status && t.status !== "confirmed" && <span className="tiny warn">({t.status})</span>}
       </span>
       <span className="mono tiny" style={{ textAlign: "right", whiteSpace: "nowrap" }}>

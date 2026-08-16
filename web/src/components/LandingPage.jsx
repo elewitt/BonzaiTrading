@@ -205,7 +205,7 @@ const PRODUCT_TABS = [
       </svg>
     ),
     title: "Borrow / Lend",
-    body: "Borrow USDC against your tokenized stocks and ETFs without selling — powered by Kamino Finance's live xStocks lending market.",
+    body: "Borrow USDC against your tokenized stocks and ETFs without selling — powered by Kamino Finance's live tokenized-stocks lending market.",
     points: [
       "Post SPYx, AAPLx, TSLAx, and more as collateral",
       "Live market rates, up to 80% max LTV on USDC",
@@ -398,7 +398,7 @@ function AgenticTradingSection({ onLogin }) {
 
 /* ─── Infrastructure ─── */
 const INFRA = [
-  { name: "xStocks by Backed", logo: "/logos/xstocks.svg" },
+  { name: "Tokenized stocks by Backed", logo: "/logos/xstocks.svg" },
   { name: "Jupiter",           logo: "/logos/jupiter.svg" },
   { name: "Privy",             logo: "/logos/privy.png" },
   { name: "Solana",            logo: "/logos/solana.svg" },
@@ -516,7 +516,7 @@ export default function LandingPage({ onLogin }) {
           </p>
           <button className="btn lp-cta-main-btn" onClick={onLogin}>Get started →</button>
           <p className="lp-legal">
-            xStocks by Backed · routing by Jupiter · wallets by Privy · Solana mainnet<br />
+            Tokenized stocks by Backed · routing by Jupiter · wallets by Privy · Solana mainnet<br />
             Not available to US persons or residents of restricted jurisdictions.
           </p>
         </div>
