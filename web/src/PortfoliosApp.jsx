@@ -6,6 +6,7 @@ import { api, displayTicker } from "./lib/api.js";
 // an actual holdings chart read as the same visual language.
 const SEG_COLORS = ["#1C4A38", "#2F6B50", "#4C8A69", "#71A987", "#9AC4A8", "#C6DCCC", "#173B2D", "#3E7A5C", "#5E9578", "#86B497"];
 
+const LEGENDARY_CATEGORY = "Legendary Investors";
 const MAX_CHIPS = 8;
 
 function WeightBar({ allocations }) {
@@ -21,28 +22,52 @@ function WeightBar({ allocations }) {
   );
 }
 
+function ChipRow({ allocations }) {
+  const shown = allocations.slice(0, MAX_CHIPS);
+  const extra = allocations.length - shown.length;
+  return (
+    <div className="uni-grid" style={{ marginTop: allocations.length > 1 ? 10 : 0 }}>
+      {shown.map((a) => (
+        <span key={a.symbol} className="uni-chip">
+          <span className="mono">{displayTicker(a.symbol)}</span>
+        </span>
+      ))}
+      {extra > 0 && <span className="uni-chip">+{extra} more</span>}
+    </div>
+  );
+}
+
 function PortfolioCard({ p, onAssemble }) {
-  const shown = p.allocations.slice(0, MAX_CHIPS);
-  const extra = p.allocations.length - shown.length;
   return (
     <div className="card portfolio-card">
       <p className="tiny label" style={{ margin: "0 0 4px" }}>{p.category}</p>
       <p className="card-title" style={{ margin: "0 0 4px" }}>{p.name}</p>
       <p className="tiny muted" style={{ margin: "0 0 12px" }}>{p.tagline}</p>
-
       <WeightBar allocations={p.allocations} />
-
-      <div className="uni-grid" style={{ marginTop: p.allocations.length > 1 ? 10 : 0 }}>
-        {shown.map((a) => (
-          <span key={a.symbol} className="uni-chip">
-            <span className="mono">{displayTicker(a.symbol)}</span>
-          </span>
-        ))}
-        {extra > 0 && <span className="uni-chip">+{extra} more</span>}
-      </div>
-
+      <ChipRow allocations={p.allocations} />
       <button className="btn primary" style={{ width: "100%", marginTop: 16 }}
         onClick={() => onAssemble(p.allocations, p.tagline)}>
+        Build this portfolio →
+      </button>
+    </div>
+  );
+}
+
+// Grounded in real, public 13F disclosures (see server/src/investorPortfolios.js
+// for exact sourcing) rather than Bonzai's own editorial themes — shown with
+// its fund/investor name up top and an "as of" line instead of a category tag,
+// so it visually reads as sourced content, not a Bonzai-authored basket.
+function InvestorCard({ p, onAssemble }) {
+  return (
+    <div className="card portfolio-card investor-card">
+      <p className="tiny label" style={{ margin: "0 0 4px" }}>{p.fund}</p>
+      <p className="card-title" style={{ margin: "0 0 2px" }}>{p.investor}</p>
+      <p className="tiny muted" style={{ margin: "0 0 4px" }}>{p.tagline}</p>
+      <p className="tiny muted investor-asof">Based on public {p.asOf}</p>
+      <WeightBar allocations={p.allocations} />
+      <ChipRow allocations={p.allocations} />
+      <button className="btn primary" style={{ width: "100%", marginTop: 16 }}
+        onClick={() => onAssemble(p.allocations, `${p.investor} — ${p.tagline}`)}>
         Build this portfolio →
       </button>
     </div>
@@ -52,12 +77,15 @@ function PortfolioCard({ p, onAssemble }) {
 export default function PortfoliosApp({ onBack, onAssemble }) {
   const [registry, setRegistry] = useState(null);
   const [baskets, setBaskets] = useState(null);
+  const [investorPortfolios, setInvestorPortfolios] = useState(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
 
   useEffect(() => {
     api.tokens().then((d) => setRegistry(d.tokens)).catch(() => {});
-    api.portfolios().then((d) => setBaskets(d.baskets)).catch(() => setBaskets([]));
+    api.portfolios()
+      .then((d) => { setBaskets(d.baskets); setInvestorPortfolios(d.investorPortfolios || []); })
+      .catch(() => { setBaskets([]); setInvestorPortfolios([]); });
   }, []);
 
   // The app's real broad ETFs (S&P 500 ETF, Nasdaq-100 ETF, etc.) are
@@ -76,24 +104,35 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
       }));
   }, [registry]);
 
-  const allPortfolios = useMemo(() => [...(baskets || []), ...etfPortfolios], [baskets, etfPortfolios]);
+  const themePortfolios = useMemo(() => [...(baskets || []), ...etfPortfolios], [baskets, etfPortfolios]);
+  const totalCount = themePortfolios.length + (investorPortfolios || []).length;
 
   const categories = useMemo(() => {
-    const cats = new Set(allPortfolios.map((p) => p.category));
+    const cats = new Set(themePortfolios.map((p) => p.category));
+    if ((investorPortfolios || []).length > 0) cats.add(LEGENDARY_CATEGORY);
     return ["All", ...Array.from(cats).sort()];
-  }, [allPortfolios]);
+  }, [themePortfolios, investorPortfolios]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return allPortfolios
+  const q = search.trim().toLowerCase();
+  const matchesSearch = (p, nameField) => !q
+    || p[nameField].toLowerCase().includes(q)
+    || p.tagline.toLowerCase().includes(q)
+    || p.allocations.some((a) => displayTicker(a.symbol).toLowerCase().includes(q));
+
+  const filteredInvestors = useMemo(() => {
+    if (category !== "All" && category !== LEGENDARY_CATEGORY) return [];
+    return (investorPortfolios || []).filter((p) => matchesSearch(p, "investor"));
+  }, [investorPortfolios, search, category]);
+
+  const filteredThemes = useMemo(() => {
+    if (category === LEGENDARY_CATEGORY) return [];
+    return themePortfolios
       .filter((p) => category === "All" || p.category === category)
-      .filter((p) => !q
-        || p.name.toLowerCase().includes(q)
-        || p.tagline.toLowerCase().includes(q)
-        || p.allocations.some((a) => displayTicker(a.symbol).toLowerCase().includes(q)));
-  }, [allPortfolios, search, category]);
+      .filter((p) => matchesSearch(p, "name"));
+  }, [themePortfolios, search, category]);
 
-  const loading = !registry || baskets === null;
+  const loading = !registry || baskets === null || investorPortfolios === null;
+  const shownCount = filteredInvestors.length + filteredThemes.length;
 
   return (
     <div className="stage dash-wide">
@@ -101,33 +140,55 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
 
       <div className="card-toprow" style={{ marginTop: 16, marginBottom: 4 }}>
         <p className="table-card-title">Portfolios</p>
-        <span className="tiny muted">{filtered.length} of {allPortfolios.length}</span>
+        <span className="tiny muted">{shownCount} of {totalCount}</span>
       </div>
       <p className="lede sm" style={{ marginBottom: 18 }}>
-        Curated baskets of well-known names, and Bonzai Trading's broad ETFs — pick one and
-        adjust the weights and invest amount before you buy.
+        Curated baskets of well-known names, portfolios inspired by legendary investors, and
+        Bonzai Trading's broad ETFs — pick one and adjust the weights and invest amount before you buy.
       </p>
 
-      <div className="card" style={{ marginBottom: 20 }}>
+      <div className="card" style={{ marginBottom: 24 }}>
         <div className="perps-category-toggle" style={{ flexWrap: "wrap", marginBottom: 10 }}>
           {categories.map((c) => (
             <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>{c}</button>
           ))}
         </div>
-        <input className="perps-asset-search" placeholder="Search by name, theme, or ticker…" value={search}
+        <input className="perps-asset-search" placeholder="Search by name, investor, theme, or ticker…" value={search}
           onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360, marginBottom: 0 }} />
       </div>
 
       {loading ? (
         <p className="muted">Loading…</p>
-      ) : filtered.length === 0 ? (
+      ) : shownCount === 0 ? (
         <p className="muted">No matches.</p>
       ) : (
-        <div className="portfolio-grid">
-          {filtered.map((p) => (
-            <PortfolioCard key={p.id} p={p} onAssemble={onAssemble} />
-          ))}
-        </div>
+        <>
+          {filteredInvestors.length > 0 && (
+            <div className="portfolio-section">
+              <p className="table-card-title" style={{ marginBottom: 2 }}>Legendary Investor Portfolios</p>
+              <p className="tiny muted portfolio-disclaimer">
+                Inspired by real, public SEC 13F disclosures (ARK: its own published holdings) —
+                limited to holdings also tradeable here, so each is a partial reflection of the
+                real portfolio, not a full replica. Not affiliated with, endorsed by, or reviewed
+                by these investors or funds.
+              </p>
+              <div className="portfolio-grid">
+                {filteredInvestors.map((p) => <InvestorCard key={p.id} p={p} onAssemble={onAssemble} />)}
+              </div>
+            </div>
+          )}
+
+          {filteredThemes.length > 0 && (
+            <div className="portfolio-section">
+              {filteredInvestors.length > 0 && (
+                <p className="table-card-title" style={{ marginBottom: 10 }}>Themes &amp; Broad ETFs</p>
+              )}
+              <div className="portfolio-grid">
+                {filteredThemes.map((p) => <PortfolioCard key={p.id} p={p} onAssemble={onAssemble} />)}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

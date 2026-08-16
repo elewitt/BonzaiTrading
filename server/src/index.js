@@ -11,6 +11,7 @@ import {
 } from "@solana/web3.js";
 import { getRegistry, USDC, USDY, JUP_BASE, jupHeaders, NON_XSTOCK_SYMBOLS } from "./tokens.js";
 import { PORTFOLIO_CATALOG } from "./portfolioCatalog.js";
+import { INVESTOR_PORTFOLIOS } from "./investorPortfolios.js";
 import { generateLinkCode, mountTelegramRoutes } from "./telegram.js";
 import { mountStrategyRoutes } from "./strategyRoutes.js";
 import { startStrategyEvaluator } from "./strategyAgents/evaluator.js";
@@ -405,20 +406,30 @@ app.get("/api/tokens", async (_req, res) => {
  * Claude-produced allocation plan already has ({allocations: [{symbol,
  * weight}]}), so the client can feed a picked basket straight into the
  * existing weight-editor/buy flow with no translation. ————— */
+function toEqualWeightAllocations(id, symbols, bySymbol) {
+  const resolved = symbols.filter((s) => bySymbol[s]);
+  const dropped = symbols.filter((s) => !bySymbol[s]);
+  if (dropped.length) console.warn(`[portfolios] ${id}: dropping unresolved symbols ${dropped.join(", ")}`);
+  const weight = resolved.length ? +(100 / resolved.length).toFixed(2) : 0;
+  return resolved.map((symbol) => ({ symbol, weight }));
+}
+
 app.get("/api/portfolios", async (_req, res) => {
   try {
     const { bySymbol } = await getRegistry();
-    const baskets = PORTFOLIO_CATALOG.map((b) => {
-      const symbols = b.symbols.filter((s) => bySymbol[s]);
-      const dropped = b.symbols.filter((s) => !bySymbol[s]);
-      if (dropped.length) console.warn(`[portfolios] ${b.id}: dropping unresolved symbols ${dropped.join(", ")}`);
-      const weight = symbols.length ? +(100 / symbols.length).toFixed(2) : 0;
-      return {
-        id: b.id, name: b.name, tagline: b.tagline, category: b.category,
-        allocations: symbols.map((symbol) => ({ symbol, weight })),
-      };
-    }).filter((b) => b.allocations.length > 0);
-    res.json({ baskets });
+    const baskets = PORTFOLIO_CATALOG.map((b) => ({
+      id: b.id, name: b.name, tagline: b.tagline, category: b.category,
+      allocations: toEqualWeightAllocations(b.id, b.symbols, bySymbol),
+    })).filter((b) => b.allocations.length > 0);
+    // "Legendary Investor" portfolios — grounded in real public 13F
+    // disclosures (see investorPortfolios.js for sourcing), a distinct
+    // content type from Bonzai's own editorial theme baskets above, kept in
+    // a separate array so the client can render/disclaim them separately.
+    const investorPortfolios = INVESTOR_PORTFOLIOS.map((p) => ({
+      id: p.id, investor: p.investor, fund: p.fund, asOf: p.asOf, tagline: p.tagline,
+      allocations: toEqualWeightAllocations(p.id, p.symbols, bySymbol),
+    })).filter((p) => p.allocations.length > 0);
+    res.json({ baskets, investorPortfolios });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }
