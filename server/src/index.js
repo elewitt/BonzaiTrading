@@ -400,8 +400,18 @@ app.get("/api/tokens", async (_req, res) => {
 });
 
 /* ————— prices (Jupiter Price API v3 proxy) ————— */
-/** Extracted so the Telegram bot can fetch prices without an HTTP round-trip. */
-async function getPricesForMints(allMints) {
+// Jupiter's per-mint response carries more than just the current price —
+// `priceChange24h` (most assets) and, for xStocks specifically,
+// `stockData.mcap` — but every consumer of getPricesForMints() until now
+// only ever wanted the bare price, so those fields were silently dropped.
+// This is the one shared fetch/batch, split from the two shapes callers
+// actually want: getPricesForMints() keeps its original {mint: price}
+// output byte-for-byte (existing callers — App.jsx, MarketsExplorer.jsx,
+// the Telegram bot — are untouched), and getPriceDetailsForMints() exposes
+// the richer {mint: {price, change24h, mcap}} shape for the equities
+// markets table. Fields are independently null, never a fake 0 — many
+// xStocks are illiquid on Jupiter and simply don't carry all three.
+async function fetchJupiterPriceData(allMints) {
   if (!allMints.length) return {};
   // Batch into 100-mint chunks — Jupiter drops mints when the URL exceeds ~4KB
   const BATCH = 50;
@@ -417,8 +427,13 @@ async function getPricesForMints(allMints) {
     const raw = data.data || data;
     const out = {};
     for (const [mint, v] of Object.entries(raw)) {
-      const p = typeof v === "object" ? (v.usdPrice ?? v.price) : v;
-      if (p != null) out[mint] = Number(p);
+      const isObj = typeof v === "object" && v !== null;
+      const p = isObj ? (v.usdPrice ?? v.price) : v;
+      out[mint] = {
+        price: p != null ? Number(p) : null,
+        change24h: isObj && v.priceChange24h != null ? Number(v.priceChange24h) : null,
+        mcap: isObj && v.stockData?.mcap != null ? Number(v.stockData.mcap) : null,
+      };
     }
     return out;
   }));
@@ -426,11 +441,39 @@ async function getPricesForMints(allMints) {
   return Object.assign({}, ...results);
 }
 
+/** Extracted so the Telegram bot can fetch prices without an HTTP round-trip. */
+async function getPricesForMints(allMints) {
+  const detail = await fetchJupiterPriceData(allMints);
+  const out = {};
+  for (const [mint, v] of Object.entries(detail)) {
+    if (v.price != null) out[mint] = v.price;
+  }
+  return out;
+}
+
+async function getPriceDetailsForMints(allMints) {
+  return fetchJupiterPriceData(allMints);
+}
+
 app.get("/api/prices", async (req, res) => {
   try {
     const ids = String(req.query.ids || "").trim();
     if (!ids) return res.json({});
     res.json(await getPricesForMints(ids.split(",").filter(Boolean)));
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+/* ————— price details (Jupiter Price API v3, richer shape) — public,
+ * read-only. Powers the Equities Markets table's 24h-change and
+ * market-cap columns without any new Twelve Data usage (see
+ * fetchJupiterPriceData() above). ————— */
+app.get("/api/prices/detail", async (req, res) => {
+  try {
+    const ids = String(req.query.ids || "").trim();
+    if (!ids) return res.json({});
+    res.json(await getPriceDetailsForMints(ids.split(",").filter(Boolean)));
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }

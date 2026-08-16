@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, usd, displayTicker } from "./lib/api.js";
-import AssetInfoModal from "./components/AssetInfoModal.jsx";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, usd, displayTicker, fmtBig } from "./lib/api.js";
+import AssetDetailPanel from "./components/AssetDetailPanel.jsx";
 
 function categoryOf(symbol, registry) {
   if (registry[symbol]?.category === "yield") return "Yield";
@@ -19,6 +19,15 @@ const CATEGORIES = ["All", "Stock", "ETF", "Crypto", "Currency", "Yield"];
 // before adding them) and are meant to be bought like any other asset,
 // not funneled through Yield Mode's automatic USDC<->cash conversion.
 const NOT_DIRECTLY_BUYABLE = new Set(["USDY"]);
+
+// The chart panel's height is the reference the list panel is capped to and
+// scrolls within (same pattern as perps/PerpsApp.jsx's Trade tab) — a
+// higher floor than perps' 480, since AssetDetailPanel carries more content
+// (price header, period toggle, chart, stat grid, description) than a bare
+// chart does.
+const MIN_CHART_HEIGHT = 640;
+
+const SORT_LABEL = { name: "Asset", price: "Price", change24h: "24h %", mcap: "Mkt Cap" };
 
 function BuyPopup({ row, price, availableCash, flagged, onClose, onConfirm }) {
   const [mode, setMode] = useState("usd"); // "usd" | "shares"
@@ -86,12 +95,16 @@ function BuyPopup({ row, price, availableCash, flagged, onClose, onConfirm }) {
 
 export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash = 0 }) {
   const [registry, setRegistry] = useState(null);
-  const [prices, setPrices] = useState({});
+  const [priceDetails, setPriceDetails] = useState({}); // {mint: {price, change24h, mcap}}
   const [liquidityFlags, setLiquidityFlags] = useState({});
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [buyTarget, setBuyTarget] = useState(null); // the row currently being bought, or null
-  const [chartSymbol, setChartSymbol] = useState(null); // the row currently showing its price chart, or null
+  const [selectedSymbol, setSelectedSymbol] = useState(null); // the row currently shown in the detail panel, or null (falls back to the first row)
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
+  const [chartHeight, setChartHeight] = useState(null);
+  const chartColRef = useRef(null);
 
   useEffect(() => {
     api.tokens().then((d) => setRegistry(d.tokens)).catch(() => {});
@@ -101,8 +114,8 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
   useEffect(() => {
     if (!registry) return;
     const mints = Object.values(registry).filter((t) => t.symbol !== "USDC").map((t) => t.mint);
-    api.prices(mints).then(setPrices).catch(() => {});
-    const h = setInterval(() => api.prices(mints).then(setPrices).catch(() => {}), 15_000);
+    api.priceDetails(mints).then(setPriceDetails).catch(() => {});
+    const h = setInterval(() => api.priceDetails(mints).then(setPriceDetails).catch(() => {}), 15_000);
     return () => clearInterval(h);
   }, [registry]);
 
@@ -117,75 +130,169 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
     const q = search.trim().toLowerCase();
     return rows
       .filter((r) => category === "All" || r.category === category)
-      .filter((r) => !q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .filter((r) => !q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
   }, [rows, search, category]);
+
+  const sortedFiltered = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const valueFor = (r) => {
+      if (sortKey === "name") return r.name;
+      if (sortKey === "price") return priceDetails[r.mint]?.price;
+      if (sortKey === "change24h") return priceDetails[r.mint]?.change24h;
+      return priceDetails[r.mint]?.mcap;
+    };
+    return [...filtered].sort((a, b) => {
+      const av = valueFor(a), bv = valueFor(b);
+      if (sortKey === "name") return dir * String(av).localeCompare(String(bv));
+      // Missing data always sorts last, in either direction — a null 24h
+      // change/market cap isn't "zero", it's unknown, and burying it at the
+      // top under a descending sort would read as a fake, misleading value.
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return dir * (av - bv);
+    });
+  }, [filtered, sortKey, sortDir, priceDetails]);
+
+  // Always shows something in the detail panel — falls back to the first
+  // filtered row when nothing's been explicitly clicked yet, same pattern
+  // perps/PerpsApp.jsx's Trade tab uses for its own asset selection.
+  // Searches the full `rows` (not `filtered`) first so a selection made
+  // before a search/filter is applied doesn't get dropped just because the
+  // filter no longer matches it.
+  const detailRow = rows.find((r) => r.symbol === selectedSymbol) ?? sortedFiltered[0] ?? null;
+
+  // Top gainers/losers by 24h change — entirely client-side, computed from
+  // data the page already has to fetch anyway (see server/src/index.js's
+  // getPriceDetailsForMints, which piggybacks Jupiter's existing batched
+  // price call rather than costing a single extra request). Rows with no
+  // change24h are skipped outright rather than treated as flat/0% — most
+  // of the ~167 tokenized-stock mints are thin/illiquid on Jupiter and
+  // simply have no 24h figure at all.
+  const movers = useMemo(() => {
+    return rows
+      .map((r) => ({ ...r, change24h: priceDetails[r.mint]?.change24h }))
+      .filter((r) => r.change24h != null)
+      .sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h))
+      .slice(0, 8);
+  }, [rows, priceDetails]);
+
+  const handleSort = (key) => {
+    if (sortKey === key) { setSortDir((d) => (d === "asc" ? "desc" : "asc")); return; }
+    setSortKey(key);
+    setSortDir(key === "name" ? "asc" : "desc"); // price/chg/mcap: biggest first by default
+  };
+  const sortArrow = (key) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+
+  // The list panel's height is capped to match the chart panel's own
+  // natural height (never the reverse — the chart's SVG has a fixed aspect
+  // ratio, so constraining IT would crop the axis) so the two panels end
+  // flush, same as perps/PerpsApp.jsx:416-422.
+  useEffect(() => {
+    const el = chartColRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setChartHeight(Math.max(entry.contentRect.height, MIN_CHART_HEIGHT)));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [detailRow?.symbol]);
 
   return (
     <div className="stage wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
-      <div className="card" style={{ marginTop: 16, marginBottom: 20 }}>
-        <div className="card-toprow">
-          <p className="table-card-title">Equities Markets</p>
-          <span className="tiny muted">{filtered.length} of {rows.length}</span>
-        </div>
-        <p className="lede sm">
-          Every product tradeable on Bonzai Trading's brokerage — stocks, ETFs, and commodities,
-          plus USDY, EURC, and Bitcoin. Click any row to open its price chart, or buy directly.
-        </p>
+      <div className="card-toprow" style={{ marginTop: 16, marginBottom: 4 }}>
+        <p className="table-card-title">Equities Markets</p>
+        <span className="tiny muted">{filtered.length} of {rows.length}</span>
+      </div>
+      <p className="lede sm" style={{ marginBottom: 18 }}>
+        Every product tradeable on Bonzai Trading's brokerage — stocks, ETFs, and commodities,
+        plus USDY, EURC, and Bitcoin. Click any row to chart it, or buy directly.
+      </p>
 
-        <div className="perps-category-toggle" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-          {CATEGORIES.map((c) => (
-            <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>{c}</button>
+      {movers.length > 0 && (
+        <div className="movers-strip">
+          {movers.map((m) => (
+            <button key={m.symbol} className={`movers-chip ${m.change24h >= 0 ? "gain" : "loss"} ${detailRow?.symbol === m.symbol ? "active" : ""}`}
+              onClick={() => setSelectedSymbol(m.symbol)}>
+              <span className="mono">{displayTicker(m.symbol)}</span>
+              <span className="mono tiny">{m.change24h >= 0 ? "+" : ""}{m.change24h.toFixed(2)}%</span>
+            </button>
           ))}
         </div>
-        <input className="perps-asset-search" placeholder="Search by name or ticker…" value={search}
-          onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360 }} />
-      </div>
+      )}
 
       {!registry ? (
         <p className="muted">Loading…</p>
       ) : (
-        <div className="card table-card">
-          <div className="trow trow-equities thead tiny label">
-            <span>Asset</span>
-            <span>Category</span>
-            <span>Price</span>
-            <span></span>
-            <span></span>
-          </div>
-          {filtered.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>No matches.</p>}
-          {filtered.map((r) => {
-            const price = prices[r.mint];
-            const buyable = onQuickBuy && !NOT_DIRECTLY_BUYABLE.has(r.symbol);
-            const buyBtn = buyable && (
-              <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
-                onClick={(e) => { e.stopPropagation(); setBuyTarget(r); }}>
-                Buy
-              </button>
-            );
-            return (
-              <div key={r.symbol} className="trow trow-equities asset-row-clickable"
-                onClick={() => setChartSymbol(r.symbol)}>
-                <span className="asset">
-                  <span className="serif">{r.name}</span>
-                  <span className="mono tiny muted">{displayTicker(r.symbol)}</span>
+        <div className="equities-layout">
+          <div className="card perps-asset-panel equities-list-panel" style={chartHeight ? { height: chartHeight } : undefined}>
+            <h3>Markets</h3>
+            <div className="perps-category-toggle" style={{ flexWrap: "wrap" }}>
+              {CATEGORIES.map((c) => (
+                <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>{c}</button>
+              ))}
+            </div>
+            <input className="perps-asset-search" placeholder="Search by name or ticker…" value={search}
+              onChange={(e) => setSearch(e.target.value)} />
+
+            <div className="trow trow-equities thead tiny label">
+              {["name", "price", "change24h", "mcap"].map((key) => (
+                <span key={key} className="equities-sort-th" onClick={() => handleSort(key)}>
+                  {SORT_LABEL[key]}{sortArrow(key)}
                 </span>
-                <span className="tiny muted">{r.category}</span>
-                <span className="mono">{price ? `$${usd(price)}` : "—"}</span>
-                <span className="tiny muted">›</span>
-                <span onClick={(e) => e.stopPropagation()}>{buyBtn}</span>
-              </div>
-            );
-          })}
+              ))}
+              <span></span>
+            </div>
+
+            <div className="perps-asset-list">
+              {sortedFiltered.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>No matches.</p>}
+              {sortedFiltered.map((r) => {
+                const detail = priceDetails[r.mint] || {};
+                const { price, change24h, mcap } = detail;
+                const buyable = onQuickBuy && !NOT_DIRECTLY_BUYABLE.has(r.symbol);
+                const buyBtn = buyable && (
+                  <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
+                    onClick={(e) => { e.stopPropagation(); setBuyTarget(r); }}>
+                    Buy
+                  </button>
+                );
+                return (
+                  <div key={r.symbol}
+                    className={`trow trow-equities asset-row-clickable ${detailRow?.symbol === r.symbol ? "active" : ""}`}
+                    onClick={() => setSelectedSymbol(r.symbol)}>
+                    <span className="asset">
+                      <span className="serif">{r.name}</span>
+                      <span className="mono tiny muted">
+                        {displayTicker(r.symbol)} · {r.category}
+                        {liquidityFlags[r.symbol] && <span className="gold" title="Thin liquidity" style={{ marginLeft: 4 }}>⚠</span>}
+                      </span>
+                    </span>
+                    <span className="mono">{price ? `$${usd(price)}` : "—"}</span>
+                    <span className={`mono tiny ${change24h == null ? "muted" : change24h >= 0 ? "gain" : "loss"}`}>
+                      {change24h == null ? "—" : `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%`}
+                    </span>
+                    <span className="mono tiny muted">{mcap != null ? fmtBig(mcap) : "—"}</span>
+                    <span onClick={(e) => e.stopPropagation()}>{buyBtn}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div ref={chartColRef} className="card equities-detail-card">
+            {detailRow ? (
+              <AssetDetailPanel symbol={detailRow.symbol} name={detailRow.name} category={detailRow.category} />
+            ) : (
+              <p className="muted">Select a market to see its chart.</p>
+            )}
+          </div>
         </div>
       )}
 
       {buyTarget && (
         <BuyPopup
           row={buyTarget}
-          price={prices[buyTarget.mint]}
+          price={priceDetails[buyTarget.mint]?.price}
           availableCash={availableCash}
           flagged={!!liquidityFlags[buyTarget.symbol]}
           onClose={() => setBuyTarget(null)}
@@ -195,18 +302,6 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
           }}
         />
       )}
-
-      {chartSymbol && (() => {
-        const row = rows.find((r) => r.symbol === chartSymbol);
-        return (
-          <AssetInfoModal
-            symbol={chartSymbol}
-            name={row?.name || displayTicker(chartSymbol)}
-            category={row?.category || ""}
-            onClose={() => setChartSymbol(null)}
-          />
-        );
-      })()}
     </div>
   );
 }

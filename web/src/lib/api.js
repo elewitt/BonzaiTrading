@@ -37,6 +37,7 @@ const post = async (path, body) => fetch(`${API_BASE}${path}`, {
 export const api = {
   tokens:   ()                   => get("/api/tokens"),
   prices:   (mints)              => get(`/api/prices?ids=${encodeURIComponent(mints.join(","))}`),
+  priceDetails: (mints)          => get(`/api/prices/detail?ids=${encodeURIComponent(mints.join(","))}`),
   holdings: (address)            => get(`/api/holdings/${address}`),
   parse:    (prompt, current, total) => post("/api/parse", { prompt, current, total }),
   parsePerp: (prompt)             => post("/api/parse-perp", { prompt }),
@@ -404,6 +405,13 @@ export function planTrades({ allocations, portfolio, prices, registry }) {
 export const usd = (v, d = 2) =>
   (v ?? 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 export const short = (a) => (a ? `${a.slice(0, 4)}…${a.slice(-4)}` : "");
+export const fmtBig = (n) => {
+  if (n == null) return null;
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6)  return `$${(n / 1e6).toFixed(2)}M`;
+  return `$${n.toFixed(0)}`;
+};
 
 // xStock raw symbols are always <TICKER>x — e.g. "AAPLx", "BRK.Bx" — see
 // XSTOCKS_RAW in server/src/tokens.js. No non-xStock symbol (USDC, USDY,
