@@ -1883,6 +1883,20 @@ a.trow { color: inherit; text-decoration: none; }
 .movers-chip.active { border-color: var(--pine); }
 .movers-chip.gain span:last-child { color: var(--gain); }
 .movers-chip.loss span:last-child { color: var(--loss); }
+/* Portfolios page — a browse/discovery card grid (a dozen-ish curated
+   baskets plus however many broad ETFs the registry has), not a dense
+   sortable table like Equities Markets, so cards over rows: room for a
+   tagline and a bigger single "assemble" click target. */
+.portfolio-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.portfolio-card { display: flex; flex-direction: column; }
+.portfolio-card:hover { border-color: var(--moss); }
+.portfolio-weightbar {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line);
+}
+.portfolio-weightbar-seg { height: 100%; }
 /* Flex column with a fixed (not max-) height, set inline to match the price
    chart's own measured height exactly — h3/toggle/search stay pinned at
    their natural size, and .perps-asset-list is the only part that grows

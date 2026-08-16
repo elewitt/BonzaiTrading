@@ -36,6 +36,7 @@ const post = async (path, body) => fetch(`${API_BASE}${path}`, {
 
 export const api = {
   tokens:   ()                   => get("/api/tokens"),
+  portfolios: ()                 => get("/api/portfolios"),
   prices:   (mints)              => get(`/api/prices?ids=${encodeURIComponent(mints.join(","))}`),
   priceDetails: (mints)          => get(`/api/prices/detail?ids=${encodeURIComponent(mints.join(","))}`),
   holdings: (address)            => get(`/api/holdings/${address}`),

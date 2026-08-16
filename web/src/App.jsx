@@ -23,6 +23,7 @@ import CrossChainDeposit from "./components/CrossChainDeposit.jsx";
 import PerpsApp from "./perps/PerpsApp.jsx";
 import { PerpsCloseCell } from "./perps/PerpsPanel.jsx";
 import EquitiesMarketsApp from "./EquitiesMarketsApp.jsx";
+import PortfoliosApp from "./PortfoliosApp.jsx";
 import PredictionMarketsApp from "./PredictionMarketsApp.jsx";
 import ReferralsApp from "./ReferralsApp.jsx";
 import BorrowApp from "./borrow/BorrowApp.jsx";
@@ -2177,6 +2178,16 @@ export default function App() {
     // calling runTrades directly, which used to skip straight to execution
     // with no confirm step and no slippage visibility at all.
     setProposal({ trades, pendingWithdrawal: plan.pendingWithdrawal ?? null });
+    setView("auto"); // proposal modal only renders under screen === "dash" — see quickBuy/quickSell below
+  };
+
+  // Landing point for the Portfolios page — skips the free-text "build"
+  // composer entirely and goes straight to the weight editor, pre-filled
+  // with the chosen basket. Same {allocations, summary} shape api.parse()
+  // already returns into `plan` above.
+  const onAssemblePortfolio = (allocations, summary) => {
+    setPlan({ allocations: allocations.map((a) => ({ ...a })), summary });
+    setView("weights");
   };
 
   // Single-asset quick buy, triggered from the Equities Markets page — same
@@ -2301,9 +2312,10 @@ export default function App() {
     !ready || !registry ? "loading"
     : !authenticated ? "auth"
     : !address ? "wallet-pending"
-    : view === "weights" && plan ? "weights"
+    : view === "weights" && plan && portfolio ? "weights"
     : view === "build" ? "build"
     : view === "history" ? "history"
+    : view === "portfolios" ? "portfolios"
     : view === "equities" ? "equities"
     : view === "predictions" ? "predictions"
     : view === "perps" ? "perps"
@@ -2527,7 +2539,7 @@ export default function App() {
           <div className="head-right head-right-authed">
             <button className={`head-nav-btn ${screen === "dash" ? "active" : ""}`} onClick={() => setView("auto")}>Home</button>
             <div className="profile-wrap" ref={marketsRef}>
-              <button className={`head-nav-btn profile-btn ${["equities", "predictions", "perps", "borrow"].includes(screen) ? "active" : ""}`}
+              <button className={`head-nav-btn profile-btn ${["portfolios", "equities", "predictions", "perps", "borrow"].includes(screen) ? "active" : ""}`}
                 onClick={() => setMarketsOpen((o) => !o)}>
                 Markets
                 <svg className={`profile-chevron ${marketsOpen ? "open" : ""}`} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -2536,6 +2548,7 @@ export default function App() {
               </button>
               {marketsOpen && (
                 <div className="profile-menu">
+                  <button className="profile-menu-item" onClick={() => { setView("portfolios"); setMarketsOpen(false); }}>Portfolios</button>
                   <button className="profile-menu-item" onClick={() => { setView("equities"); setMarketsOpen(false); }}>Equities Markets</button>
                   <button className="profile-menu-item" onClick={() => { setView("predictions"); setMarketsOpen(false); }}>Prediction Markets</button>
                   <button className="profile-menu-item" onClick={() => { setView("perps"); setMarketsOpen(false); }}>Perpetual Futures Markets</button>
@@ -2846,6 +2859,10 @@ export default function App() {
 
       {screen === "history" && (
         <HistoryScreen txHistory={txHistory} onBack={() => setView("auto")} />
+      )}
+
+      {screen === "portfolios" && (
+        <PortfoliosApp onBack={() => setView("auto")} onAssemble={onAssemblePortfolio} />
       )}
 
       {screen === "equities" && (
