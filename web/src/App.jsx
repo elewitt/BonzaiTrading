@@ -2538,8 +2538,9 @@ export default function App() {
         {address && (
           <div className="head-right head-right-authed">
             <button className={`head-nav-btn ${screen === "dash" ? "active" : ""}`} onClick={() => setView("auto")}>Home</button>
+            <button className={`head-nav-btn ${screen === "portfolios" ? "active" : ""}`} onClick={() => setView("portfolios")}>Portfolio Builder</button>
             <div className="profile-wrap" ref={marketsRef}>
-              <button className={`head-nav-btn profile-btn ${["portfolios", "equities", "predictions", "perps", "borrow"].includes(screen) ? "active" : ""}`}
+              <button className={`head-nav-btn profile-btn ${["equities", "predictions", "perps", "borrow"].includes(screen) ? "active" : ""}`}
                 onClick={() => setMarketsOpen((o) => !o)}>
                 Markets
                 <svg className={`profile-chevron ${marketsOpen ? "open" : ""}`} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -2548,7 +2549,6 @@ export default function App() {
               </button>
               {marketsOpen && (
                 <div className="profile-menu">
-                  <button className="profile-menu-item" onClick={() => { setView("portfolios"); setMarketsOpen(false); }}>Portfolios</button>
                   <button className="profile-menu-item" onClick={() => { setView("equities"); setMarketsOpen(false); }}>Equities Markets</button>
                   <button className="profile-menu-item" onClick={() => { setView("predictions"); setMarketsOpen(false); }}>Prediction Markets</button>
                   <button className="profile-menu-item" onClick={() => { setView("perps"); setMarketsOpen(false); }}>Perpetual Futures Markets</button>

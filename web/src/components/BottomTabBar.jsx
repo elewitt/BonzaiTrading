@@ -47,7 +47,7 @@ const TABS = [
  * .head-nav-btn buttons on screens narrow enough that 5 buttons + a
  * profile dropdown would overflow (see App.jsx's .lv-head, which has no
  * wrap/collapse behavior of its own). Only 4 destinations fit a bottom
- * bar without crowding; everything else (the 2 lower-traffic markets
+ * bar without crowding; everything else (the 3 lower-traffic markets
  * tabs, History, Refer & Earn, Account, Settings, Sign Out) lives one tap
  * deeper in "More" — which reuses the exact same .modal-overlay/.modal-box
  * markup as every other dialog in the app, so it automatically renders as
@@ -76,6 +76,7 @@ export default function BottomTabBar({ screen, setView, setProfileModal, logout 
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setMoreOpen(false)}>
           <div className="modal-box card" style={{ maxWidth: 380 }}>
             <p className="tiny label" style={{ marginBottom: 10 }}>More</p>
+            <button className="profile-menu-item" onClick={() => { setView("portfolios"); setMoreOpen(false); }}>Portfolio Builder</button>
             <button className="profile-menu-item" onClick={() => { setView("equities"); setMoreOpen(false); }}>Equities Markets</button>
             <button className="profile-menu-item" onClick={() => { setView("predictions"); setMoreOpen(false); }}>Prediction Markets</button>
             <button className="profile-menu-item" onClick={() => { setView("history"); setMoreOpen(false); }}>Transaction History</button>

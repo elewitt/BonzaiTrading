@@ -99,27 +99,25 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .profile-chevron { transition: transform .15s; flex-shrink: 0; }
 .profile-chevron.open { transform: rotate(180deg); }
 .profile-menu {
-  position: absolute; top: calc(100% + 8px); right: 0; z-index: 200;
-  min-width: 200px; background: var(--card); border: 1px solid var(--line);
-  border-radius: 12px; box-shadow: 0 6px 22px rgba(10,24,18,.12);
-  padding: 6px; animation: slideUp .12s ease;
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 200;
+  min-width: 248px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 10px 32px rgba(10,24,18,.14);
+  padding: 8px; animation: slideUp .12s ease;
+  display: flex; flex-direction: column; gap: 3px;
 }
 .profile-menu-item {
   display: block; width: 100%; text-align: left; border: none; background: none;
-  font-family: inherit; font-size: 13px; font-weight: 500; color: var(--ink);
-  padding: 9px 12px; border-radius: 8px; cursor: pointer; transition: background .12s;
+  font-family: inherit; font-size: 14px; font-weight: 500; color: var(--ink);
+  padding: 13px 16px; border-radius: 10px; cursor: pointer; transition: background .12s, color .12s;
 }
-.profile-menu-item:hover { background: var(--paper); }
+/* Same light-green tint .uni-chip:hover already uses, rather than the
+   neutral --paper background this used to fall back to — a dropdown you
+   read one item at a time benefits from the same "selected" accent color
+   the rest of the app already uses for hover state, not a generic gray. */
+.profile-menu-item:hover { background: #EDF4F0; color: var(--pine); }
 .profile-menu-item.danger { color: var(--loss); }
+.profile-menu-item.danger:hover { background: #F6EBE8; color: var(--loss); }
 .profile-menu-divider { height: 1px; background: var(--line); margin: 6px 4px; }
-/* Same markup also renders inside BottomTabBar's "More" bottom sheet
-   (components/BottomTabBar.jsx) — sized here for a mouse-driven dropdown,
-   too tight for a finger, so bump it specifically in that context (a
-   .modal-box ancestor) rather than the base rule, which stays as-is for
-   the desktop dropdown. */
-@media (max-width: 768px) {
-  .modal-box .profile-menu-item { padding: 13px 12px; font-size: 14.5px; }
-}
 
 /* ——— Bottom tab bar (components/BottomTabBar.jsx) — mobile-only primary
    nav, replacing the header's 5-button row + profile dropdown (.lv-head
