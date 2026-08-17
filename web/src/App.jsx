@@ -32,6 +32,7 @@ import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
 import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, displayTicker, XSTOCK_TICKER_RE, setAuthTokenProvider } from "./lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials, hasQaBypassCredentials } from "./lib/qaBypass.js";
 import { splitIntoDomainSegments } from "./lib/promptSplit.js";
+import { matchNamedPortfolio } from "./lib/portfolioMatch.js";
 
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -492,6 +493,11 @@ export default function App() {
 
   const [registry, setRegistry] = useState(null);
   const [sponsored, setSponsored] = useState(false);
+  // Loaded proactively (not just on the Portfolio Builder page) so the
+  // dashboard's own prompt bar can match a typed portfolio name — see
+  // matchNamedPortfolio() in runPrompt below — without the user needing to
+  // have visited that page first.
+  const [portfolioCatalog, setPortfolioCatalog] = useState(null);
   const [prices, setPrices] = useState({});
   const [holdings, setHoldings] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -655,6 +661,11 @@ export default function App() {
     api.tokens()
       .then((d) => { setRegistry(d.tokens); setSponsored(d.sponsored); })
       .catch((e) => setError(`Server unreachable — is longview-server running? (${e.message})`));
+  }, []);
+
+  /* ——— bootstrap: Portfolio Builder catalog, for prompt-bar name matching ——— */
+  useEffect(() => {
+    api.portfolios().then(setPortfolioCatalog).catch(() => {});
   }, []);
 
   /* ——— prices: poll Jupiter every 15s ——— */
@@ -1165,6 +1176,39 @@ export default function App() {
       try {
         const result = await api.ask(text);
         setAnswer({ text: result.answer, sources: result.sources || [], mentionedSymbols: result.mentionedSymbols || [] });
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setThinking(false);
+      }
+      return;
+    }
+
+    // Named-portfolio reference ("Build me the Situational Awareness
+    // portfolio", "give me the Magnificent Seven") — checked before any
+    // other routing so it takes priority over the generic trade parser,
+    // but AFTER isQuestion so "What's in the Magnificent Seven?" still
+    // goes to Q&A. Matched entirely client-side against the real,
+    // registry-validated Portfolio Builder catalog (matchNamedPortfolio
+    // requires a CLEAN match with no significant leftover text, so a
+    // compound prompt like "...and go 5x long BTC" correctly falls
+    // through to the existing multi-domain routing below instead of being
+    // silently swallowed) — deliberately skips api.parse() so Claude never
+    // reconstructs its own idea of what "Situational Awareness" holds from
+    // training knowledge instead of Bonzai's real sourced allocations.
+    const matchedPortfolio = matchNamedPortfolio(text, portfolioCatalog);
+    if (matchedPortfolio) {
+      setThinking(true); setError("");
+      try {
+        if (isRebalance) {
+          const { trades, maxSkippedDelta } = planTrades({ allocations: matchedPortfolio.allocations, portfolio, prices, registry });
+          setProposal({ allocations: matchedPortfolio.allocations, summary: matchedPortfolio.summary, trades, maxSkippedDelta, sourceText: text });
+          setAnswer(null);
+        } else {
+          setPlan({ allocations: matchedPortfolio.allocations, summary: matchedPortfolio.summary });
+          setInvestAmountInput((portfolio?.cash || 0).toFixed(2));
+          setView("weights");
+        }
       } catch (e) {
         setError(e.message);
       } finally {
