@@ -18,6 +18,14 @@ const FILLER_RE = /\b(build|buy|get|make|create|assemble|compose|construct|inves
 function normalize(s) {
   return (s || "")
     .toLowerCase()
+    // Strip a possessive 's as a unit ("Ackman's" -> "ackman"), not just
+    // the apostrophe alone — leaving a stray trailing "s" ("ackmans")
+    // broke matching "Bill Ackman's Pershing Square portfolio" against the
+    // combined "bill ackman pershing square" key, since the leftover "s"
+    // meant it was no longer an exact substring. Confirmed as a real bug:
+    // "Bill Ackman" alone and "Pershing Square" alone both matched fine,
+    // but the natural combined phrasing with a possessive didn't.
+    .replace(/['’]s\b/gi, "")
     .replace(/['’]/g, "")
     .replace(FILLER_RE, " ")
     .replace(/\s+/g, " ")
