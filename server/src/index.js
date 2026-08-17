@@ -737,6 +737,32 @@ async function parsePromptToAllocations({ prompt, current, total }) {
       .map((t) => `${t.symbol} — ${t.name}`)
       .join("\n");
     const minPct = total > 0 ? Math.ceil((0.25 / total) * 100 * 2) : 2; // minimum % that produces >$0.25 trade (2× buffer)
+    // Bonzai's own curated Portfolio Builder catalog (theme baskets +
+    // "Legendary Investor" portfolios sourced from real 13F filings — see
+    // portfolioCatalog.js/investorPortfolios.js). Most named-portfolio
+    // prompts ("build me the Situational Awareness portfolio") are caught
+    // client-side by web/src/lib/portfolioMatch.js before this endpoint is
+    // even called, with zero Claude involvement — but that matcher only
+    // fires on a CLEAN reference with no other instructions mixed in. Any
+    // compound phrasing ("sell my Amazon for Bill Ackman's portfolio")
+    // falls through to here instead, and without this block Claude has no
+    // way to know these named portfolios are real, curated, registry-
+    // validated data — it would just reconstruct its own idea of "Bill
+    // Ackman's portfolio" from training knowledge, disconnected from (and
+    // typically wrong relative to) Bonzai's actual sourced holdings.
+    // Confirmed as a real bug this way: exactly that prompt returned an
+    // invented "100% Alphabet" allocation instead of the real AMZN/UBER/
+    // MSFT basket.
+    const namedPortfolios = [
+      ...PORTFOLIO_CATALOG.map((b) => ({ label: b.name, symbols: b.symbols })),
+      ...INVESTOR_PORTFOLIOS.map((p) => ({ label: `${p.investor} (${p.fund})`, symbols: p.symbols })),
+    ]
+      .map(({ label, symbols }) => {
+        const resolved = symbols.filter((s) => bySymbol[s]);
+        return resolved.length ? `${label}: ${resolved.join(", ")} (equal weight)` : null;
+      })
+      .filter(Boolean)
+      .join("\n");
     const currentBlock = current?.length
       ? `\nCURRENT PORTFOLIO (treat the instruction as a modification; return the complete new target):\n` +
         current.map((c) => `${c.symbol}: ${c.weight.toFixed(1)}%`).join("\n")
@@ -766,6 +792,8 @@ Rules:
 - Shape: {"allocations":[{"symbol":"AAPLx","weight":25}],"summary":"one short plain sentence"}
 - Weights are direct percentages of the TOTAL PORTFOLIO (stocks + cash combined). The remainder automatically stays as USDC cash.
 - For a full rebalance (e.g. "go 50/50 AAPL and Tesla"), weights should sum to 100.
+- NAMED PORTFOLIOS: if the prompt references one of Bonzai's own curated portfolios below — by investor name, fund name, or basket name — treat it as a full rebalance to EXACTLY that portfolio's listed symbols and weights, verbatim. Do this even if the prompt also mentions a specific holding or reason ("sell my Amazon for Bill Ackman's portfolio" means rebalance the whole portfolio to match Bill Ackman's — if Amazon is one of his real holdings, that's expected to appear in the result at its correct target weight, not be excluded). Never substitute, invent, or approximate a different holding list for a named portfolio from your own knowledge — only the exact symbols listed here are correct:
+${namedPortfolios}
 - PARTIAL SELL: When the user says "sell X", "sell X for cash", "trim X", or "remove X" without specifying where to redeploy, keep ALL other positions at their EXACT current weights from CURRENT PORTFOLIO. Do NOT renormalize them. The weights will sum to less than 100 — that is intentional and correct; the difference stays as USDC cash.
 - "Sell everything", "go to cash", "liquidate" → return {"allocations":[],"summary":"..."}.
 - NEVER include USDC in allocations. If the user asks to hold cash/USDC, return empty allocations.
