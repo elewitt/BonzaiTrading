@@ -1196,19 +1196,27 @@ export default function App() {
     // silently swallowed) — deliberately skips api.parse() so Claude never
     // reconstructs its own idea of what "Situational Awareness" holds from
     // training knowledge instead of Bonzai's real sourced allocations.
+    //
+    // Always routes to the weights screen (same as clicking a card on the
+    // actual Portfolio Builder page), regardless of isRebalance/dashboard-
+    // bar context — deliberately NOT the planTrades/setProposal rebalance
+    // path every other dashboard-bar "build X" prompt uses. A named
+    // portfolio is "go acquire this specific curated thing", not "reshape
+    // my entire net worth to these weights": treating it as a full
+    // rebalance sizes every leg off the user's CURRENT total portfolio
+    // value (existing scattered small positions included), which for a
+    // small/near-empty account produces legs under the $0.25 minimum trade
+    // size with no way to fix it from inside the confirm modal — confirmed
+    // as a real dead-end this way ("largest leg: $0.12 — minimum is
+    // $0.25", no actionable next step). The weights screen instead lets
+    // the user see and directly edit the dollar amount before committing.
     const matchedPortfolio = matchNamedPortfolio(text, portfolioCatalog);
     if (matchedPortfolio) {
       setThinking(true); setError("");
       try {
-        if (isRebalance) {
-          const { trades, maxSkippedDelta } = planTrades({ allocations: matchedPortfolio.allocations, portfolio, prices, registry });
-          setProposal({ allocations: matchedPortfolio.allocations, summary: matchedPortfolio.summary, trades, maxSkippedDelta, sourceText: text });
-          setAnswer(null);
-        } else {
-          setPlan({ allocations: matchedPortfolio.allocations, summary: matchedPortfolio.summary });
-          setInvestAmountInput((portfolio?.cash || 0).toFixed(2));
-          setView("weights");
-        }
+        setPlan({ allocations: matchedPortfolio.allocations, summary: matchedPortfolio.summary });
+        setInvestAmountInput((portfolio?.cash || 0).toFixed(2));
+        setView("weights");
       } catch (e) {
         setError(e.message);
       } finally {
