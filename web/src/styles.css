@@ -1238,11 +1238,14 @@ a.trow { color: inherit; text-decoration: none; }
    buttons instead of near-invisible outlines, without going as loud as
    the primary "Go" button beside them. Hover fills solid, same "outline
    → solid pine" convention .head-nav-btn already uses. */
+/* Matched to .dash-product-tab's neutral pill treatment (the tabs
+   directly below these buttons) instead of the old pine-outlined style
+   that inverted to solid pine + white text on hover. */
 .hero-action-btn {
   flex: 1; font-size: 13px; padding: 9px 0;
-  border-color: var(--pine); color: var(--pine); background: var(--card);
+  border-color: var(--line); color: var(--ink); background: var(--offwhite);
 }
-.hero-action-btn:hover:not(:disabled) { background: var(--pine); color: #fff; }
+.hero-action-btn:hover:not(:disabled) { border-color: var(--moss); }
 @media (max-width: 768px) {
   .hero-btns { margin-top: 10px; gap: 8px; }
   .hero-action-btn { padding: 8px 0; font-size: 12.5px; }
