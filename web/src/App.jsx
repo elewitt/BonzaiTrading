@@ -2362,6 +2362,12 @@ export default function App() {
   /* ——————————— render ——————————— */
   const hasPositions = portfolio?.rows.length > 0;
   const hasCash = (portfolio?.cash || 0) >= 1;
+  // Distinct from hasCash's >= $1 threshold (that one's for an unrelated
+  // "worth showing a back-link" check) — this is "literally nothing here
+  // yet", so it uses a near-zero cutoff instead: someone with $0.50 sitting
+  // in cash has real funds and should see the normal cash row, not a
+  // first-deposit empty state.
+  const isBrokerageEmpty = !!portfolio && portfolio.rows.length === 0 && (portfolio.cash || 0) < 0.01;
   const DUST_HIDE_THRESHOLD = 1; // "Hide Dust Amounts" toggle hides anything under this
   const visibleRows = portfolio
     ? (hideDustAmounts ? portfolio.rows.filter((r) => r.value >= DUST_HIDE_THRESHOLD) : portfolio.rows)
@@ -3157,14 +3163,37 @@ export default function App() {
           <section className="card table-card card-pop">
             <div className="card-toprow">
               <p className="table-card-title">Positions</p>
-              <label className="dust-toggle">
-                <span className="tiny muted">Hide Dust Amounts</span>
-                <span className="switch">
-                  <input type="checkbox" checked={hideDustAmounts} onChange={(e) => toggleHideDust(e.target.checked)} />
-                  <span className="switch-track"><span className="switch-thumb" /></span>
-                </span>
-              </label>
+              {!isBrokerageEmpty && (
+                <label className="dust-toggle">
+                  <span className="tiny muted">Hide Dust Amounts</span>
+                  <span className="switch">
+                    <input type="checkbox" checked={hideDustAmounts} onChange={(e) => toggleHideDust(e.target.checked)} />
+                    <span className="switch-track"><span className="switch-thumb" /></span>
+                  </span>
+                </label>
+              )}
             </div>
+            {isBrokerageEmpty ? (
+              <div className="empty-brokerage">
+                <span className="empty-brokerage-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 8v8" />
+                    <path d="M8 12h8" />
+                  </svg>
+                </span>
+                <p className="card-title" style={{ margin: "14px 0 4px" }}>Your brokerage is empty</p>
+                <p className="tiny muted" style={{ maxWidth: 360, margin: "0 auto 20px" }}>
+                  Deposit cash to start buying stocks, ETFs, and more — or skip straight to a
+                  ready-made portfolio from a legendary investor.
+                </p>
+                <div className="empty-brokerage-actions">
+                  <button className="btn primary" onClick={() => setDepositOpen(true)}>Deposit →</button>
+                  <button className="btn ghost" onClick={() => setView("portfolios")}>Browse Portfolio Builder</button>
+                </div>
+              </div>
+            ) : (
+            <>
             <div className="trow trow-positions thead tiny label">
               <span>Asset</span>
               <span>Price / token</span>
@@ -3249,6 +3278,8 @@ export default function App() {
                   ({hiddenByToggle.map((r) => displayTicker(r.symbol)).join(", ")} · {"<"}$1)
                 </span>
               </div>
+            )}
+            </>
             )}
           </section>
           )}

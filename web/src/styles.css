@@ -976,6 +976,18 @@ a.trow { color: inherit; text-decoration: none; }
 .asset .serif { font-size: 15px; font-weight: 500; }
 .cashrow { color: var(--moss); }
 .dust-notice { padding: 8px 0; border-bottom: none; }
+/* First-deposit empty state — replaces the positions table entirely (not
+   just an extra row) when the brokerage genuinely has nothing in it, so a
+   new user lands on a real invitation to act instead of a header row
+   sitting over a lone "$0.00" cash line. */
+.empty-brokerage { text-align: center; padding: 40px 16px 36px; }
+.empty-brokerage-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--paper); color: var(--pine);
+}
+.empty-brokerage-icon svg { width: 26px; height: 26px; }
+.empty-brokerage-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 /* :not() exclusions here matter — every table-specific class below
    (.trow-kamino-rates etc.) is applied ALONGSIDE the base .trow class, not
    instead of it (for .trow's shared padding/border/font-variant-numeric).
