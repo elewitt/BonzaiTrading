@@ -846,11 +846,29 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   font-size: 14px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   color: var(--ink); margin: 0;
 }
-.table-card .thead {
+/* Was scoped to ".table-card .thead" — every real .thead row in the app
+   (Positions, Kamino rates, Predictions, Referrals) happens to sit inside
+   a .table-card wrapper and got this pill-background/10px treatment
+   consistently, EXCEPT Equities Markets' list header, which uses a
+   .perps-asset-panel wrapper (borrowed from the perps master-detail
+   layout) instead of .table-card — so it silently fell back to the bare
+   .label styling (11px, lighter weight, wider letter-spacing) and looked
+   visibly bigger/looser than every other table header. Un-scoped from
+   .table-card so all 5 headers render identically regardless of what
+   wraps them — confirmed via grep that .thead is used in exactly these 5
+   places, nothing else, so this is safe to apply universally.
+   Qualified as .trow.thead (2 classes, matching the real combined
+   className every usage has), not bare .thead — confirmed as a second
+   real bug while fixing the first: a bare single-class .thead is the same
+   specificity as .trow's own base padding (14px 0), so which one wins
+   depends on source order alone, and .trow's rule sits later in the file
+   and would silently win, undoing this rule's tighter 10px 10px 9px pill
+   padding. */
+.trow.thead {
   background: var(--paper); border-radius: 8px; border-bottom: none;
   margin: 0 -10px 8px; padding: 10px 10px 9px;
 }
-.table-card .thead span { font-size: 10px; font-weight: 600; letter-spacing: .1em; }
+.trow.thead span { font-size: 10px; font-weight: 600; letter-spacing: .1em; }
 
 /* ——— Perps Positions table (main dashboard) — a real <table> so header
    and body columns are guaranteed to line up, with column separators and
@@ -971,7 +989,6 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .trow:last-child { border-bottom: none; }
 a.trow { color: inherit; text-decoration: none; }
-.thead { border-bottom: 1px solid var(--line); padding-bottom: 9px; }
 .asset { display: flex; flex-direction: column; gap: 2px; }
 .asset .serif { font-size: 15px; font-weight: 500; }
 .cashrow { color: var(--moss); }
