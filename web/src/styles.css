@@ -1240,12 +1240,16 @@ a.trow { color: inherit; text-decoration: none; }
    → solid pine" convention .head-nav-btn already uses. */
 /* Matched to .dash-product-tab's neutral pill treatment (the tabs
    directly below these buttons) instead of the old pine-outlined style
-   that inverted to solid pine + white text on hover. */
-.hero-action-btn {
-  flex: 1; font-size: 13px; padding: 9px 0;
-  border-color: var(--line); color: var(--ink); background: var(--offwhite);
-}
-.hero-action-btn:hover:not(:disabled) { border-color: var(--moss); }
+   that inverted to solid pine + white text on hover. Qualified as
+   .btn.ghost.hero-action-btn (matching the real className="btn ghost
+   hero-action-btn" on the element) rather than bare .hero-action-btn —
+   confirmed as a real bug otherwise: .btn.ghost's own background/border-
+   color/hover rules (2-class + pseudo-class selectors) outrank a single-
+   class .hero-action-btn selector, so the color changes below silently
+   never applied; computed background stayed transparent regardless. */
+.hero-action-btn { flex: 1; font-size: 13px; padding: 9px 0; }
+.btn.ghost.hero-action-btn { border-color: var(--line); color: var(--ink); background: var(--offwhite); }
+.btn.ghost.hero-action-btn:hover:not(:disabled) { border-color: var(--moss); background: var(--offwhite); }
 @media (max-width: 768px) {
   .hero-btns { margin-top: 10px; gap: 8px; }
   .hero-action-btn { padding: 8px 0; font-size: 12.5px; }
