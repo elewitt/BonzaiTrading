@@ -503,7 +503,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
 
   // build / rebalance flow
-  const [view, setView] = useState("auto"); // auto | build | weights | execute
+  const [view, setView] = useState("auto"); // auto | weights | execute
   // Trade execution/routing progress shows as a popup over whatever screen
   // is already showing (almost always dash) instead of navigating to a
   // separate full screen — decoupled from `view` entirely so the screen
@@ -577,6 +577,10 @@ export default function App() {
   const [investAmountInput, setInvestAmountInput] = useState("");
   const [statsFlipped, setStatsFlipped] = useState(false);
   const [dashProduct, setDashProduct] = useState("brokerage"); // "brokerage" | "perps" | "borrow" | "markets"
+  // Returning to the home dashboard (logo, "Home" nav, any sub-page's back
+  // button) always lands back on the Brokerage tab, regardless of which
+  // product tab was active before navigating away.
+  const goHome = () => { setDashProduct("brokerage"); setView("auto"); };
   const [newsSearchInput, setNewsSearchInput] = useState("");
   const [newsSearchSymbol, setNewsSearchSymbol] = useState(null);
   const runNewsSearch = (e) => {
@@ -2590,7 +2594,7 @@ export default function App() {
     <div className="lv-root">
       <header className="lv-head">
         <div className="head-left">
-          <button className="wordmark wordmark-btn" onClick={() => setView("auto")}>
+          <button className="wordmark wordmark-btn" onClick={goHome}>
             <img className="wordmark-logo" src="/bonsai-icon.png" alt="" />
             Bonzai Trading
           </button>
@@ -2602,7 +2606,7 @@ export default function App() {
         )}
         {address && (
           <div className="head-right head-right-authed">
-            <button className={`head-nav-btn ${screen === "dash" ? "active" : ""}`} onClick={() => setView("auto")}>Home</button>
+            <button className={`head-nav-btn ${screen === "dash" ? "active" : ""}`} onClick={goHome}>Home</button>
             <button className={`head-nav-btn ${screen === "portfolios" ? "active" : ""}`} onClick={() => setView("portfolios")}>Portfolio Builder</button>
             <div className="profile-wrap" ref={marketsRef}>
               <button className={`head-nav-btn profile-btn ${["equities", "predictions", "perps", "borrow"].includes(screen) ? "active" : ""}`}
@@ -2912,45 +2916,45 @@ export default function App() {
               </p>
             )}
           </div>
-          <button className="linkish" onClick={() => setView("auto")}>← Back to dashboard</button>
+          <button className="linkish" onClick={goHome}>← Back to dashboard</button>
         </main>
       )}
 
       {screen === "history" && (
-        <HistoryScreen txHistory={txHistory} onBack={() => setView("auto")} />
+        <HistoryScreen txHistory={txHistory} onBack={goHome} />
       )}
 
       {screen === "portfolios" && (
-        <PortfoliosApp onBack={() => setView("auto")} onAssemble={onAssemblePortfolio} />
+        <PortfoliosApp onBack={goHome} onAssemble={onAssemblePortfolio} />
       )}
 
       {screen === "equities" && (
-        <EquitiesMarketsApp onBack={() => setView("auto")} onQuickBuy={quickBuy}
+        <EquitiesMarketsApp onBack={goHome} onQuickBuy={quickBuy}
           availableCash={portfolio?.cashUsdc ?? portfolio?.cash ?? 0} />
       )}
 
       {screen === "predictions" && (
-        <PredictionMarketsApp onBack={() => setView("auto")} />
+        <PredictionMarketsApp onBack={goHome} />
       )}
 
       {screen === "perps" && (
-        <PerpsApp solanaAddress={address} solBalance={holdings?.sol ?? 0} usdcBalance={portfolio?.cashUsdc ?? 0} onBack={() => setView("auto")}
+        <PerpsApp solanaAddress={address} solBalance={holdings?.sol ?? 0} usdcBalance={portfolio?.cashUsdc ?? 0} onBack={goHome}
           initialFundIntent={perpsFundIntent} />
       )}
 
       {screen === "borrow" && (
-        <BorrowApp solanaAddress={address} solBalance={holdings?.sol ?? 0} portfolioRows={portfolio?.rows ?? []} onBack={() => setView("auto")} />
+        <BorrowApp solanaAddress={address} solBalance={holdings?.sol ?? 0} portfolioRows={portfolio?.rows ?? []} onBack={goHome} />
       )}
 
       {screen === "agents" && (
-        <TradingAgentApp solanaAddress={address} signWithWallet={signWithWallet} onBack={() => setView("auto")}
+        <TradingAgentApp solanaAddress={address} signWithWallet={signWithWallet} onBack={goHome}
           telegramCode={telegramCode} telegramCodeBusy={telegramCodeBusy} telegramCodeErr={telegramCodeErr} getTelegramLinkCode={getTelegramLinkCode}
           botTradingEnabled={botTradingEnabled} botTradingBusy={botTradingBusy} toggleBotTrading={toggleBotTrading}
           evmAddress={evmAddress} hlCtx={{ hl, perpsWallet, evmAddress, hlAssets: perpAssets, markPrices: perpMarkPrices }} />
       )}
 
       {screen === "referrals" && (
-        <ReferralsApp onBack={() => setView("auto")} />
+        <ReferralsApp onBack={goHome} />
       )}
 
       {screen === "dash" && portfolio && (
