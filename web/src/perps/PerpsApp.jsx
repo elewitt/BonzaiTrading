@@ -50,13 +50,26 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // list with SOL and everything else invisible below the fold.
   const MIN_CHART_HEIGHT = 480;
   const [fundView, setFundView] = useState("deposit"); // "deposit" | "withdraw"
-  const [fundAccount, setFundAccount] = useState("crypto"); // "crypto" | "equity"
+  // null shows the "which account?" picker first — set explicitly (by the
+  // picker, or by a prompt-bar hand-off that already names an account) once
+  // the user's target account is actually known.
+  const [fundAccount, setFundAccount] = useState(null); // null | "crypto" | "equity"
   const [fundModal, setFundModal] = useState(false);
+  // Equities has no direct wallet-deposit rail — funds always arrive via an
+  // internal move from the Crypto account. The fallback deposit-into-crypto
+  // form starts collapsed and only matters while the picker is showing, so
+  // it resets whenever the chosen account changes underneath it.
+  const [showEquityDepositFallback, setShowEquityDepositFallback] = useState(false);
+  useEffect(() => { setShowEquityDepositFallback(false); }, [fundAccount]);
+
+  const openFundModal = (view) => { setFundView(view); setFundAccount(null); setFundModal(true); };
+  const closeFundModal = () => { setFundModal(false); setFundAccount(null); };
 
   // Dashboard prompt bar hand-off ("deposit $200 into perps") — applied
   // exactly once on mount, same "apply once, don't fight the user's own
   // navigation afterward" guard used for BorrowTicket.jsx's auto-selected
-  // starting step.
+  // starting step. The account is already named by the prompt, so this
+  // skips the picker entirely rather than making the user re-confirm it.
   const [hasAppliedFundIntent, setHasAppliedFundIntent] = useState(false);
   useEffect(() => {
     if (hasAppliedFundIntent || !initialFundIntent) return;
@@ -510,8 +523,8 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
             <span className="mono perps-balance-value">${withdrawable.toFixed(2)}</span>
           </span>
           <span style={{ marginLeft: "auto", flexDirection: "row", gap: 10 }}>
-            <button className="lvp-btn" onClick={() => { setFundView("deposit"); setFundModal(true); }}>Deposit</button>
-            <button className="lvp-btn" onClick={() => { setFundView("withdraw"); setFundModal(true); }}>Withdraw</button>
+            <button className="lvp-btn" onClick={() => openFundModal("deposit")}>Deposit</button>
+            <button className="lvp-btn" onClick={() => openFundModal("withdraw")}>Withdraw</button>
           </span>
         </div>
       )}
@@ -597,66 +610,137 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
       )}
 
       {fundModal && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setFundModal(false)}>
-          <div className="modal-box card">
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeFundModal()}>
+          <div className="modal-box card fund-modal">
             {user ? (
-              <>
-                <div className="perps-category-toggle" style={{ marginBottom: 16 }}>
-                  <button className={`lvp-pct-btn ${fundAccount === "crypto" ? "sel" : ""}`} onClick={() => setFundAccount("crypto")}>Crypto</button>
-                  <button className={`lvp-pct-btn ${fundAccount === "equity" ? "sel" : ""}`} onClick={() => setFundAccount("equity")}>{EQUITY_DEX_LABEL}</button>
-                </div>
-
-                {fundAccount === "crypto" && fundView === "deposit" && (
-                  <DepositWizard orchestrator={orchestrator} user={user}
-                    walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
-                    initialAmount={initialFundIntent?.amount}
-                    onFunded={() => setFundModal(false)} />
-                )}
-                {fundAccount === "crypto" && fundView === "withdraw" && (
-                  <WithdrawWizard orchestrator={withdrawOrchestrator} user={user}
-                    withdrawable={cryptoWithdrawable} initialAmount={initialFundIntent?.amount}
-                    onWithdrawn={() => setFundModal(false)} />
-                )}
-                {fundAccount === "equity" && fundView === "deposit" && (
-                  <>
-                    <MoveFundsCard
-                      title={`Deposit to ${EQUITY_DEX_LABEL}`}
-                      description={`Move cash already in your trading account into ${EQUITY_DEX_LABEL}.`}
-                      fromBalance={cryptoWithdrawable}
-                      sourceDex="" destinationDex={EQUITY_DEX}
-                      moveDexFunds={moveDexFunds}
-                      buttonLabel="Deposit"
-                      initialAmount={initialFundIntent?.amount}
-                      onDone={() => setFundModal(false)}
-                    />
-                    {/* sendAsset can only move USDC already inside Hyperliquid
-                        between dexs — it can't pull from the wallet directly,
-                        so a user with little/no crypto-dex balance had no way
-                        to fund Equities at all without leaving this modal,
-                        depositing on the Crypto tab, then coming back. Offer
-                        the same wallet deposit inline instead. */}
-                    <p className="lvp-muted" style={{ marginTop: 18, marginBottom: 8, fontSize: 13 }}>
-                      Need more cash first? Add funds below, then move them to {EQUITY_DEX_LABEL} above.
+              fundAccount === null ? (
+                <>
+                  <div className="answer-header">
+                    <p className="tiny label" style={{ margin: 0 }}>
+                      {fundView === "withdraw" ? "Withdraw funds" : "Add funds"}
                     </p>
+                    <button className="x" onClick={closeFundModal}>×</button>
+                  </div>
+                  <p className="lvp-muted" style={{ marginTop: 0, marginBottom: 18 }}>
+                    Which account do you want to {fundView === "withdraw" ? "withdraw from" : "fund"}?
+                  </p>
+                  <div className="fund-account-picker">
+                    <button className="fund-account-card" onClick={() => setFundAccount("crypto")}>
+                      <span className="fund-account-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="9" />
+                          <path d="M12 7.5v9M9 9.6c0-1.4 1.3-2.4 3-2.4s3 .9 3 2.1c0 2.8-6 1.4-6 4.2 0 1.2 1.3 2.1 3 2.1s3-.9 3-2.1" />
+                        </svg>
+                      </span>
+                      <span className="fund-account-info">
+                        <span className="serif fund-account-title">Crypto Perps</span>
+                        <span className="fund-account-sub">BTC, ETH, SOL and more</span>
+                        <span className="mono fund-account-balance">${cryptoAccount.accountValue.toFixed(2)} equity</span>
+                      </span>
+                      <span className="fund-account-arrow" aria-hidden="true">→</span>
+                    </button>
+                    <button className="fund-account-card" onClick={() => setFundAccount("equity")}>
+                      <span className="fund-account-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 20V11M10 20V4M16 20v-6M3 20h18" />
+                        </svg>
+                      </span>
+                      <span className="fund-account-info">
+                        <span className="serif fund-account-title">{EQUITY_DEX_LABEL} Perps</span>
+                        <span className="fund-account-sub">AAPL, TSLA, NVDA and more</span>
+                        <span className="mono fund-account-balance">${equityAccount.accountValue.toFixed(2)} equity</span>
+                      </span>
+                      <span className="fund-account-arrow" aria-hidden="true">→</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="answer-header">
+                    <button className="linkish" onClick={() => setFundAccount(null)}>← Back</button>
+                    <button className="x" onClick={closeFundModal}>×</button>
+                  </div>
+                  <p className="tiny label" style={{ margin: "0 0 16px" }}>
+                    {fundView === "withdraw" ? "Withdraw from" : "Add funds to"}{" "}
+                    {fundAccount === "crypto" ? "Crypto Perps" : `${EQUITY_DEX_LABEL} Perps`}
+                  </p>
+
+                  {fundAccount === "crypto" && fundView === "deposit" && (
                     <DepositWizard orchestrator={orchestrator} user={user}
                       walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
-                      onFunded={() => {}} />
-                  </>
-                )}
-                {fundAccount === "equity" && fundView === "withdraw" && (
-                  <MoveFundsCard
-                    title={`Withdraw from ${EQUITY_DEX_LABEL}`}
-                    fromBalance={equityAccount.withdrawable}
-                    sourceDex={EQUITY_DEX} destinationDex=""
-                    moveDexFunds={moveDexFunds}
-                    buttonLabel="Withdraw"
-                    initialAmount={initialFundIntent?.amount}
-                    onDone={() => setFundModal(false)}
-                  />
-                )}
-              </>
+                      initialAmount={initialFundIntent?.amount}
+                      onFunded={closeFundModal} />
+                  )}
+                  {fundAccount === "crypto" && fundView === "withdraw" && (
+                    <WithdrawWizard orchestrator={withdrawOrchestrator} user={user}
+                      withdrawable={cryptoWithdrawable} initialAmount={initialFundIntent?.amount}
+                      onWithdrawn={closeFundModal} />
+                  )}
+                  {fundAccount === "equity" && fundView === "deposit" && (
+                    cryptoWithdrawable > 0 ? (
+                      <>
+                        <MoveFundsCard
+                          title={`Move funds to ${EQUITY_DEX_LABEL}`}
+                          description={`Move cash already in your Crypto Perps account into ${EQUITY_DEX_LABEL}.`}
+                          fromBalance={cryptoWithdrawable}
+                          sourceDex="" destinationDex={EQUITY_DEX}
+                          moveDexFunds={moveDexFunds}
+                          buttonLabel="Move funds"
+                          initialAmount={initialFundIntent?.amount}
+                          onDone={closeFundModal}
+                        />
+                        {/* sendAsset can only move USDC already inside Hyperliquid
+                            between dexs — it can't pull from the wallet directly,
+                            so this stays available but tucked behind a disclosure
+                            rather than always-on, since most visitors here already
+                            have a Crypto balance to move and don't need it. */}
+                        {showEquityDepositFallback ? (
+                          <div style={{ marginTop: 18 }}>
+                            <DepositWizard orchestrator={orchestrator} user={user}
+                              walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
+                              onFunded={() => {}} />
+                          </div>
+                        ) : (
+                          <button className="linkish" style={{ marginTop: 14 }}
+                            onClick={() => setShowEquityDepositFallback(true)}>
+                            + Add new funds first
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className="lvp-muted" style={{ marginTop: 0, marginBottom: 14 }}>
+                          {EQUITY_DEX_LABEL} funds come from your Crypto Perps balance. Add funds below,
+                          then move them over.
+                        </p>
+                        <DepositWizard orchestrator={orchestrator} user={user}
+                          walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
+                          onFunded={() => {}} />
+                      </>
+                    )
+                  )}
+                  {fundAccount === "equity" && fundView === "withdraw" && (
+                    <MoveFundsCard
+                      title={`Withdraw from ${EQUITY_DEX_LABEL}`}
+                      description="Moves cash back to your Crypto Perps account, ready to withdraw to your wallet from there."
+                      fromBalance={equityAccount.withdrawable}
+                      sourceDex={EQUITY_DEX} destinationDex=""
+                      moveDexFunds={moveDexFunds}
+                      buttonLabel="Withdraw"
+                      initialAmount={initialFundIntent?.amount}
+                      onDone={closeFundModal}
+                    />
+                  )}
+                </>
+              )
             ) : (
               <div>
+                <div className="answer-header">
+                  <p className="tiny label" style={{ margin: 0 }}>
+                    {fundView === "withdraw" ? "Withdraw funds" : "Add funds"}
+                  </p>
+                  <button className="x" onClick={closeFundModal}>×</button>
+                </div>
                 <p className="lvp-muted">
                   {evmCreateError || "Trading perps needs a second wallet (Arbitrum + Hyperliquid)."}
                 </p>
