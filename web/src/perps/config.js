@@ -27,3 +27,12 @@ export const DEFAULT_CONFIG = {
 // useHyperliquid.js's useMoveDexFunds).
 export const EQUITY_DEX = "xyz";
 export const EQUITY_DEX_LABEL = "Equities";
+
+// Hyperliquid's position/fill APIs return equity-dex coins as the raw
+// "xyz:NVDA" builder-dex identifier — useHyperliquid.js's useAssets() already
+// strips this same prefix for the Trade tab's displayName; positions/fills
+// read straight off the HL API with no assets-list lookup, so callers
+// rendering a coin as user-facing text need this applied directly instead.
+export function displayCoin(coin) {
+  return coin && coin.includes(":") ? coin.split(":")[1] : coin;
+}

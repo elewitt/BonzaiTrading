@@ -3,7 +3,7 @@ import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
 import { tenthsBpsToPercent } from "./hl/builder.js";
 import { useBuilderApproval, usePlaceOrder, usePositions } from "./useHyperliquid.js";
 import { liquidationPrice } from "./hl/margin.js";
-import { EQUITY_DEX } from "./config.js";
+import { EQUITY_DEX, displayCoin } from "./config.js";
 import { usd } from "../lib/api.js";
 
 const HL_MIN_NOTIONAL_USD = 10; // Hyperliquid's own exchange-wide minimum order value
@@ -426,7 +426,7 @@ export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAd
                 <tr key={`${p.dex}-${p.coin}`}>
                   <td className={`pt-asset pos-accent-${p.side}`}>
                     <span className="asset">
-                      <span className="serif pos-asset-name">{p.coin}</span>
+                      <span className="serif pos-asset-name">{displayCoin(p.coin)}</span>
                       <span className="pos-side-row">
                         <span className={`pos-side-badge ${p.side}`}>{p.side === "long" ? "Long" : "Short"}</span>
                         <span className="tiny muted">{p.dex === "equity" ? "Equities" : "Crypto"}</span>

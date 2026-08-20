@@ -6,7 +6,7 @@ import Donut from "./components/Donut.jsx";
 import { useLongviewHl, usePositions, useAssets } from "./perps/useHyperliquid.js";
 import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
 import { liquidationPrice } from "./perps/hl/margin.js";
-import { DEFAULT_CONFIG, EQUITY_DEX } from "./perps/config.js";
+import { DEFAULT_CONFIG, EQUITY_DEX, displayCoin } from "./perps/config.js";
 import TimeSeriesChart, { priceLabel } from "./components/TimeSeriesChart.jsx";
 import MarketsExplorer from "./components/MarketsExplorer.jsx";
 import TradingAgentApp from "./agents/TradingAgentApp.jsx";
@@ -832,7 +832,7 @@ export default function App() {
   const perpsAccountValue = (cryptoPerps.accountValue || 0) + (equityPerps.accountValue || 0);
   const perpsPnl = perpsPositions.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const perpsRows = useMemo(() => perpsPositions.map((p) => ({
-    symbol: p.coin, name: `${p.coin} ${p.side === "long" ? "Long" : "Short"} ${p.leverage}x`,
+    symbol: displayCoin(p.coin), name: `${displayCoin(p.coin)} ${p.side === "long" ? "Long" : "Short"} ${p.leverage}x`,
     value: Math.abs(p.size * p.markPx), price: p.markPx, uiAmount: p.size,
   })), [perpsPositions]);
   const perpsNotionalTotal = perpsRows.reduce((s, r) => s + r.value, 0);
@@ -3283,7 +3283,7 @@ export default function App() {
                       <tr key={`${p.dex}-${p.coin}`}>
                         <td className="pt-asset">
                           <span className="asset">
-                            <span className="serif">{p.coin}</span>
+                            <span className="serif">{displayCoin(p.coin)}</span>
                             <span className="pos-side-row">
                               <span className={`pos-side-badge ${p.side}`}>{p.side === "long" ? "Long" : "Short"}</span>
                               <span className="tiny muted">{p.dex === "equity" ? "Equities" : "Crypto"}</span>

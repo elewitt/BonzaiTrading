@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { usePortfolioStats, useAssetCandles } from "./useHyperliquid.js";
 import TimeSeriesChart, { priceLabel } from "../components/TimeSeriesChart.jsx";
+import { displayCoin } from "./config.js";
 
 const PERIODS = [
   { key: "perpDay", label: "Day" },
@@ -205,7 +206,7 @@ export function PerpsPerformancePanel({ hl, user, positions }) {
             <div key={i} className="lvp-fill-row">
               <div className="lvp-row">
                 <span>
-                  <strong>{f.coin}</strong>{" "}
+                  <strong>{displayCoin(f.coin)}</strong>{" "}
                   <span className={`trade-chip ${f.isBuy ? "buy" : "sell"} lvp-fill-chip`}>{f.dir}</span>
                 </span>
                 {f.closedPnl !== 0 && (
