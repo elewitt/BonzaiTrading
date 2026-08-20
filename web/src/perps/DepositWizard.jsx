@@ -142,7 +142,7 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
       const next = await orchestrator.completeDeposit(synthetic);
       if (next.step === "DONE") {
         setOrphanedUsd(null);
-        onFunded?.();
+        onFunded?.(orphanedUsd);
       } else {
         setState(next); // surfaces any hlDepositError (e.g. needs gas) via the normal in-progress view
       }
@@ -184,7 +184,7 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
     const h = setInterval(async () => {
       const next = await orchestratorRef.current.resume(stateRef.current);
       setState(next);
-      if (next.step === "DONE") onFundedRef.current?.();
+      if (next.step === "DONE") onFundedRef.current?.(next.inputSol);
     }, 3000);
     return () => clearInterval(h);
   }, [state?.step, state?.id]);
@@ -196,7 +196,7 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
     const id = `dep_${user.evm.slice(2, 10)}_${Date.now()}`;
     const s = await orchestrator.start(id, RAIL, amt, user);
     setState(s);
-    if (s.step === "DONE") onFunded?.();
+    if (s.step === "DONE") onFunded?.(amt);
   };
 
   // Must be triggered by a real click, not a background poll — Privy's
@@ -208,7 +208,7 @@ export function DepositWizard({ orchestrator, user, walletSolBalance, walletUsdc
     try {
       const next = await orchestrator.completeDeposit(state);
       setState(next);
-      if (next.step === "DONE") onFunded?.();
+      if (next.step === "DONE") onFunded?.(next.inputSol);
     } finally {
       setCompleting(false);
     }

@@ -55,12 +55,18 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // the user's target account is actually known.
   const [fundAccount, setFundAccount] = useState(null); // null | "crypto" | "equity"
   const [fundModal, setFundModal] = useState(false);
-  // Equities has no direct wallet-deposit rail — funds always arrive via an
-  // internal move from the Crypto account. The fallback deposit-into-crypto
-  // form starts collapsed and only matters while the picker is showing, so
-  // it resets whenever the chosen account changes underneath it.
-  const [showEquityDepositFallback, setShowEquityDepositFallback] = useState(false);
-  useEffect(() => { setShowEquityDepositFallback(false); }, [fundAccount]);
+  // Equities has no direct wallet-deposit rail — a deposit there is really
+  // wallet → Crypto dex → Equities dex under the hood, but the primary flow
+  // presents it as one continuous "Deposit" action: DepositWizard runs its
+  // normal wallet-to-Crypto bridge, then handleEquityCryptoDeposited below
+  // auto-continues the second hop via sendAsset the moment it lands, with
+  // equityAutoMove tracking that continuation's own progress/result. The
+  // manual "Transfer from Crypto Perps" card (moving an existing Crypto
+  // balance over, with no new deposit) is offered as a secondary option,
+  // collapsed by default. Both reset whenever the chosen account changes.
+  const [showEquityTransfer, setShowEquityTransfer] = useState(false);
+  const [equityAutoMove, setEquityAutoMove] = useState(null); // null | { amount, done }
+  useEffect(() => { setShowEquityTransfer(false); setEquityAutoMove(null); }, [fundAccount]);
 
   const openFundModal = (view) => { setFundView(view); setFundAccount(null); setFundModal(true); };
   const closeFundModal = () => { setFundModal(false); setFundAccount(null); };
@@ -210,6 +216,22 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
     ...cryptoAccount.positions, ...equityAccount.positions,
   ], [cryptoAccount.positions, equityAccount.positions]);
   const moveDexFunds = useMoveDexFunds(hl, evmAddress, viemAccount);
+
+  // Fires once the wallet→Crypto leg of an Equities deposit lands (see
+  // equityAutoMove above) — immediately continues with the Crypto→Equities
+  // sendAsset so the whole thing reads as one deposit to the user, not two
+  // separate manual steps.
+  const handleEquityCryptoDeposited = async (depositedAmount) => {
+    const amount = Number(depositedAmount) || 0;
+    if (amount <= 0) { closeFundModal(); return; }
+    // Read live off moveDexFunds.busy/error in the render below rather than
+    // captured here — this closure's own `moveDexFunds` reference is a
+    // snapshot from whichever render created it, so its .error field would
+    // still show the value from BEFORE this move ran, not after.
+    setEquityAutoMove({ amount, done: false });
+    const ok = await moveDexFunds.move(amount, "", EQUITY_DEX);
+    if (ok) setEquityAutoMove({ amount, done: true });
+  };
 
   // Shared by both the deposit orchestrator (approve/transfer into HL) and
   // the withdraw orchestrator (approve/order-creation back out) — same
@@ -677,45 +699,72 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
                       onWithdrawn={closeFundModal} />
                   )}
                   {fundAccount === "equity" && fundView === "deposit" && (
-                    cryptoWithdrawable > 0 ? (
+                    equityAutoMove ? (
+                      <div className="lvp-card" role="status" aria-live="polite">
+                        {equityAutoMove.done ? (
+                          <>
+                            <div className="lvp-progress done">
+                              <span className="lvp-dot" aria-hidden="true" />
+                              <span className="lvp-progress-label">Funds ready to trade</span>
+                            </div>
+                            <p className="lvp-muted" style={{ marginTop: 10 }}>
+                              ${equityAutoMove.amount.toFixed(2)} is live in {EQUITY_DEX_LABEL}. Use the trade panel to open a position.
+                            </p>
+                            <button className="lvp-btn primary" style={{ marginTop: 12 }} onClick={closeFundModal}>Done</button>
+                          </>
+                        ) : moveDexFunds.error ? (
+                          <>
+                            <p className="lvp-error">{moveDexFunds.error}</p>
+                            <p className="lvp-muted" style={{ marginTop: 6, marginBottom: 14 }}>
+                              ${equityAutoMove.amount.toFixed(2)} is safe in your Crypto Perps account.
+                            </p>
+                            <button className="lvp-btn primary" disabled={moveDexFunds.busy}
+                              onClick={() => void handleEquityCryptoDeposited(equityAutoMove.amount)}>
+                              {moveDexFunds.busy ? "Retrying…" : "Try again"}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="lvp-progress">
+                              <span className="lvp-dot" aria-hidden="true" />
+                              <span className="lvp-progress-label">
+                                <span className="lvp-step-count">Step 2 of 2 · </span>Moving into {EQUITY_DEX_LABEL}
+                              </span>
+                            </div>
+                            <p className="lvp-muted" style={{ marginTop: 10 }}>
+                              ${equityAutoMove.amount.toFixed(2)} landed in your Crypto Perps account — finishing the move into {EQUITY_DEX_LABEL}.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    ) : (
                       <>
-                        <MoveFundsCard
-                          title={`Move funds to ${EQUITY_DEX_LABEL}`}
-                          description={`Move cash already in your Crypto Perps account into ${EQUITY_DEX_LABEL}.`}
-                          fromBalance={cryptoWithdrawable}
-                          sourceDex="" destinationDex={EQUITY_DEX}
-                          moveDexFunds={moveDexFunds}
-                          buttonLabel="Move funds"
+                        <DepositWizard orchestrator={orchestrator} user={user}
+                          walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
                           initialAmount={initialFundIntent?.amount}
-                          onDone={closeFundModal}
-                        />
-                        {/* sendAsset can only move USDC already inside Hyperliquid
-                            between dexs — it can't pull from the wallet directly,
-                            so this stays available but tucked behind a disclosure
-                            rather than always-on, since most visitors here already
-                            have a Crypto balance to move and don't need it. */}
-                        {showEquityDepositFallback ? (
+                          onFunded={handleEquityCryptoDeposited} />
+                        {/* Secondary path for cash that's already sitting in the Crypto
+                            account (e.g. from an earlier deposit) — most visitors here
+                            are depositing fresh, so this stays tucked behind a disclosure
+                            rather than competing with the primary "Deposit" form above. */}
+                        {showEquityTransfer ? (
                           <div style={{ marginTop: 18 }}>
-                            <DepositWizard orchestrator={orchestrator} user={user}
-                              walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
-                              onFunded={() => {}} />
+                            <MoveFundsCard
+                              title="Transfer from Crypto Perps"
+                              description={`Move cash already in your Crypto Perps account into ${EQUITY_DEX_LABEL}, with no new deposit.`}
+                              fromBalance={cryptoWithdrawable}
+                              sourceDex="" destinationDex={EQUITY_DEX}
+                              moveDexFunds={moveDexFunds}
+                              buttonLabel="Transfer"
+                              onDone={closeFundModal}
+                            />
                           </div>
                         ) : (
                           <button className="linkish" style={{ marginTop: 14 }}
-                            onClick={() => setShowEquityDepositFallback(true)}>
-                            + Add new funds first
+                            onClick={() => setShowEquityTransfer(true)}>
+                            Transfer from Crypto Perps instead
                           </button>
                         )}
-                      </>
-                    ) : (
-                      <>
-                        <p className="lvp-muted" style={{ marginTop: 0, marginBottom: 14 }}>
-                          {EQUITY_DEX_LABEL} funds come from your Crypto Perps balance. Add funds below,
-                          then move them over.
-                        </p>
-                        <DepositWizard orchestrator={orchestrator} user={user}
-                          walletSolBalance={solBalance} walletUsdcBalance={usdcBalance} rpcUrl={SOL_RPC}
-                          onFunded={() => {}} />
                       </>
                     )
                   )}
