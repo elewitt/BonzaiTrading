@@ -509,7 +509,6 @@ export default function App() {
   // separate full screen — decoupled from `view` entirely so the screen
   // underneath stays mounted the whole time.
   const [executeOpen, setExecuteOpen] = useState(false);
-  const [prompt, setPrompt] = useState("");
   const [rebalPrompt, setRebalPrompt] = useState("");
   const [thinking, setThinking] = useState(false);
   const [plan, setPlan] = useState(null);
@@ -2380,7 +2379,6 @@ export default function App() {
     : !authenticated ? "auth"
     : !address ? "wallet-pending"
     : view === "weights" && plan && portfolio ? "weights"
-    : view === "build" ? "build"
     : view === "history" ? "history"
     : view === "portfolios" ? "portfolios"
     : view === "equities" ? "equities"
@@ -2849,36 +2847,6 @@ export default function App() {
         </main>
       )}
 
-      {screen === "build" && (
-        <main className="stage narrow">
-          <p className="eyebrow">${usd(portfolio.cash, 0)} {yieldMode ? "Yield Cash" : "USDC"} ready to invest</p>
-          <h2 className="display sm">What do you want to hold?</h2>
-          <p className="lede">Name companies, indexes, even a rough thesis. Claude maps it to available tokenized stocks.</p>
-          <div className="prompt-wrap">
-            <textarea className="prompt-box" rows={3}
-              placeholder={'"A portfolio of Apple, Tesla, Nvidia, QQQ and SPY"'}
-              value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-            <button className="btn primary" disabled={!prompt.trim() || thinking}
-              onClick={() => runPrompt(prompt, false)}>
-              {thinking ? "Reading your prompt…" : "Compose portfolio"}
-            </button>
-          </div>
-          {error && <p className="err tiny">{error}</p>}
-          <div className="universe">
-            <p className="tiny label">Available today</p>
-            <div className="uni-grid">
-              {Object.values(registry).filter((t) => t.symbol !== "USDC").map((t) => (
-                <button key={t.symbol} className="uni-chip"
-                  onClick={() => setPrompt((p) => (p ? p.replace(/\.?$/, "") + ", " + t.name : t.name))}>
-                  <span className="mono">{displayTicker(t.symbol)}</span> {t.name}
-                </button>
-              ))}
-            </div>
-          </div>
-          {(hasPositions || hasCash) && <button className="linkish" onClick={() => setView("auto")}>← Back to dashboard</button>}
-        </main>
-      )}
-
       {screen === "weights" && (
         <main className="stage narrow">
           <p className="eyebrow">Set your proportions</p>
@@ -2944,7 +2912,7 @@ export default function App() {
               </p>
             )}
           </div>
-          <button className="linkish" onClick={() => setView("build")}>← Change the lineup</button>
+          <button className="linkish" onClick={() => setView("auto")}>← Back to dashboard</button>
         </main>
       )}
 
