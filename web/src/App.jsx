@@ -16,6 +16,7 @@ import AssetInfoModal from "./components/AssetInfoModal.jsx";
 import NewsPanel from "./components/NewsPanel.jsx";
 import HistoryScreen from "./components/HistoryScreen.jsx";
 import ShareModal from "./components/ShareCard.jsx";
+import PortfolioBreakdownModal from "./components/PortfolioBreakdownModal.jsx";
 import DemoAnimation from "./components/DemoAnimation.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import HelpChatWidget from "./components/HelpChatWidget.jsx";
@@ -600,6 +601,7 @@ export default function App() {
   const [hideDustAmounts, setHideDustAmounts] = useState(() => localStorage.getItem("lv_hide_dust") === "true");
   const [answer, setAnswer] = useState(null); // { text, sources, mentionedSymbols }
   const [shareOpen, setShareOpen] = useState(false);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [customRebalanceOpen, setCustomRebalanceOpen] = useState(false);
   const [customAllocs, setCustomAllocs] = useState([]);
   const [assetSearch, setAssetSearch] = useState("");
@@ -1165,14 +1167,35 @@ export default function App() {
   // phrase matched none of the original words and fell through to the
   // brokerage allocation parser instead).
   const BORROW_RE = /\bborrow(ing)?\b|\bcollateral\b|\bkamino\b|\bltv\b|\bloans?\b|\brepay(ing|ment)?\b|\bpay(ing)?\s+back\b/i;
+  // "Full portfolio breakdown" / "how's my portfolio doing" / "net worth" —
+  // a request to SEE the cross-product summary, not a question Claude
+  // should answer in prose. Needs a trigger word (breakdown/summary/
+  // overview/analysis/analyze/doing/performing) paired with a context word
+  // (portfolio/account/holdings) so it doesn't swallow an unrelated
+  // single-asset question like "how is AAPL doing?" — bare "net worth"
+  // needs no pairing since that phrase has no other meaning here.
+  const BREAKDOWN_TRIGGER_RE = /\b(breakdown|break\s*down|summary|overview|analysis|analyze|doing|performing)\b/i;
+  const BREAKDOWN_CONTEXT_RE = /\b(portfolio|account|holdings)\b/i;
+
   const runPrompt = async (text, isRebalance) => {
     const addrMatch = text.match(SOLANA_ADDR_RE);
     const isSend = SEND_RE.test(text) && addrMatch;
     const hasTradeIntent = TRADE_RE.test(text);
     const isPerp = PERP_RE.test(text);
     const isBorrow = BORROW_RE.test(text);
+    // Checked (and returns) before isQuestion so phrasings like "analyze my
+    // portfolio" or "how's my portfolio doing?" — which QUESTION_START_RE
+    // below would otherwise also match — open the visual breakdown instead
+    // of round-tripping to Claude for a text answer.
+    const isBreakdown = !hasTradeIntent && !isPerp && !isBorrow &&
+      (/\bnet\s*worth\b/i.test(text) || (BREAKDOWN_TRIGGER_RE.test(text) && BREAKDOWN_CONTEXT_RE.test(text)));
     const QUESTION_START_RE = /^(what|how|why|when|who|which|tell me|explain|is |are |does |should |can |will |show me|analyze|compare|what's|how's)/i;
-    const isQuestion = !hasTradeIntent && !isPerp && !isBorrow && (text.includes("?") || QUESTION_START_RE.test(text.trim()));
+    const isQuestion = !hasTradeIntent && !isPerp && !isBorrow && !isBreakdown && (text.includes("?") || QUESTION_START_RE.test(text.trim()));
+
+    if (isBreakdown) {
+      setBreakdownOpen(true);
+      return;
+    }
 
     if (isQuestion) {
       setThinking(true); setError(""); setAnswer(null);
@@ -3852,6 +3875,21 @@ export default function App() {
 
           {shareOpen && (
             <ShareModal portfolio={portfolio} history={history} onClose={() => setShareOpen(false)} />
+          )}
+
+          {breakdownOpen && (
+            <PortfolioBreakdownModal
+              onClose={() => setBreakdownOpen(false)}
+              netWorth={myPortfolioTotal}
+              statsPoints={statsPoints}
+              statsPeriod={statsPeriod}
+              setStatsPeriod={setStatsPeriod}
+              periods={DASH_STATS_PERIODS}
+              brokerage={{ rows: displayPortfolio.rows, cash: displayPortfolio.cash, total: displayPortfolio.total }}
+              perps={{ rows: perpsRows, total: perpsNotionalTotal, accountValue: perpsAccountValue, pnl: perpsPnl }}
+              borrow={{ rows: borrowRows, collateralTotal: borrowCollateralTotal, debtTotal: borrowDebtTotal, blendedLtv: borrowBlendedLtv }}
+              onViewProduct={(product) => { setBreakdownOpen(false); setDashProduct(product); }}
+            />
           )}
 
           {depositOpen && (
