@@ -1902,20 +1902,12 @@ a.trow { color: inherit; text-decoration: none; }
    .perps-asset-panel just below), but only 2 columns: no order-ticket
    column, and a wider list (420px vs perps' bare 260px) since each row
    here carries Price/Chg/Mkt Cap, not just a name and a price. */
-/* ——— Shared full-page browse header (Equities Markets, Portfolios) — a
-   proper hero title (serif, matching the app's other full-page headlines)
-   and a pill-shaped count badge, replacing the small uppercase eyebrow +
+/* ——— Shared full-page browse header (Equities Markets, Portfolios,
+   Prediction Markets) — a proper hero title (serif, matching the app's
+   other full-page headlines), replacing the small uppercase eyebrow +
    plain count text + description paragraph these pages used to share. ——— */
-.markets-page-header {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 16px; margin: 18px 0 22px; flex-wrap: wrap;
-}
+.markets-page-header { margin: 18px 0 22px; }
 .markets-page-title { margin: 0; }
-.markets-count-badge {
-  font-size: 12px; color: var(--moss);
-  background: var(--card); border: 1px solid var(--line); border-radius: 999px;
-  padding: 5px 13px; flex-shrink: 0;
-}
 .equities-layout {
   display: grid; grid-template-columns: 420px 1fr;
   gap: 20px; align-items: start;

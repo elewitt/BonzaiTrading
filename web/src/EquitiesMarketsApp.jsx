@@ -202,9 +202,6 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
 
       <div className="markets-page-header">
         <h2 className="display sm markets-page-title">Equities Markets</h2>
-        <span className="markets-count-badge mono">
-          {filtered.length === rows.length ? `${rows.length} assets` : `${filtered.length} of ${rows.length}`}
-        </span>
       </div>
 
       {movers.length > 0 && (

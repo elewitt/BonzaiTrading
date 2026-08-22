@@ -128,7 +128,6 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
   const loading = !registry || baskets === null || investorPortfolios === null;
   const onThemes = tab === "themes";
   const shownCount = onThemes ? filteredThemes.length : filteredInvestors.length;
-  const totalCount = onThemes ? themePortfolios.length : (investorPortfolios || []).length;
 
   return (
     <div className="stage dash-wide">
@@ -136,9 +135,6 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
 
       <div className="markets-page-header">
         <h2 className="display sm markets-page-title">Portfolios</h2>
-        <span className="markets-count-badge mono">
-          {shownCount === totalCount ? `${totalCount} portfolios` : `${shownCount} of ${totalCount}`}
-        </span>
       </div>
 
       <div className="perps-tabs card" style={{ marginBottom: 20, borderRadius: 12, padding: "0 8px" }}>

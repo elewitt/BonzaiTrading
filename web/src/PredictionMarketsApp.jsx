@@ -98,7 +98,6 @@ export default function PredictionMarketsApp({ onBack }) {
 
       <div className="markets-page-header">
         <h2 className="display sm markets-page-title">Prediction Markets</h2>
-        <span className="markets-count-badge mono">{total.toLocaleString()} markets</span>
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
