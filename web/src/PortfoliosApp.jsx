@@ -134,14 +134,12 @@ export default function PortfoliosApp({ onBack, onAssemble }) {
     <div className="stage dash-wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
-      <div className="card-toprow" style={{ marginTop: 16, marginBottom: 4 }}>
-        <p className="table-card-title">Portfolios</p>
-        <span className="tiny muted">{shownCount} of {totalCount}</span>
+      <div className="markets-page-header">
+        <h2 className="display sm markets-page-title">Portfolios</h2>
+        <span className="markets-count-badge mono">
+          {shownCount === totalCount ? `${totalCount} portfolios` : `${shownCount} of ${totalCount}`}
+        </span>
       </div>
-      <p className="lede sm" style={{ marginBottom: 18 }}>
-        Curated baskets of well-known names, portfolios inspired by legendary investors, and
-        Bonzai Trading's broad ETFs — pick one and adjust the weights and invest amount before you buy.
-      </p>
 
       <div className="perps-tabs card" style={{ marginBottom: 20, borderRadius: 12, padding: "0 8px" }}>
         <button className={`perps-tab ${onThemes ? "active" : ""}`} onClick={() => setTab("themes")}>Themes &amp; ETFs</button>

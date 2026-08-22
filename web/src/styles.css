@@ -1894,24 +1894,16 @@ a.trow { color: inherit; text-decoration: none; }
    .perps-asset-panel just below), but only 2 columns: no order-ticket
    column, and a wider list (420px vs perps' bare 260px) since each row
    here carries Price/Chg/Mkt Cap, not just a name and a price. */
-/* ——— Equities Markets page header — a proper hero title (serif, matching
-   the app's other full-page headlines) with a subtle live-data indicator
-   (prices really do poll every 15s, see EquitiesMarketsApp.jsx) and an
-   asset-count badge, replacing the small uppercase eyebrow + plain count
-   text every other browse page (Portfolios, Predictions) still uses —
-   scoped to this page only, those keep their existing header as-is. ——— */
-.equities-page-header {
+/* ——— Shared full-page browse header (Equities Markets, Portfolios) — a
+   proper hero title (serif, matching the app's other full-page headlines)
+   and a pill-shaped count badge, replacing the small uppercase eyebrow +
+   plain count text + description paragraph these pages used to share. ——— */
+.markets-page-header {
   display: flex; align-items: flex-end; justify-content: space-between;
   gap: 16px; margin: 18px 0 22px; flex-wrap: wrap;
 }
-.equities-live-badge {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--gain); margin-bottom: 4px;
-}
-.equities-live-badge .lvp-dot { width: 6px; height: 6px; background: var(--gain); }
-.equities-page-title { margin: 0; }
-.equities-count-badge {
+.markets-page-title { margin: 0; }
+.markets-count-badge {
   font-size: 12px; color: var(--moss);
   background: var(--card); border: 1px solid var(--line); border-radius: 999px;
   padding: 5px 13px; flex-shrink: 0;

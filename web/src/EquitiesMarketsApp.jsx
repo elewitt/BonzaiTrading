@@ -200,15 +200,9 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
     <div className="stage dash-wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
-      <div className="equities-page-header">
-        <div>
-          <div className="equities-live-badge">
-            <span className="lvp-dot" aria-hidden="true" />
-            Live
-          </div>
-          <h2 className="display sm equities-page-title">Equities Markets</h2>
-        </div>
-        <span className="equities-count-badge mono">
+      <div className="markets-page-header">
+        <h2 className="display sm markets-page-title">Equities Markets</h2>
+        <span className="markets-count-badge mono">
           {filtered.length === rows.length ? `${rows.length} assets` : `${filtered.length} of ${rows.length}`}
         </span>
       </div>
