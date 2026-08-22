@@ -200,24 +200,36 @@ export default function EquitiesMarketsApp({ onBack, onQuickBuy, availableCash =
     <div className="stage dash-wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
-      <div className="card-toprow" style={{ marginTop: 16, marginBottom: 4 }}>
-        <p className="table-card-title">Equities Markets</p>
-        <span className="tiny muted">{filtered.length} of {rows.length}</span>
+      <div className="equities-page-header">
+        <div>
+          <div className="equities-live-badge">
+            <span className="lvp-dot" aria-hidden="true" />
+            Live
+          </div>
+          <h2 className="display sm equities-page-title">Equities Markets</h2>
+        </div>
+        <span className="equities-count-badge mono">
+          {filtered.length === rows.length ? `${rows.length} assets` : `${filtered.length} of ${rows.length}`}
+        </span>
       </div>
-      <p className="lede sm" style={{ marginBottom: 18 }}>
-        Every product tradeable on Bonzai Trading's brokerage — stocks, ETFs, and commodities,
-        plus USDY, EURC, and Bitcoin. Click any row to chart it, or buy directly.
-      </p>
 
       {movers.length > 0 && (
-        <div className="movers-strip">
-          {movers.map((m) => (
-            <button key={m.symbol} className={`movers-chip ${m.change24h >= 0 ? "gain" : "loss"} ${detailRow?.symbol === m.symbol ? "active" : ""}`}
-              onClick={() => setSelectedSymbol(m.symbol)}>
-              <span className="mono">{displayTicker(m.symbol)}</span>
-              <span className="mono tiny">{m.change24h >= 0 ? "+" : ""}{m.change24h.toFixed(2)}%</span>
-            </button>
-          ))}
+        <div className="movers-section">
+          <p className="tiny label movers-label">Top Movers · 24h</p>
+          <div className="movers-strip">
+            {movers.map((m) => (
+              <button key={m.symbol} className={`movers-chip ${m.change24h >= 0 ? "gain" : "loss"} ${detailRow?.symbol === m.symbol ? "active" : ""}`}
+                onClick={() => setSelectedSymbol(m.symbol)}>
+                <span className="mono movers-chip-ticker">{displayTicker(m.symbol)}</span>
+                <span className="mono tiny movers-chip-pct">
+                  <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor" className="movers-chip-arrow">
+                    <path d={m.change24h >= 0 ? "M5 1 L9 8 L1 8 Z" : "M5 9 L1 2 L9 2 Z"} />
+                  </svg>
+                  {m.change24h >= 0 ? "+" : ""}{m.change24h.toFixed(2)}%
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
