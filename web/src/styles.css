@@ -274,8 +274,14 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
   animation: spin .7s linear infinite; display: block;
 }
 
-/* Product tabs — the real .seg-ctrl/.seg-btn, just smaller to fit the card */
-.demo-seg-ctrl { margin-bottom: 16px; }
+/* Product tabs — the real .seg-ctrl/.seg-btn, just smaller to fit the card.
+   In the real app .seg-ctrl is a flex ITEM inside .yield-ctrl, so it
+   naturally shrinks to its buttons' content width — here it's a plain
+   block child of .demo-card with no such parent, so as a block-level flex
+   container it stretched to the card's full width instead, leaving a big
+   empty pill trailing past "Predictions" (confirmed via a user
+   screenshot). width: fit-content restores the shrink-wrapped look. */
+.demo-seg-ctrl { margin-bottom: 16px; width: fit-content; }
 .demo-seg-btn.seg-btn { font-size: 10.5px; padding: 5px 10px; }
 
 /* Processing */
