@@ -96,17 +96,12 @@ export default function PredictionMarketsApp({ onBack }) {
     <div className="stage wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
-      <div className="card" style={{ marginTop: 16, marginBottom: 20 }}>
-        <div className="card-toprow">
-          <p className="table-card-title">Prediction Markets</p>
-          <span className="tiny muted">{total.toLocaleString()} markets</span>
-        </div>
-        <p className="lede sm">
-          Real, CFTC-regulated Kalshi markets tokenized on Solana via DFlow — financial, political,
-          business, economic, and tech events only. Browsing is open to everyone; trading requires
-          identity verification, coming soon.
-        </p>
+      <div className="markets-page-header">
+        <h2 className="display sm markets-page-title">Prediction Markets</h2>
+        <span className="markets-count-badge mono">{total.toLocaleString()} markets</span>
+      </div>
 
+      <div className="card" style={{ marginBottom: 20 }}>
         <div className="perps-category-toggle" style={{ marginBottom: 12, flexWrap: "wrap" }}>
           {CATEGORIES.map((c) => (
             <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>
