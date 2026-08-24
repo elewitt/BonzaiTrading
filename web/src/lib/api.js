@@ -34,11 +34,29 @@ const post = async (path, body) => fetch(`${API_BASE}${path}`, {
   body: JSON.stringify(body),
 }).then(json);
 
+// /api/prices and /api/prices/detail both take a comma-separated `ids` list
+// in the URL. With the registry now at 400+ mints (xStocks + Ondo), a
+// single unbatched request for the whole registry blows past the request
+// line length a browser/proxy will actually send before it ever reaches
+// the server — which surfaces as an opaque CORS error (no CORS header on
+// a response that was never generated), not anything obviously about URL
+// length. Confirmed as a real, ongoing failure: App.jsx's price-polling
+// effect calls this with the full registry every 15s. Chunked + merged
+// here so every caller (that poll, EquitiesMarketsApp's own poll) is
+// fixed without changing how they call these.
+const ID_BATCH_SIZE = 50;
+async function batchedIdsGet(path, ids) {
+  const batches = [];
+  for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) batches.push(ids.slice(i, i + ID_BATCH_SIZE));
+  const results = await Promise.all(batches.map((batch) => get(`${path}?ids=${encodeURIComponent(batch.join(","))}`)));
+  return Object.assign({}, ...results);
+}
+
 export const api = {
   tokens:   ()                   => get("/api/tokens"),
   portfolios: ()                 => get("/api/portfolios"),
-  prices:   (mints)              => get(`/api/prices?ids=${encodeURIComponent(mints.join(","))}`),
-  priceDetails: (mints)          => get(`/api/prices/detail?ids=${encodeURIComponent(mints.join(","))}`),
+  prices:   (mints)              => batchedIdsGet("/api/prices", mints),
+  priceDetails: (mints)          => batchedIdsGet("/api/prices/detail", mints),
   holdings: (address)            => get(`/api/holdings/${address}`),
   parse:    (prompt, current, total) => post("/api/parse", { prompt, current, total }),
   parsePerp: (prompt)             => post("/api/parse-perp", { prompt }),
