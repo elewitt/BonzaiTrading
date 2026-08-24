@@ -454,12 +454,25 @@ async function fetchJupiterPriceData(allMints) {
   const batches = [];
   for (let i = 0; i < allMints.length; i += BATCH) batches.push(allMints.slice(i, i + BATCH));
 
+  // Registry growing to 400+ mints (xStocks + Ondo) means a full price poll
+  // now fires ~10 of these batches at once instead of ~4 — enough to
+  // regularly trip Jupiter's rate limit on at least one of them. This used
+  // to be a bare fetch() with no retry (`if (!r.ok) return {};`), so any
+  // 429'd batch went permanently empty for that poll cycle — confirmed as
+  // a real, ongoing failure via a live test: even sequential, 1.5s-spaced
+  // requests still had whole 50-mint batches return zero prices. jupFetch
+  // (used by real trade execution below) already retries on 429 with
+  // backoff — reused here for the exact same reason.
   const results = await Promise.all(batches.map(async (chunk) => {
-    const r = await fetch(`${JUP_BASE}/price/v3?ids=${encodeURIComponent(chunk.join(","))}`, {
-      headers: jupHeaders(),
-    });
+    let r, data;
+    try {
+      ({ r, data } = await jupFetch(`${JUP_BASE}/price/v3?ids=${encodeURIComponent(chunk.join(","))}`, {
+        headers: jupHeaders(),
+      }));
+    } catch {
+      return {}; // exhausted retries or a non-JSON body — degrade to empty, same as before
+    }
     if (!r.ok) return {};
-    const data = await r.json();
     const raw = data.data || data;
     const out = {};
     for (const [mint, v] of Object.entries(raw)) {
