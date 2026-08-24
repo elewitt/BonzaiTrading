@@ -22,19 +22,54 @@ const MAX_UTILIZATION_PCT = Number(process.env.MARKET_HEALTH_MAX_UTILIZATION_PCT
 const INTERVAL_MS = Number(process.env.MARKET_HEALTH_INTERVAL_MS || 15 * 60 * 1000);
 const BATCH_SIZE = 12; // concurrent requests per batch — spread load rather than firing everything at once
 
+// Jupiter's per-key rate limit is much tighter than the default 12-wide
+// concurrency above — confirmed via a real run against production's key:
+// even with jupFetchWithRetry's backoff, 12-wide batches with no gap
+// between them kept 429ing past every retry (108 of 174 xStocks still
+// unresolved). 3-wide batches with a 1.5s gap between batches cleared a
+// full 174-symbol sweep with zero 429s, in ~3 minutes — trivial against
+// this job's 15-minute interval. Scoped to checkBrokerage() only, not the
+// generic inBatches() default other checks (checkPerpsDex, a different,
+// unrelated Hyperliquid API with no evidence of the same issue) still use.
+const JUPITER_BATCH_SIZE = 3;
+const JUPITER_BATCH_DELAY_MS = 1500;
+
 let snapshot = { generatedAt: null, brokerage: [], perps: [], borrow: [] };
 
 export function getMarketHealthSnapshot() {
   return snapshot;
 }
 
-async function inBatches(items, worker) {
+async function inBatches(items, worker, { batchSize = BATCH_SIZE, delayMs = 0 } = {}) {
   const results = [];
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    const batch = items.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
     results.push(...(await Promise.all(batch.map(worker))));
+    if (delayMs && i + batchSize < items.length) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   return results.filter(Boolean);
+}
+
+// Confirmed via a real run against production's Jupiter key: firing
+// BATCH_SIZE (12) concurrent quote requests trips Jupiter's per-key rate
+// limit almost immediately — a 429 within the first ~8 requests of a
+// batch, every batch. checkBrokerage() below used a bare fetch() with no
+// retry, so nearly every quote in a batch after the first came back 429
+// and got treated as "flagged: true, no route" — that's what produced a
+// snapshot flagging 168 of 174 xStocks (including NVDA/TSLA/GOOGL) despite
+// a direct, unrated retry of the exact same quote showing <1% impact.
+// index.js's jupFetch() already solves this for real trades (retry with
+// backoff on 429) — this is the same fix, kept local to this file rather
+// than importing from index.js to avoid a circular import (index.js
+// already imports THIS module to start the monitor).
+async function jupFetchWithRetry(url, options) {
+  const MAX_ATTEMPTS = 5;
+  const RETRY_DELAY_MS = 1000;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await fetch(url, options);
+    if (r.status !== 429 || attempt === MAX_ATTEMPTS) return r;
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+  }
 }
 
 /** One quote per xStock/crypto mint at a fixed benchmark size, against
@@ -50,17 +85,17 @@ async function checkBrokerage() {
   return inBatches(entries, async ([symbol, token]) => {
     try {
       const params = new URLSearchParams({ inputMint: USDC.mint, outputMint: token.mint, amount, slippageBps: "150" });
-      const r = await fetch(`${JUP_BASE}/swap/v1/quote?${params}`, { headers: jupHeaders() });
-      const data = await r.json();
-      if (!r.ok || data.error || !data.priceImpactPct) {
-        return { symbol, impactPct: null, flagged: true, reason: "no route at benchmark size" };
+      const r = await jupFetchWithRetry(`${JUP_BASE}/swap/v1/quote?${params}`, { headers: jupHeaders() });
+      const data = await r.json().catch(() => null);
+      if (!r.ok || !data || data.error || !data.priceImpactPct) {
+        return { symbol, impactPct: null, flagged: true, reason: data?.error || `no route at benchmark size (HTTP ${r.status})` };
       }
       const impactPct = Number(data.priceImpactPct) * 100;
       return { symbol, impactPct, flagged: impactPct > IMPACT_THRESHOLD_PCT };
     } catch {
       return null; // network hiccup — skip this one, don't fail the whole cycle
     }
-  });
+  }, { batchSize: JUPITER_BATCH_SIZE, delayMs: JUPITER_BATCH_DELAY_MS });
 }
 
 async function hlInfo(body) {
