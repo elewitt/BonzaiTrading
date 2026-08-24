@@ -30,7 +30,7 @@ import ReferralsApp from "./ReferralsApp.jsx";
 import BorrowApp from "./borrow/BorrowApp.jsx";
 import PositionCard from "./borrow/PositionCard.jsx";
 import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
-import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, displayTicker, XSTOCK_TICKER_RE, setAuthTokenProvider } from "./lib/api.js";
+import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, displayTicker, XSTOCK_TICKER_RE, ONDO_TICKER_RE, setAuthTokenProvider } from "./lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials, hasQaBypassCredentials } from "./lib/qaBypass.js";
 import { splitIntoDomainSegments } from "./lib/promptSplit.js";
 import { matchNamedPortfolio } from "./lib/portfolioMatch.js";
@@ -1314,16 +1314,18 @@ export default function App() {
       const beforeAddr = text.slice(0, text.indexOf(to));
 
       // Find first registry symbol mentioned (longest match first to avoid prefix collisions).
-      // The trailing x on xStock tickers is made optional in the match (and
-      // escaped along with any other regex-special char in the symbol,
-      // e.g. the "." in "BRK.Bx") — tickers now DISPLAY without it, so
-      // "send my AAPL to <addr>" needs to resolve the same as "send my
-      // AAPLx to <addr>" once users stop seeing the x on screen.
+      // The trailing x (xStock) or on (Ondo) on raw tickers is made optional
+      // in the match (and escaped along with any other regex-special char in
+      // the symbol, e.g. the "." in "BRK.Bx") — tickers now DISPLAY without
+      // it, so "send my AAPL to <addr>" needs to resolve the same as "send
+      // my AAPLx to <addr>" once users stop seeing the suffix on screen.
       const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const symbolsByLength = Object.keys(registry).sort((a, b) => b.length - a.length);
       const foundSymbol = symbolsByLength.find((sym) => {
-        const base = XSTOCK_TICKER_RE.test(sym) ? sym.slice(0, -1) : sym;
-        return new RegExp(`\\b${escapeRegex(base)}x?\\b`, "i").test(text);
+        const base = XSTOCK_TICKER_RE.test(sym) ? sym.slice(0, -1)
+          : ONDO_TICKER_RE.test(sym) ? sym.slice(0, -2) : sym;
+        const optionalSuffix = XSTOCK_TICKER_RE.test(sym) ? "x?" : ONDO_TICKER_RE.test(sym) ? "(on)?" : "";
+        return new RegExp(`\\b${escapeRegex(base)}${optionalSuffix}\\b`, "i").test(text);
       }) || "USDC";
 
       const tok = registry[foundSymbol];
@@ -3945,7 +3947,7 @@ export default function App() {
       )}
 
       <footer className="lv-foot">
-        <span>Tokenized stocks by Backed</span>
+        <span>Tokenized stocks by Backed &amp; Ondo</span>
         <span className="foot-sep">·</span>
         <span>Routing by Jupiter</span>
         <span className="foot-sep">·</span>

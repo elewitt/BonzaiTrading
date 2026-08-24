@@ -22,7 +22,13 @@ const short = (addr) => (addr ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : "—
 // than imported to keep this admin tool fully decoupled from the
 // customer-facing app (see the file-header comment above).
 const XSTOCK_TICKER_RE = /^[A-Z0-9.]+x$/;
-const displayTicker = (symbol) => (symbol && XSTOCK_TICKER_RE.test(symbol) ? symbol.slice(0, -1) : (symbol || ""));
+const ONDO_TICKER_RE = /^[A-Z0-9.]+on$/;
+const displayTicker = (symbol) => {
+  if (!symbol) return "";
+  if (XSTOCK_TICKER_RE.test(symbol)) return symbol.slice(0, -1);
+  if (ONDO_TICKER_RE.test(symbol)) return symbol.slice(0, -2);
+  return symbol;
+};
 
 async function adminFetch(path, password, opts = {}) {
   const res = await fetch(`${API_BASE}${path}`, {

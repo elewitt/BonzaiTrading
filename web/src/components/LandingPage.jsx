@@ -398,7 +398,7 @@ function AgenticTradingSection({ onLogin }) {
 
 /* ─── Infrastructure ─── */
 const INFRA = [
-  { name: "Tokenized stocks by Backed", logo: "/logos/xstocks.svg" },
+  { name: "Tokenized stocks by Backed & Ondo", logo: "/logos/xstocks.svg" },
   { name: "Jupiter",           logo: "/logos/jupiter.svg" },
   { name: "Privy",             logo: "/logos/privy.png" },
   { name: "Solana",            logo: "/logos/solana.svg" },
@@ -516,7 +516,7 @@ export default function LandingPage({ onLogin }) {
           </p>
           <button className="btn lp-cta-main-btn" onClick={onLogin}>Get started →</button>
           <p className="lp-legal">
-            Tokenized stocks by Backed · routing by Jupiter · wallets by Privy · Solana mainnet<br />
+            Tokenized stocks by Backed &amp; Ondo · routing by Jupiter · wallets by Privy · Solana mainnet<br />
             Not available to US persons or residents of restricted jurisdictions.
           </p>
         </div>

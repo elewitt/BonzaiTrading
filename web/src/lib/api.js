@@ -423,9 +423,20 @@ export const fmtBig = (n) => {
 // category-based guard would misfire on USDC.
 export const XSTOCK_TICKER_RE = /^[A-Z0-9.]+x$/;
 
-/** Strip the trailing xStock suffix for DISPLAY ONLY. Never use this on a
- * value headed for a mint lookup, Jupiter route, Kamino reserve match, or
+// Ondo Global Markets raw symbols are always <TICKER>on — e.g. "TSLAon",
+// "SPYon" — see ONDO_RAW in server/src/tokens.js. Ends in 2 chars ("on"),
+// XSTOCK_TICKER_RE ends in 1 ("x") — the two patterns can never both match
+// the same symbol, so testing them in either order is safe.
+export const ONDO_TICKER_RE = /^[A-Z0-9.]+on$/;
+
+/** Strip the trailing xStock/Ondo suffix for DISPLAY ONLY. Never use this on
+ * a value headed for a mint lookup, Jupiter route, Kamino reserve match, or
  * the send/withdraw natural-language symbol match in App.jsx — those must
- * keep the raw symbol (with the x), since that's the real on-chain ticker. */
-export const displayTicker = (symbol) =>
-  symbol && XSTOCK_TICKER_RE.test(symbol) ? symbol.slice(0, -1) : (symbol || "");
+ * keep the raw symbol (with the suffix), since that's the real on-chain
+ * ticker. */
+export const displayTicker = (symbol) => {
+  if (!symbol) return "";
+  if (XSTOCK_TICKER_RE.test(symbol)) return symbol.slice(0, -1);
+  if (ONDO_TICKER_RE.test(symbol)) return symbol.slice(0, -2);
+  return symbol;
+};
