@@ -477,7 +477,14 @@ async function fetchJupiterPriceData(allMints) {
     const out = {};
     for (const [mint, v] of Object.entries(raw)) {
       const isObj = typeof v === "object" && v !== null;
-      const p = isObj ? (v.usdPrice ?? v.price) : v;
+      // Jupiter's price/v3 only includes top-level usdPrice/liquidity for
+      // mints it has real on-chain AMM/RFQ pricing for. Everything else
+      // (confirmed as a real gap: DELLx, HDx, TMUSx, and likely most of
+      // the newly-added Ondo assets, all real, tradeable mints) still
+      // gets a stockData.price — the issuer's own reference price for the
+      // underlying stock — which this used to ignore entirely, silently
+      // dropping the price for any mint without that top-level field.
+      const p = isObj ? (v.usdPrice ?? v.price ?? v.stockData?.price) : v;
       out[mint] = {
         price: p != null ? Number(p) : null,
         change24h: isObj && v.priceChange24h != null ? Number(v.priceChange24h) : null,
