@@ -5,10 +5,12 @@
  * plain fetch() calls to match this codebase's existing style (no SDK).
  *
  * xStock symbols on this platform are the real ticker + "x" suffix (e.g.
- * VOOx → VOO, WMTx → WMT — confirmed against the full list in tokens.js), so
- * the underlying ticker is recovered by stripping that suffix. BTC is the
- * one non-xStock, non-cash asset in the registry that has a real chart —
- * routed to Twelve Data's crypto symbol format (BTC/USD) instead.
+ * VOOx → VOO, WMTx → WMT — confirmed against the full list in tokens.js),
+ * and Ondo symbols are the real ticker + "on" (e.g. AAONon → AAON — see
+ * ONDO_RAW/ONDO_ADD_RAW in tokens.js), so the underlying ticker is
+ * recovered by stripping whichever suffix applies. BTC is the one
+ * non-xStock, non-Ondo, non-cash asset in the registry that has a real
+ * chart — routed to Twelve Data's crypto symbol format (BTC/USD) instead.
  */
 
 const TD_KEY = process.env.TWELVE_DATA_API_KEY || "";
@@ -33,6 +35,11 @@ async function cached(key, ttlMs, fetchFn) {
 
 function resolveTicker(symbol) {
   if (symbol === "BTC") return { ticker: "BTC/USD", isCrypto: true };
+  // Ondo's "on" suffix checked first — mutually exclusive with xStock's "x"
+  // (one ends in a single "x", the other in "on"), but checking it first
+  // means an unmatched xStock/Ondo symbol still falls through to the
+  // original bare replace() unchanged, same as before this suffix existed.
+  if (/^[A-Z0-9.]+on$/.test(symbol)) return { ticker: symbol.slice(0, -2), isCrypto: false };
   return { ticker: symbol.replace(/x$/, ""), isCrypto: false };
 }
 
