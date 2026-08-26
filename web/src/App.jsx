@@ -715,7 +715,12 @@ export default function App() {
       // SolanaFundingConfig type, this is the one config shape that
       // actually reaches the popup; there's no separate "network" picker
       // to lock elsewhere. Without it the flow defaults to native SOL.
-      await fundWallet(address, { defaultFundingMethod: "card", asset: "USDC", cluster: { name: "mainnet-beta" } });
+      // preferredProvider:"moonpay" — MoonPay's hosted widget surfaces
+      // Apple Pay whenever the browser/device is eligible (Safari on
+      // macOS/iOS with a card in Apple Wallet); Coinbase Onramp's Apple
+      // Pay coverage is narrower, so pin to MoonPay rather than leaving
+      // Privy to pick.
+      await fundWallet(address, { defaultFundingMethod: "card", card: { preferredProvider: "moonpay" }, asset: "USDC", cluster: { name: "mainnet-beta" } });
     } catch (e) {
       setFundWalletError(e instanceof Error ? e.message : String(e));
     }
