@@ -2372,6 +2372,12 @@ export default function App() {
     navigator.clipboard?.writeText(address).catch(() => {});
     setCopied(true); setTimeout(() => setCopied(false), 1400);
   };
+  // Same feature-detection convention as ShareCard.jsx / ReferralsApp.jsx's
+  // canShare — sharing the address text itself, so {text}, not {files}/{url}.
+  const canShareAddress = typeof navigator !== "undefined" && !!navigator.share;
+  const shareAddress = () => {
+    navigator.share({ title: "Bonzai Trading — Deposit Address", text: address }).catch(() => {});
+  };
 
   const toggleHideDust = (on) => {
     localStorage.setItem("lv_hide_dust", String(on));
@@ -3910,12 +3916,8 @@ export default function App() {
                   onClick={handleFundWallet}>
                   <span className="fund-apple-icon">􀠦</span> Buy with Apple Pay / Card
                 </button>
-                {fundWalletError ? (
+                {fundWalletError && (
                   <p className="err tiny center" style={{ marginBottom: 16 }}>{fundWalletError}</p>
-                ) : (
-                  <p className="tiny muted center" style={{ marginBottom: 16 }}>
-                    Powered by Privy · no crypto needed to start
-                  </p>
                 )}
 
                 <div className="deposit-tab-row">
@@ -3927,21 +3929,17 @@ export default function App() {
 
                 {depositTab === "solana" && (
                   <>
-                    <p className="tiny muted" style={{ margin: "14px 0 8px" }}>
-                      Or send USDC on Solana to your self-custodied wallet:
-                    </p>
-                    <div className="deposit-qr-wrap">
+                    <div className="deposit-qr-wrap" style={{ marginTop: 14 }}>
                       <QRCodeSVG value={address} size={180} bgColor="transparent" fgColor="var(--ink)" level="M" />
                     </div>
-                    <div className="deposit-addr-row">
-                      <span className="mono deposit-addr">{address}</span>
-                      <button className="btn ghost deposit-copy-btn" onClick={copy}>
-                        {copied ? "Copied ✓" : "Copy"}
+                    <button className="btn ghost deposit-copy-btn-full" onClick={copy}>
+                      {copied ? "Copied ✓" : "Copy address"}
+                    </button>
+                    {canShareAddress && (
+                      <button className="btn ghost deposit-copy-btn-full" style={{ marginTop: 8 }} onClick={shareAddress}>
+                        Share address
                       </button>
-                    </div>
-                    <p className="tiny muted center" style={{ marginTop: 12 }}>
-                      Solana network only — do not send from other chains
-                    </p>
+                    )}
                   </>
                 )}
                 {depositTab === "bridge" && <CrossChainDeposit solanaAddress={address} />}
