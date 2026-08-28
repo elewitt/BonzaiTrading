@@ -1841,24 +1841,40 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .pm-suggestion-meta { display: block; }
 
-/* Category chips — pill-shaped, single-line, comfortable gap; the count
-   rides along in a lighter weight instead of forcing the label to wrap.
-   Selectors qualified with .perps-category-toggle so they beat that
-   class's own (equal-specificity, later-in-file) flex:1 / tight-gap rule. */
-.perps-category-toggle.pm-category-toggle { flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+/* Category chips — outlined pills (card-coloured fill + hairline border) so
+   they read as controls, distinct from the filled column-header bar below.
+   Selectors qualified with .perps-category-toggle so they beat that class's
+   own (equal-specificity, later-in-file) flex:1 / tight-gap rule. */
+.perps-category-toggle.pm-category-toggle {
+  flex-wrap: wrap; gap: 8px;
+  margin-bottom: 18px; padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
 .perps-category-toggle.pm-category-toggle .lvp-pct-btn {
   flex: 0 0 auto; white-space: nowrap; border-radius: 999px;
   padding: 7px 14px; font-size: 12.5px;
 }
-.pm-cat-count { margin-left: 4px; font-weight: 400; opacity: .6; }
+.perps-category-toggle.pm-category-toggle .lvp-pct-btn:not(.sel) {
+  background: var(--card); border-color: var(--line);
+}
+.perps-category-toggle.pm-category-toggle .lvp-pct-btn:not(.sel):hover {
+  background: var(--paper); border-color: var(--moss);
+}
+.perps-category-toggle.pm-category-toggle .lvp-pct-btn.sel {
+  background: var(--pine); border-color: var(--pine); color: #fff;
+}
+.pm-cat-count { margin-left: 4px; font-weight: 400; opacity: .55; }
 .perps-category-toggle.pm-category-toggle .lvp-pct-btn.sel .pm-cat-count { opacity: .85; }
 
+/* Column header — a filled bar, not a pill, sitting flush across the list
+   so it clearly separates the filter zone above from the rows below. */
 .pm-list-head {
   display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; gap: 16px;
-  background: var(--paper); border-radius: 8px; margin-bottom: 6px; padding: 10px 4px 9px;
+  background: var(--paper); border-radius: 6px;
+  margin: 0 -8px 4px; padding: 9px 12px;
   flex-shrink: 0;
 }
-.pm-list-head span { font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--moss); }
+.pm-list-head span { font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; color: var(--moss); }
 .pm-list-head span:nth-child(n+2) { text-align: center; }
 
 .pm-row {
