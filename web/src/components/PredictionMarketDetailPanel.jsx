@@ -21,10 +21,9 @@ function centsPrice(v) {
 }
 
 /**
- * The presentational guts shared by PredictionMarketDetailModal (modal
- * chrome, popup context) and PredictionMarketsApp's master-detail panel
- * (card chrome, always-mounted context) — the exact parallel of
- * AssetDetailPanel / AssetInfoModal on the equities side.
+ * The right-hand detail column of PredictionMarketsApp's master-detail
+ * layout — the prediction-market parallel of AssetDetailPanel on the
+ * equities side (header + big price + period toggle + chart + stat row).
  */
 export default function PredictionMarketDetailPanel({ market, onClose }) {
   const [period, setPeriod] = useState("perpWeek");
@@ -50,38 +49,28 @@ export default function PredictionMarketDetailPanel({ market, onClose }) {
   const yes = centsPrice(market.yesAsk ?? market.yesBid);
   const no = centsPrice(market.noAsk ?? market.noBid);
 
-  const closeLabel = (() => {
-    if (!market.closeTime) return null;
-    const d = new Date(market.closeTime * 1000);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  })();
-
-  const statRows = [
-    yes != null && ["Yes", `${yes}¢`],
-    no != null && ["No", `${no}¢`],
-    market.volume != null && ["Volume", `$${Math.round(market.volume).toLocaleString()}`],
-    closeLabel && ["Closes", closeLabel],
-  ].filter(Boolean);
+  const closeLabel = market.closeTime
+    ? new Date(market.closeTime * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : "—";
+  const volLabel = market.volume != null ? `$${Math.round(market.volume).toLocaleString()}` : "—";
 
   return (
     <>
       <div className="answer-header">
         <div>
-          <p className="tiny label" style={{ margin: 0 }}>
-            {market.category}{market.eventTitle && market.eventTitle !== market.title ? ` · ${market.eventTitle}` : ""}
-          </p>
-          <h3 className="card-title" style={{ margin: "2px 0 0" }}>{market.title}</h3>
+          <p className="tiny label" style={{ margin: 0 }}>{market.category}</p>
+          <h3 className="card-title" style={{ margin: "3px 0 0" }}>{market.title}</h3>
         </div>
         {onClose && <button className="x" onClick={onClose}>×</button>}
       </div>
 
-      <div className="chart-pnl" style={{ marginBottom: 14 }}>
+      <div className="pm-detail-price">
         <span className="chart-pct-big gain">{yes != null ? `${yes}¢` : "—"}</span>
-        <span className="tiny muted">Yes</span>
-        <span className="chart-since">{no != null ? `${no}¢ No` : ""}</span>
+        <span className="pm-detail-price-label">Yes</span>
+        {no != null && <span className="pm-detail-price-alt">· {no}¢ No</span>}
       </div>
 
-      <div className="chart-toprow" style={{ marginBottom: 6, justifyContent: "flex-end" }}>
+      <div className="chart-toprow pm-detail-toprow">
         <div className="lvp-pnl-periods">
           {PERIODS.map((p) => (
             <button key={p.key} className={`lvp-pct-btn ${period === p.key ? "sel" : ""}`}
@@ -99,16 +88,16 @@ export default function PredictionMarketDetailPanel({ market, onClose }) {
           emptyText="No trade history yet for this market." />
       )}
 
-      {statRows.length > 0 && (
-        <div className="asset-stats-grid">
-          {statRows.map(([label, value]) => (
-            <div key={label}>
-              <span className="tiny muted">{label}</span>
-              <p className="mono">{value}</p>
-            </div>
-          ))}
+      <div className="pm-detail-stats">
+        <div>
+          <span className="tiny muted">Volume</span>
+          <p className="mono">{volLabel}</p>
         </div>
-      )}
+        <div>
+          <span className="tiny muted">Closes</span>
+          <p className="mono">{closeLabel}</p>
+        </div>
+      </div>
     </>
   );
 }

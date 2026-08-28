@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { API_BASE } from "./lib/api.js";
+import { API_BASE, fmtBig } from "./lib/api.js";
 import PredictionMarketDetailPanel from "./components/PredictionMarketDetailPanel.jsx";
 
 // Mirrors the allowlist in server/src/predictionMarkets.js — kept in sync
@@ -43,18 +43,23 @@ async function fetchMarkets({ category, q, offset }) {
 function MarketRow({ m, active, onClick }) {
   const yes = centsPrice(m.yesAsk ?? m.yesBid);
   const no = centsPrice(m.noAsk ?? m.noBid);
+  // One compact meta line instead of a second column set — the eventTitle
+  // was near-always just the market title again, so it's dropped.
+  const meta = [
+    m.category,
+    m.volume ? `${fmtBig(m.volume)} Vol` : null,
+    m.closeTime ? `Closes ${formatCloseTime(m.closeTime)}` : null,
+  ].filter(Boolean).join("  ·  ");
+
   return (
-    <div className={`trow trow-predictions pm-row asset-row-clickable ${active ? "active" : ""}`}
-      onClick={onClick} role="button" tabIndex={0}
+    <div className={`pm-row ${active ? "active" : ""}`} onClick={onClick} role="button" tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && onClick()}>
-      <span className="asset">
-        <span className="serif">{m.title}</span>
-        <span className="tiny muted">{m.category}{m.eventTitle && m.eventTitle !== m.title ? ` · ${m.eventTitle}` : ""}</span>
+      <span className="pm-row-main">
+        <span className="serif pm-row-title">{m.title}</span>
+        <span className="tiny muted pm-row-meta">{meta}</span>
       </span>
       <span className="pm-outcome pm-yes">{yes != null ? `${yes}¢` : "—"}</span>
       <span className="pm-outcome pm-no">{no != null ? `${no}¢` : "—"}</span>
-      <span className="mono tiny muted">{m.volume ? `$${Math.round(m.volume).toLocaleString()}` : "—"}</span>
-      <span className="tiny muted">{formatCloseTime(m.closeTime)}</span>
     </div>
   );
 }
@@ -132,7 +137,7 @@ export default function PredictionMarketsApp({ onBack }) {
       <div className="equities-layout">
         <div className="card perps-asset-panel equities-list-panel" style={chartHeight ? { height: chartHeight } : undefined}>
           <h3>Markets</h3>
-          <div className="perps-category-toggle" style={{ flexWrap: "wrap" }}>
+          <div className="perps-category-toggle pm-category-toggle">
             {CATEGORIES.map((c) => (
               <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>
                 {c}{c !== "All" && categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ""}
@@ -142,12 +147,10 @@ export default function PredictionMarketsApp({ onBack }) {
           <input className="perps-asset-search" placeholder="Search markets…" value={search}
             onChange={(e) => setSearch(e.target.value)} />
 
-          <div className="trow trow-predictions thead tiny label">
+          <div className="pm-list-head">
             <span>Market</span>
             <span>Yes</span>
             <span>No</span>
-            <span>Volume</span>
-            <span>Closes</span>
           </div>
 
           <div className="perps-asset-list">
@@ -159,7 +162,7 @@ export default function PredictionMarketsApp({ onBack }) {
                 onClick={() => setSelectedTicker(m.marketTicker)} />
             ))}
             {hasMore && (
-              <button className="btn ghost" style={{ width: "100%", marginTop: 14 }} disabled={loading} onClick={loadMore}>
+              <button className="btn ghost pm-load-more" disabled={loading} onClick={loadMore}>
                 {loading ? "Loading…" : `Show more (${markets.length} of ${total.toLocaleString()})`}
               </button>
             )}
