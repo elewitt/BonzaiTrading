@@ -1785,16 +1785,73 @@ a.trow { color: inherit; text-decoration: none; }
 .asset-row-clickable { cursor: pointer; transition: background .15s; }
 .asset-row-clickable:hover { background: var(--paper); }
 
-/* ——— Prediction Markets list (master-detail, mirrors .equities-layout) ———
-   A 3-track grid shared by the header and every row so "Yes"/"No" line up
-   under their labels: a flexible title column, then two fixed 44px odds
-   columns. */
-/* Category names here are long ("Science and Technology (687)") and always
-   wrap to 2-3 rows — let each pill size to its label and add a row-gap so
-   the wrapped rows don't collide, instead of the equal-width flex:1 the
-   short equities categories use. */
-.pm-category-toggle { flex-wrap: wrap; row-gap: 6px; }
-.pm-category-toggle .lvp-pct-btn { flex: 0 1 auto; }
+/* ——— Prediction Markets (master-detail, mirrors .equities-layout) ——— */
+
+/* A wider list column than Equities (its rows carry a two-line question +
+   a meta line, not a short name + price) and a page-level search hero
+   above the two columns rather than a field crammed into the card. */
+/* Qualified with .equities-layout (not bare .pm-layout) so these beat the
+   base .equities-layout rule that's declared later in the file. */
+.equities-layout.pm-layout { grid-template-columns: minmax(0, 520px) 1fr; }
+@media (max-width: 1024px) {
+  /* Stack: search hero, then the list, then the chart — all full width.
+     Unlock the JS-set height so the list sizes to its own content, capped
+     so it scrolls instead of shoving the chart off the bottom. */
+  .equities-layout.pm-layout { grid-template-columns: 1fr; }
+  .pm-list-panel.equities-list-panel { height: auto !important; max-height: 70vh; }
+}
+
+/* Full-width search hero — sits above .pm-layout, autocompletes against
+   the same server search that feeds the list. */
+.pm-search-hero { position: relative; margin-bottom: 20px; }
+.pm-search-input {
+  width: 100%; border: 1px solid var(--line); background: var(--card);
+  border-radius: 14px; padding: 15px 44px 15px 46px;
+  font-family: inherit; font-size: 16px; color: var(--ink);
+  box-shadow: 0 1px 2px rgba(15,31,24,.04);
+  transition: border-color .15s, box-shadow .15s;
+}
+.pm-search-input::placeholder { color: var(--moss); }
+.pm-search-input:focus { outline: none; border-color: var(--pine); box-shadow: 0 0 0 3px rgba(26,68,51,.12); }
+.pm-search-icon {
+  position: absolute; left: 17px; top: 50%; transform: translateY(-50%);
+  width: 19px; height: 19px; color: var(--moss); pointer-events: none;
+}
+.pm-search-clear {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  border: none; background: none; cursor: pointer; padding: 6px;
+  font-size: 22px; line-height: 1; color: var(--moss);
+}
+.pm-search-clear:hover { color: var(--ink); }
+.pm-search-dropdown {
+  position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(15,31,24,.16); padding: 6px;
+  max-height: 380px; overflow-y: auto;
+}
+.pm-search-suggestion {
+  display: flex; flex-direction: column; gap: 1px; width: 100%;
+  text-align: left; border: none; background: none; cursor: pointer;
+  padding: 9px 12px; border-radius: 8px; font-family: inherit;
+}
+.pm-search-suggestion:hover { background: var(--paper); }
+.pm-suggestion-title {
+  font-size: 14px; font-weight: 500; color: var(--ink); line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pm-suggestion-meta { display: block; }
+
+/* Category chips — pill-shaped, single-line, comfortable gap; the count
+   rides along in a lighter weight instead of forcing the label to wrap.
+   Selectors qualified with .perps-category-toggle so they beat that
+   class's own (equal-specificity, later-in-file) flex:1 / tight-gap rule. */
+.perps-category-toggle.pm-category-toggle { flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.perps-category-toggle.pm-category-toggle .lvp-pct-btn {
+  flex: 0 0 auto; white-space: nowrap; border-radius: 999px;
+  padding: 7px 14px; font-size: 12.5px;
+}
+.pm-cat-count { margin-left: 4px; font-weight: 400; opacity: .6; }
+.perps-category-toggle.pm-category-toggle .lvp-pct-btn.sel .pm-cat-count { opacity: .85; }
 
 .pm-list-head {
   display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; gap: 16px;

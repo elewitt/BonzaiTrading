@@ -9,6 +9,7 @@ import PredictionMarketDetailPanel from "./components/PredictionMarketDetailPane
 const CATEGORIES = ["All", "Financials", "Politics", "Elections", "Companies", "Economics", "Science and Technology"];
 
 const PAGE_SIZE = 60;
+const SUGGESTION_LIMIT = 8;
 
 // The detail card's natural height is the reference the list panel is
 // capped to and scrolls within — same master-detail pattern as
@@ -43,8 +44,6 @@ async function fetchMarkets({ category, q, offset }) {
 function MarketRow({ m, active, onClick }) {
   const yes = centsPrice(m.yesAsk ?? m.yesBid);
   const no = centsPrice(m.noAsk ?? m.noBid);
-  // One compact meta line instead of a second column set — the eventTitle
-  // was near-always just the market title again, so it's dropped.
   const meta = [
     m.category,
     m.volume ? `${fmtBig(m.volume)} Vol` : null,
@@ -66,6 +65,7 @@ function MarketRow({ m, active, onClick }) {
 
 export default function PredictionMarketsApp({ onBack }) {
   const [search, setSearch] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const [category, setCategory] = useState("All");
   const [data, setData] = useState(null); // { generatedAt, total, categoryCounts, markets }
   const [offset, setOffset] = useState(0);
@@ -80,14 +80,13 @@ export default function PredictionMarketsApp({ onBack }) {
   // dataset is ~18,500 markets / ~10MB, confirmed too large to ship whole).
   useEffect(() => {
     setOffset(0);
-    setSelectedTicker(null); // snap the detail panel back to the first row of the new result set
     setLoading(true);
     const t = setTimeout(() => {
       fetchMarkets({ category, q: search, offset: 0 })
         .then((d) => { setData(d); setError(null); })
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false));
-    }, 350);
+    }, 300);
     return () => clearTimeout(t);
   }, [category, search]);
 
@@ -109,9 +108,19 @@ export default function PredictionMarketsApp({ onBack }) {
   const categoryCounts = data?.categoryCounts ?? {};
   const hasMore = markets.length < total;
 
+  // Autocomplete: the debounced list fetch above already returns exactly
+  // the markets matching `search`, so the suggestion list is just the top
+  // slice of it — no separate request.
+  const suggestions = search.trim() && searchFocused ? markets.slice(0, SUGGESTION_LIMIT) : [];
+
+  const pickSuggestion = (m) => {
+    setSelectedTicker(m.marketTicker);
+    setSearchFocused(false);
+  };
+
   // Always shows something in the detail panel — falls back to the first
-  // row when nothing's been explicitly clicked, same pattern as
-  // EquitiesMarketsApp.jsx's detailRow.
+  // row when the selection isn't in the current result set, same pattern
+  // as EquitiesMarketsApp.jsx's detailRow.
   const detailMarket = markets.find((m) => m.marketTicker === selectedTicker) ?? markets[0] ?? null;
 
   // Cap the list panel to the detail card's natural height so the two end
@@ -134,18 +143,57 @@ export default function PredictionMarketsApp({ onBack }) {
 
       {error && <p className="err" style={{ marginBottom: 12 }}>{error}</p>}
 
-      <div className="equities-layout">
-        <div className="card perps-asset-panel equities-list-panel" style={chartHeight ? { height: chartHeight } : undefined}>
+      <div className="pm-search-hero">
+        <svg className="pm-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <circle cx="9" cy="9" r="6" />
+          <line x1="14" y1="14" x2="18" y2="18" strokeLinecap="round" />
+        </svg>
+        <input
+          className="pm-search-input"
+          placeholder="Search all prediction markets…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)}
+        />
+        {search && (
+          <button className="pm-search-clear" aria-label="Clear search"
+            onMouseDown={(e) => e.preventDefault()} onClick={() => setSearch("")}>
+            ×
+          </button>
+        )}
+        {suggestions.length > 0 && (
+          <div className="pm-search-dropdown">
+            {suggestions.map((m) => {
+              const yes = centsPrice(m.yesAsk ?? m.yesBid);
+              return (
+                <button key={m.marketTicker} className="pm-search-suggestion"
+                  onMouseDown={(e) => e.preventDefault()} onClick={() => pickSuggestion(m)}>
+                  <span className="serif pm-suggestion-title">{m.title}</span>
+                  <span className="tiny muted pm-suggestion-meta">
+                    {m.category}{yes != null ? `  ·  ${yes}¢ Yes` : ""}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="equities-layout pm-layout">
+        <div className="card perps-asset-panel equities-list-panel pm-list-panel"
+          style={chartHeight ? { height: chartHeight } : undefined}>
           <h3>Markets</h3>
           <div className="perps-category-toggle pm-category-toggle">
-            {CATEGORIES.map((c) => (
-              <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>
-                {c}{c !== "All" && categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ""}
-              </button>
-            ))}
+            {CATEGORIES.map((c) => {
+              const count = c !== "All" ? categoryCounts[c] : null;
+              return (
+                <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>
+                  {c}{count ? <span className="pm-cat-count">{count.toLocaleString()}</span> : null}
+                </button>
+              );
+            })}
           </div>
-          <input className="perps-asset-search" placeholder="Search markets…" value={search}
-            onChange={(e) => setSearch(e.target.value)} />
 
           <div className="pm-list-head">
             <span>Market</span>
