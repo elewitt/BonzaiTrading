@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE, fmtBig } from "./lib/api.js";
 import PredictionMarketDetailPanel from "./components/PredictionMarketDetailPanel.jsx";
 import PredictionPositionsPanel from "./components/PredictionPositionsPanel.jsx";
-import PredictionTradeModal from "./components/PredictionTradeModal.jsx";
 
 // Mirrors the allowlist in server/src/predictionMarkets.js — kept in sync
 // manually since one is a curated product decision (client tabs) and the
@@ -65,7 +64,7 @@ function MarketRow({ m, active, onClick }) {
   );
 }
 
-function MarketsTab({ address, signWithWallet, usdcMint, usdcDecimals, availableCash, onTraded }) {
+function MarketsTab() {
   const [search, setSearch] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [category, setCategory] = useState("All");
@@ -75,7 +74,6 @@ function MarketsTab({ address, signWithWallet, usdcMint, usdcDecimals, available
   const [error, setError] = useState(null);
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [chartHeight, setChartHeight] = useState(null);
-  const [order, setOrder] = useState(null); // { market, side } | null
   const chartColRef = useRef(null);
 
   // Debounced — every keystroke would otherwise fire a new server request
@@ -115,7 +113,6 @@ function MarketsTab({ address, signWithWallet, usdcMint, usdcDecimals, available
   const pickSuggestion = (m) => { setSelectedTicker(m.marketTicker); setSearchFocused(false); };
 
   const detailMarket = markets.find((m) => m.marketTicker === selectedTicker) ?? markets[0] ?? null;
-  const canTrade = !!(address && signWithWallet && usdcMint);
 
   useEffect(() => {
     const el = chartColRef.current;
@@ -207,37 +204,17 @@ function MarketsTab({ address, signWithWallet, usdcMint, usdcDecimals, available
 
         <div ref={chartColRef} className="card equities-detail-card">
           {detailMarket ? (
-            <PredictionMarketDetailPanel
-              market={detailMarket}
-              onTrade={canTrade ? (side) => setOrder({ market: detailMarket, side }) : undefined}
-            />
+            <PredictionMarketDetailPanel market={detailMarket} />
           ) : (
             <p className="muted">Select a market to see its chart.</p>
           )}
         </div>
       </div>
-
-      {order && (
-        <PredictionTradeModal
-          mode="buy"
-          market={order.market}
-          initialSide={order.side}
-          availableCash={availableCash}
-          address={address}
-          signWithWallet={signWithWallet}
-          usdcMint={usdcMint}
-          usdcDecimals={usdcDecimals}
-          onClose={() => setOrder(null)}
-          onDone={onTraded}
-        />
-      )}
     </>
   );
 }
 
-export default function PredictionMarketsApp({
-  onBack, address, signWithWallet, usdcMint, usdcDecimals = 6, availableCash = 0, onTraded,
-}) {
+export default function PredictionMarketsApp({ onBack, address }) {
   const [tab, setTab] = useState("markets");
 
   return (
@@ -254,22 +231,9 @@ export default function PredictionMarketsApp({
       </div>
 
       {tab === "markets" ? (
-        <MarketsTab
-          address={address}
-          signWithWallet={signWithWallet}
-          usdcMint={usdcMint}
-          usdcDecimals={usdcDecimals}
-          availableCash={availableCash}
-          onTraded={onTraded}
-        />
+        <MarketsTab />
       ) : (
-        <PredictionPositionsPanel
-          address={address}
-          signWithWallet={signWithWallet}
-          usdcMint={usdcMint}
-          usdcDecimals={usdcDecimals}
-          onTraded={onTraded}
-        />
+        <PredictionPositionsPanel address={address} />
       )}
     </div>
   );

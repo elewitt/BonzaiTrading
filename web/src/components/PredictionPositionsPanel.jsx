@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api.js";
-import PredictionTradeModal from "./PredictionTradeModal.jsx";
 
 function num(v) {
   const n = Number(v);
@@ -16,11 +15,15 @@ function formatClose(unixSeconds) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-export default function PredictionPositionsPanel({
-  address, signWithWallet, usdcMint, usdcDecimals, onTraded,
-}) {
+/**
+ * Read-only view of the prediction-market outcome tokens a wallet holds,
+ * joined against the market snapshot server-side (/api/predictions/positions).
+ * Trading these requires DFlow's Trade API + Proof KYC (Kalshi is a
+ * regulated venue and there's no on-chain AMM liquidity for the tokens),
+ * so there's no buy/sell here yet — this just surfaces what you hold.
+ */
+export default function PredictionPositionsPanel({ address }) {
   const [state, setState] = useState({ loading: true, positions: [], error: null });
-  const [sellTarget, setSellTarget] = useState(null);
 
   const load = useCallback(() => {
     if (!address) { setState({ loading: false, positions: [], error: null }); return; }
@@ -40,71 +43,51 @@ export default function PredictionPositionsPanel({
   }
 
   return (
-    <>
-      <div className="card table-card pm-positions-card">
-        <div className="pm-positions-head">
-          <h3>Open positions</h3>
-          {positions.length > 0 && (
-            <span className="tiny muted">Total value ≈ <strong className="mono">${totalValue.toFixed(2)}</strong></span>
-          )}
-        </div>
-
-        {loading && positions.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>Loading positions…</p>}
-        {error && (
-          <p className="muted" style={{ padding: "12px 0" }}>
-            {/HTTP 404/.test(error)
-              ? "Positions are still rolling out — check back shortly."
-              : `Couldn't load positions: ${error}`}
-          </p>
-        )}
-        {!loading && !error && positions.length === 0 && (
-          <p className="muted" style={{ padding: "16px 0" }}>
-            No open positions yet. Buy Yes or No on any market to open one.
-          </p>
-        )}
-
+    <div className="card table-card pm-positions-card">
+      <div className="pm-positions-head">
+        <h3>Open positions</h3>
         {positions.length > 0 && (
-          <>
-            <div className="trow trow-pmpos thead tiny label">
-              <span>Market</span>
-              <span>Side</span>
-              <span>Contracts</span>
-              <span>Mark</span>
-              <span>Value</span>
-              <span></span>
-            </div>
-            {positions.map((p) => (
-              <div key={p.mint} className="trow trow-pmpos">
-                <span className="asset">
-                  <span className="serif">{p.title}</span>
-                  <span className="tiny muted">{p.category} · Closes {formatClose(p.closeTime)}</span>
-                </span>
-                <span className={`pm-pos-side ${p.side}`}>{p.side === "yes" ? "Yes" : "No"}</span>
-                <span className="mono tiny">{(p.uiAmount || 0).toFixed(2)}</span>
-                <span className="mono tiny">{cents(p.markPrice) != null ? `${cents(p.markPrice)}¢` : "—"}</span>
-                <span className="mono tiny">{num(p.value) != null ? `$${num(p.value).toFixed(2)}` : "—"}</span>
-                <span>
-                  <button className="btn ghost" style={{ padding: "6px 14px", fontSize: 12 }}
-                    onClick={() => setSellTarget(p)}>Sell</button>
-                </span>
-              </div>
-            ))}
-          </>
+          <span className="tiny muted">Total value ≈ <strong className="mono">${totalValue.toFixed(2)}</strong></span>
         )}
       </div>
 
-      {sellTarget && (
-        <PredictionTradeModal
-          mode="sell"
-          position={sellTarget}
-          address={address}
-          signWithWallet={signWithWallet}
-          usdcMint={usdcMint}
-          usdcDecimals={usdcDecimals}
-          onClose={() => setSellTarget(null)}
-          onDone={() => { onTraded?.(); load(); }}
-        />
+      {loading && positions.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>Loading positions…</p>}
+      {error && (
+        <p className="muted" style={{ padding: "12px 0" }}>
+          {/HTTP 404/.test(error)
+            ? "Positions are still rolling out — check back shortly."
+            : `Couldn't load positions: ${error}`}
+        </p>
       )}
-    </>
+      {!loading && !error && positions.length === 0 && (
+        <p className="muted" style={{ padding: "16px 0" }}>
+          No prediction-market positions in this wallet.
+        </p>
+      )}
+
+      {positions.length > 0 && (
+        <>
+          <div className="trow trow-pmpos thead tiny label">
+            <span>Market</span>
+            <span>Side</span>
+            <span>Contracts</span>
+            <span>Mark</span>
+            <span>Value</span>
+          </div>
+          {positions.map((p) => (
+            <div key={p.mint} className="trow trow-pmpos">
+              <span className="asset">
+                <span className="serif">{p.title}</span>
+                <span className="tiny muted">{p.category} · Closes {formatClose(p.closeTime)}</span>
+              </span>
+              <span className={`pm-pos-side ${p.side}`}>{p.side === "yes" ? "Yes" : "No"}</span>
+              <span className="mono tiny">{(p.uiAmount || 0).toFixed(2)}</span>
+              <span className="mono tiny">{cents(p.markPrice) != null ? `${cents(p.markPrice)}¢` : "—"}</span>
+              <span className="mono tiny">{num(p.value) != null ? `$${num(p.value).toFixed(2)}` : "—"}</span>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
   );
 }

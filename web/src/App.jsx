@@ -2970,15 +2970,7 @@ export default function App() {
       )}
 
       {screen === "predictions" && (
-        <PredictionMarketsApp
-          onBack={goHome}
-          address={address}
-          signWithWallet={signWithWallet}
-          usdcMint={registry?.USDC?.mint}
-          usdcDecimals={registry?.USDC?.decimals ?? 6}
-          availableCash={portfolio?.cashUsdc ?? portfolio?.cash ?? 0}
-          onTraded={refreshHoldings}
-        />
+        <PredictionMarketsApp onBack={goHome} address={address} />
       )}
 
       {screen === "perps" && (

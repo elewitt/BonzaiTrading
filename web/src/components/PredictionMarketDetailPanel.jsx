@@ -25,7 +25,7 @@ function centsPrice(v) {
  * layout — the prediction-market parallel of AssetDetailPanel on the
  * equities side (header + big price + period toggle + chart + stat row).
  */
-export default function PredictionMarketDetailPanel({ market, onClose, onTrade }) {
+export default function PredictionMarketDetailPanel({ market, onClose }) {
   const [period, setPeriod] = useState("perpWeek");
   const [points, setPoints] = useState([]);
   const [chartLoading, setChartLoading] = useState(true);
@@ -98,17 +98,6 @@ export default function PredictionMarketDetailPanel({ market, onClose, onTrade }
           <p className="mono">{closeLabel}</p>
         </div>
       </div>
-
-      {onTrade && (
-        <div className="pm-detail-trade">
-          <button className="pm-buy-btn yes" onClick={() => onTrade("yes")}>
-            Buy Yes <span className="mono">{yes != null ? `${yes}¢` : "—"}</span>
-          </button>
-          <button className="pm-buy-btn no" onClick={() => onTrade("no")}>
-            Buy No <span className="mono">{no != null ? `${no}¢` : "—"}</span>
-          </button>
-        </div>
-      )}
     </>
   );
 }

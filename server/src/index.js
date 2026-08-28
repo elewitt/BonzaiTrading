@@ -573,13 +573,14 @@ app.get("/api/liquidity-flags", (req, res) => {
   res.json(Object.fromEntries(brokerage.map((r) => [r.symbol, r.flagged])));
 });
 
-/* ————— Prediction markets (Kalshi via DFlow) —————
+/* ————— Prediction markets (Kalshi via DFlow) — browse + read-only positions —
  * See predictionMarkets.js — background-crawled snapshot, fast in-memory
- * read here. The YES/NO outcomes are real SPL tokens on Solana, so buying
- * and selling go through the same Jupiter swap path as xStocks
- * (USDC <-> outcome mint, executed client-side) rather than a DFlow order
- * API — no server order/quote endpoint. Positions are derived below by
- * joining a wallet's balances against this snapshot.
+ * read here. Browsing and charts only. The YES/NO outcomes are SPL tokens,
+ * but there's no on-chain AMM liquidity for them (confirmed: Jupiter has no
+ * route for any mint) — real trading runs through DFlow's Trade API against
+ * Kalshi's off-chain book and requires Proof KYC per wallet, which isn't
+ * wired up. /api/predictions/positions below is a pure read: it joins a
+ * wallet's token balances against the snapshot so held positions show up.
  *
  * The full snapshot is ~18,500 markets / ~10MB — confirmed via a real test
  * crawl, nowhere near reasonable to ship on a page load. Filter/sort/cap
