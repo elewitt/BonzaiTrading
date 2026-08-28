@@ -98,6 +98,7 @@ export const api = {
   rejectStrategyProposal: (id, walletAddress) => post(`/api/strategies/proposals/${id}/reject`, { walletAddress }),
   buildStrategyProposal:  (id, walletAddress) => post(`/api/strategies/proposals/${id}/build`, { walletAddress }),
   reportStrategyProposalExecution: (id, body) => post(`/api/strategies/proposals/${id}/report-execution`, body),
+  predictionPositions: (address)      => get(`/api/predictions/positions/${address}`),
 };
 
 /** Send any SPL token directly to a Solana address (no swap involved). */

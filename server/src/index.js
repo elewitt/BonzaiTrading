@@ -573,11 +573,13 @@ app.get("/api/liquidity-flags", (req, res) => {
   res.json(Object.fromEntries(brokerage.map((r) => [r.symbol, r.flagged])));
 });
 
-/* ————— Prediction markets (Kalshi via DFlow) — public, browse-only —————
+/* ————— Prediction markets (Kalshi via DFlow) —————
  * See predictionMarkets.js — background-crawled snapshot, fast in-memory
- * read here. Browse-only for now: trading requires Kalshi's mandated
- * identity verification (DFlow's "Proof" KYC partner), not yet wired up —
- * no order/quote endpoints exist here until that's in place.
+ * read here. The YES/NO outcomes are real SPL tokens on Solana, so buying
+ * and selling go through the same Jupiter swap path as xStocks
+ * (USDC <-> outcome mint, executed client-side) rather than a DFlow order
+ * API — no server order/quote endpoint. Positions are derived below by
+ * joining a wallet's balances against this snapshot.
  *
  * The full snapshot is ~18,500 markets / ~10MB — confirmed via a real test
  * crawl, nowhere near reasonable to ship on a page load. Filter/sort/cap
@@ -616,6 +618,54 @@ app.get("/api/predictions/:seriesTicker/:marketTicker/candles", async (req, res)
   try {
     const range = String(req.query.range || "perpWeek");
     res.json(await getPredictionMarketCandles(req.params.seriesTicker, req.params.marketTicker, range));
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// A wallet's open prediction-market positions — its on-chain YES/NO token
+// balances joined against the full in-memory snapshot (every ~18,500
+// markets, so a position on a market that isn't on the client's current
+// browse page still resolves). Read-only: selling runs client-side through
+// the same Jupiter swap path as buying, just with the mints reversed.
+app.get("/api/predictions/positions/:address", async (req, res) => {
+  try {
+    const { markets, generatedAt } = getPredictionMarketsSnapshot();
+    const outcomeByMint = new Map();
+    for (const m of markets) {
+      if (m.yesMint) outcomeByMint.set(m.yesMint, { m, side: "yes" });
+      if (m.noMint) outcomeByMint.set(m.noMint, { m, side: "no" });
+    }
+
+    const { tokens } = await getHoldingsForAddress(req.params.address);
+    const positions = [];
+    for (const t of tokens) {
+      const hit = outcomeByMint.get(t.mint);
+      if (!hit) continue;
+      const { m, side } = hit;
+      // Mark to the bid you could actually sell into right now (yesBid /
+      // noBid are 0..1 fractions — one contract pays $1 if it resolves).
+      const mark = side === "yes" ? m.yesBid : m.noBid;
+      positions.push({
+        marketTicker: m.marketTicker,
+        seriesTicker: m.seriesTicker,
+        title: m.title,
+        category: m.category,
+        eventTitle: m.eventTitle,
+        side,
+        mint: t.mint,
+        decimals: t.decimals,
+        amount: t.amount,        // atomic, string
+        uiAmount: t.uiAmount,    // contracts held
+        markPrice: mark ?? null, // 0..1
+        value: mark == null ? null : mark * t.uiAmount,
+        yesBid: m.yesBid, yesAsk: m.yesAsk, noBid: m.noBid, noAsk: m.noAsk,
+        closeTime: m.closeTime,
+        settledInUsdc: m.settledInUsdc,
+      });
+    }
+    positions.sort((a, b) => (b.value || 0) - (a.value || 0));
+    res.json({ generatedAt, positions });
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
   }

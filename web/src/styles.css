@@ -1018,9 +1018,9 @@ a.trow { color: inherit; text-decoration: none; }
    match those rows too and stack with their own nth-child rules below,
    hiding columns neither rule intended to hide on its own. */
 @media(max-width:600px) {
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) { grid-template-columns: 1.6fr 1fr 1fr; }
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) span:nth-child(3),
-  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) span:nth-child(5) { display: none; }
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-pmpos):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) { grid-template-columns: 1.6fr 1fr 1fr; }
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-pmpos):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) span:nth-child(3),
+  .trow:not(.trow-kamino-rates):not(.trow-equities):not(.trow-predictions):not(.trow-pmpos):not(.trow-referrals):not(.trow-positions):not(.trow-leaderboard) span:nth-child(5) { display: none; }
 }
 
 /* Per-table .trow column templates — these used to be set via an inline
@@ -1920,6 +1920,66 @@ a.trow { color: inherit; text-decoration: none; }
 
 @media (max-width: 480px) {
   .pm-list-head, .pm-row { grid-template-columns: minmax(0, 1fr) 40px 40px; gap: 12px; }
+}
+
+/* ——— Prediction Markets: Markets/Positions tabs ——— */
+/* .perps-tabs assumes it sits in the perps topbar (card bg, 28px inset);
+   on the stage it's a plain underlined row instead. Qualified with
+   .perps-tabs to beat that rule (declared later in the file). */
+.perps-tabs.pm-tabs {
+  background: none; padding: 0; margin: -6px 0 22px;
+  border-bottom: 1px solid var(--line);
+}
+.perps-tabs.pm-tabs .perps-tab { padding: 10px 2px; margin-right: 24px; font-size: 15px; }
+
+/* ——— Detail-panel buy buttons ——— */
+.pm-detail-trade { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+.pm-buy-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 14px; border-radius: 10px; border: 1px solid transparent;
+  font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: filter .15s, transform .05s;
+}
+.pm-buy-btn:active { transform: translateY(1px); }
+.pm-buy-btn:hover { filter: brightness(1.04); }
+.pm-buy-btn.yes { background: rgba(21,96,64,.12); color: var(--gain); border-color: rgba(21,96,64,.22); }
+.pm-buy-btn.no  { background: rgba(150,54,38,.1); color: var(--loss); border-color: rgba(150,54,38,.2); }
+.pm-buy-btn .mono { font-weight: 700; }
+
+/* ——— Trade modal: Yes/No selector + summary ——— */
+.pm-side-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.pm-side-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 11px 8px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--card); font-family: inherit; font-size: 13px; font-weight: 600;
+  color: var(--moss); cursor: pointer; transition: all .12s;
+}
+.pm-side-btn .mono { font-weight: 700; }
+.pm-side-btn.yes.sel { background: rgba(21,96,64,.12); color: var(--gain); border-color: var(--gain); }
+.pm-side-btn.no.sel  { background: rgba(150,54,38,.1); color: var(--loss); border-color: var(--loss); }
+
+.pm-trade-summary {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 12px 0 2px; padding: 12px 0 0; border-top: 1px solid var(--line);
+}
+.pm-trade-summary > div { display: flex; justify-content: space-between; align-items: baseline; }
+
+/* ——— Positions tab ——— */
+.pm-positions-card { max-width: 860px; }
+.pm-positions-empty { max-width: 860px; }
+.pm-positions-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.pm-positions-head h3 { margin: 0; font-size: 14px; }
+.trow-pmpos { grid-template-columns: 2.4fr .7fr .9fr .7fr .9fr 72px; }
+.pm-pos-side {
+  align-self: center; width: fit-content;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  padding: 3px 8px; border-radius: 999px;
+}
+.pm-pos-side.yes { color: var(--gain); background: rgba(21,96,64,.1); }
+.pm-pos-side.no  { color: var(--loss); background: rgba(150,54,38,.1); }
+@media (max-width: 640px) {
+  .trow-pmpos { grid-template-columns: 1.6fr .8fr 72px; }
+  .trow-pmpos span:nth-child(3), .trow-pmpos span:nth-child(4), .trow-pmpos span:nth-child(5) { display: none; }
 }
 
 /* ——— Header nav buttons (Perps / Borrow / My Profile) ——— */

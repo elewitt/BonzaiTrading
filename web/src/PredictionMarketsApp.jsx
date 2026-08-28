@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { API_BASE, fmtBig } from "./lib/api.js";
 import PredictionMarketDetailPanel from "./components/PredictionMarketDetailPanel.jsx";
+import PredictionPositionsPanel from "./components/PredictionPositionsPanel.jsx";
+import PredictionTradeModal from "./components/PredictionTradeModal.jsx";
 
 // Mirrors the allowlist in server/src/predictionMarkets.js — kept in sync
 // manually since one is a curated product decision (client tabs) and the
@@ -17,7 +19,7 @@ const SUGGESTION_LIMIT = 8;
 const MIN_CHART_HEIGHT = 560;
 
 function centsPrice(v) {
-  return v == null ? null : Math.round(v * 100);
+  return v == null ? null : Math.round(Number(v) * 100);
 }
 
 function formatCloseTime(unixSeconds) {
@@ -63,7 +65,7 @@ function MarketRow({ m, active, onClick }) {
   );
 }
 
-export default function PredictionMarketsApp({ onBack }) {
+function MarketsTab({ address, signWithWallet, usdcMint, usdcDecimals, availableCash, onTraded }) {
   const [search, setSearch] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [category, setCategory] = useState("All");
@@ -71,8 +73,9 @@ export default function PredictionMarketsApp({ onBack }) {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedTicker, setSelectedTicker] = useState(null); // marketTicker shown in the detail panel, or null (falls back to first row)
+  const [selectedTicker, setSelectedTicker] = useState(null);
   const [chartHeight, setChartHeight] = useState(null);
+  const [order, setOrder] = useState(null); // { market, side } | null
   const chartColRef = useRef(null);
 
   // Debounced — every keystroke would otherwise fire a new server request
@@ -108,25 +111,12 @@ export default function PredictionMarketsApp({ onBack }) {
   const categoryCounts = data?.categoryCounts ?? {};
   const hasMore = markets.length < total;
 
-  // Autocomplete: the debounced list fetch above already returns exactly
-  // the markets matching `search`, so the suggestion list is just the top
-  // slice of it — no separate request.
   const suggestions = search.trim() && searchFocused ? markets.slice(0, SUGGESTION_LIMIT) : [];
+  const pickSuggestion = (m) => { setSelectedTicker(m.marketTicker); setSearchFocused(false); };
 
-  const pickSuggestion = (m) => {
-    setSelectedTicker(m.marketTicker);
-    setSearchFocused(false);
-  };
-
-  // Always shows something in the detail panel — falls back to the first
-  // row when the selection isn't in the current result set, same pattern
-  // as EquitiesMarketsApp.jsx's detailRow.
   const detailMarket = markets.find((m) => m.marketTicker === selectedTicker) ?? markets[0] ?? null;
+  const canTrade = !!(address && signWithWallet && usdcMint);
 
-  // Match the list panel's height to the detail card's so the two columns
-  // end flush. offsetHeight (border-box: padding + border included) is what
-  // transfers correctly to the list panel's own border-box `height` —
-  // contentRect would leave the list ~1 card's padding shorter.
   useEffect(() => {
     const el = chartColRef.current;
     if (!el) return;
@@ -138,13 +128,7 @@ export default function PredictionMarketsApp({ onBack }) {
   }, [detailMarket?.marketTicker]);
 
   return (
-    <div className="stage dash-wide">
-      <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
-
-      <div className="markets-page-header">
-        <h2 className="display sm markets-page-title">Prediction Markets</h2>
-      </div>
-
+    <>
       {error && <p className="err" style={{ marginBottom: 12 }}>{error}</p>}
 
       <div className="pm-search-hero">
@@ -223,12 +207,70 @@ export default function PredictionMarketsApp({ onBack }) {
 
         <div ref={chartColRef} className="card equities-detail-card">
           {detailMarket ? (
-            <PredictionMarketDetailPanel market={detailMarket} />
+            <PredictionMarketDetailPanel
+              market={detailMarket}
+              onTrade={canTrade ? (side) => setOrder({ market: detailMarket, side }) : undefined}
+            />
           ) : (
             <p className="muted">Select a market to see its chart.</p>
           )}
         </div>
       </div>
+
+      {order && (
+        <PredictionTradeModal
+          mode="buy"
+          market={order.market}
+          initialSide={order.side}
+          availableCash={availableCash}
+          address={address}
+          signWithWallet={signWithWallet}
+          usdcMint={usdcMint}
+          usdcDecimals={usdcDecimals}
+          onClose={() => setOrder(null)}
+          onDone={onTraded}
+        />
+      )}
+    </>
+  );
+}
+
+export default function PredictionMarketsApp({
+  onBack, address, signWithWallet, usdcMint, usdcDecimals = 6, availableCash = 0, onTraded,
+}) {
+  const [tab, setTab] = useState("markets");
+
+  return (
+    <div className="stage dash-wide">
+      <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
+
+      <div className="markets-page-header">
+        <h2 className="display sm markets-page-title">Prediction Markets</h2>
+      </div>
+
+      <div className="perps-tabs pm-tabs">
+        <button className={`perps-tab ${tab === "markets" ? "active" : ""}`} onClick={() => setTab("markets")}>Markets</button>
+        <button className={`perps-tab ${tab === "positions" ? "active" : ""}`} onClick={() => setTab("positions")}>Positions</button>
+      </div>
+
+      {tab === "markets" ? (
+        <MarketsTab
+          address={address}
+          signWithWallet={signWithWallet}
+          usdcMint={usdcMint}
+          usdcDecimals={usdcDecimals}
+          availableCash={availableCash}
+          onTraded={onTraded}
+        />
+      ) : (
+        <PredictionPositionsPanel
+          address={address}
+          signWithWallet={signWithWallet}
+          usdcMint={usdcMint}
+          usdcDecimals={usdcDecimals}
+          onTraded={onTraded}
+        />
+      )}
     </div>
   );
 }
