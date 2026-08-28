@@ -123,13 +123,17 @@ export default function PredictionMarketsApp({ onBack }) {
   // as EquitiesMarketsApp.jsx's detailRow.
   const detailMarket = markets.find((m) => m.marketTicker === selectedTicker) ?? markets[0] ?? null;
 
-  // Cap the list panel to the detail card's natural height so the two end
-  // flush — same as EquitiesMarketsApp.jsx:191-197.
+  // Match the list panel's height to the detail card's so the two columns
+  // end flush. offsetHeight (border-box: padding + border included) is what
+  // transfers correctly to the list panel's own border-box `height` —
+  // contentRect would leave the list ~1 card's padding shorter.
   useEffect(() => {
     const el = chartColRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setChartHeight(Math.max(entry.contentRect.height, MIN_CHART_HEIGHT)));
+    const measure = () => setChartHeight(Math.max(el.offsetHeight, MIN_CHART_HEIGHT));
+    const observer = new ResizeObserver(measure);
     observer.observe(el);
+    measure();
     return () => observer.disconnect();
   }, [detailMarket?.marketTicker]);
 
