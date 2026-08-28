@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "./lib/api.js";
-import PredictionMarketDetailModal from "./components/PredictionMarketDetailModal.jsx";
+import PredictionMarketDetailPanel from "./components/PredictionMarketDetailPanel.jsx";
 
 // Mirrors the allowlist in server/src/predictionMarkets.js — kept in sync
 // manually since one is a curated product decision (client tabs) and the
@@ -9,6 +9,11 @@ import PredictionMarketDetailModal from "./components/PredictionMarketDetailModa
 const CATEGORIES = ["All", "Financials", "Politics", "Elections", "Companies", "Economics", "Science and Technology"];
 
 const PAGE_SIZE = 60;
+
+// The detail card's natural height is the reference the list panel is
+// capped to and scrolls within — same master-detail pattern as
+// EquitiesMarketsApp.jsx (see its MIN_CHART_HEIGHT / ResizeObserver).
+const MIN_CHART_HEIGHT = 560;
 
 function centsPrice(v) {
   return v == null ? null : Math.round(v * 100);
@@ -35,11 +40,12 @@ async function fetchMarkets({ category, q, offset }) {
   return r.json();
 }
 
-function MarketRow({ m, onClick }) {
+function MarketRow({ m, active, onClick }) {
   const yes = centsPrice(m.yesAsk ?? m.yesBid);
   const no = centsPrice(m.noAsk ?? m.noBid);
   return (
-    <div className="trow trow-predictions pm-row" onClick={onClick} role="button" tabIndex={0}
+    <div className={`trow trow-predictions pm-row asset-row-clickable ${active ? "active" : ""}`}
+      onClick={onClick} role="button" tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && onClick()}>
       <span className="asset">
         <span className="serif">{m.title}</span>
@@ -60,13 +66,16 @@ export default function PredictionMarketsApp({ onBack }) {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedMarket, setSelectedMarket] = useState(null);
+  const [selectedTicker, setSelectedTicker] = useState(null); // marketTicker shown in the detail panel, or null (falls back to first row)
+  const [chartHeight, setChartHeight] = useState(null);
+  const chartColRef = useRef(null);
 
   // Debounced — every keystroke would otherwise fire a new server request
   // (this can't filter client-side like EquitiesMarketsApp does; the full
   // dataset is ~18,500 markets / ~10MB, confirmed too large to ship whole).
   useEffect(() => {
     setOffset(0);
+    setSelectedTicker(null); // snap the detail panel back to the first row of the new result set
     setLoading(true);
     const t = setTimeout(() => {
       fetchMarkets({ category, q: search, offset: 0 })
@@ -95,50 +104,76 @@ export default function PredictionMarketsApp({ onBack }) {
   const categoryCounts = data?.categoryCounts ?? {};
   const hasMore = markets.length < total;
 
+  // Always shows something in the detail panel — falls back to the first
+  // row when nothing's been explicitly clicked, same pattern as
+  // EquitiesMarketsApp.jsx's detailRow.
+  const detailMarket = markets.find((m) => m.marketTicker === selectedTicker) ?? markets[0] ?? null;
+
+  // Cap the list panel to the detail card's natural height so the two end
+  // flush — same as EquitiesMarketsApp.jsx:191-197.
+  useEffect(() => {
+    const el = chartColRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setChartHeight(Math.max(entry.contentRect.height, MIN_CHART_HEIGHT)));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [detailMarket?.marketTicker]);
+
   return (
-    <div className="stage wide">
+    <div className="stage dash-wide">
       <button className="btn ghost perps-back-btn" onClick={onBack}>← Back</button>
 
       <div className="markets-page-header">
         <h2 className="display sm markets-page-title">Prediction Markets</h2>
       </div>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="perps-category-toggle" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-          {CATEGORIES.map((c) => (
-            <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>
-              {c}{c !== "All" && categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ""}
-            </button>
-          ))}
-        </div>
-        <input className="perps-asset-search" placeholder="Search markets…" value={search}
-          onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360 }} />
-      </div>
-
       {error && <p className="err" style={{ marginBottom: 12 }}>{error}</p>}
 
-      <div className="card table-card">
-        <div className="trow trow-predictions thead tiny label">
-          <span>Market</span>
-          <span>Yes</span>
-          <span>No</span>
-          <span>Volume</span>
-          <span>Closes</span>
+      <div className="equities-layout">
+        <div className="card perps-asset-panel equities-list-panel" style={chartHeight ? { height: chartHeight } : undefined}>
+          <h3>Markets</h3>
+          <div className="perps-category-toggle" style={{ flexWrap: "wrap" }}>
+            {CATEGORIES.map((c) => (
+              <button key={c} className={`lvp-pct-btn ${category === c ? "sel" : ""}`} onClick={() => setCategory(c)}>
+                {c}{c !== "All" && categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ""}
+              </button>
+            ))}
+          </div>
+          <input className="perps-asset-search" placeholder="Search markets…" value={search}
+            onChange={(e) => setSearch(e.target.value)} />
+
+          <div className="trow trow-predictions thead tiny label">
+            <span>Market</span>
+            <span>Yes</span>
+            <span>No</span>
+            <span>Volume</span>
+            <span>Closes</span>
+          </div>
+
+          <div className="perps-asset-list">
+            {!data && loading && <p className="muted" style={{ padding: "16px 0" }}>Loading…</p>}
+            {data && markets.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>No matches.</p>}
+            {markets.map((m) => (
+              <MarketRow key={m.marketTicker} m={m}
+                active={detailMarket?.marketTicker === m.marketTicker}
+                onClick={() => setSelectedTicker(m.marketTicker)} />
+            ))}
+            {hasMore && (
+              <button className="btn ghost" style={{ width: "100%", marginTop: 14 }} disabled={loading} onClick={loadMore}>
+                {loading ? "Loading…" : `Show more (${markets.length} of ${total.toLocaleString()})`}
+              </button>
+            )}
+          </div>
         </div>
-        {!data && loading && <p className="muted" style={{ padding: "16px 0" }}>Loading…</p>}
-        {data && markets.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>No matches.</p>}
-        {markets.map((m) => <MarketRow key={m.marketTicker} m={m} onClick={() => setSelectedMarket(m)} />)}
+
+        <div ref={chartColRef} className="card equities-detail-card">
+          {detailMarket ? (
+            <PredictionMarketDetailPanel market={detailMarket} />
+          ) : (
+            <p className="muted">Select a market to see its chart.</p>
+          )}
+        </div>
       </div>
-
-      {hasMore && (
-        <button className="btn ghost" style={{ width: "100%", marginTop: 14 }} disabled={loading} onClick={loadMore}>
-          {loading ? "Loading…" : `Show more (${markets.length} of ${total.toLocaleString()})`}
-        </button>
-      )}
-
-      {selectedMarket && (
-        <PredictionMarketDetailModal market={selectedMarket} onClose={() => setSelectedMarket(null)} />
-      )}
     </div>
   );
 }
