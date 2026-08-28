@@ -33,6 +33,14 @@ export function priceLabel(v) {
   return `$${v.toFixed(4)}`;
 }
 
+// A prediction-market YES price IS a probability (0-100¢) — same shape as
+// priceLabel's non-negative, no-forced-zero handling, but cents rather than
+// dollars, and matches the "92¢" convention PredictionMarketsApp.jsx's own
+// MarketRow already uses for the same numbers.
+export function probabilityLabel(v) {
+  return `${Math.round(v)}¢`;
+}
+
 // Period-aware axis label — "Day" wants a clock, "All" wants a date, and
 // showing a bare weekday for a multi-month range (or a full date for a
 // single day) is the kind of mismatch that makes a chart feel unfinished.
@@ -196,17 +204,23 @@ function svgToClientPoint(svgEl, x, y) {
  *     meaningful zero — no forced zero, no breakeven line, one color for
  *     the whole line based on whether it's up or down over the shown
  *     window, fill anchored to the chart floor instead of zero.
+ *   - mode="probability" (prediction-market YES price): same geometry as
+ *     "price" (no forced zero, no breakeven line) but bounded at the OTHER
+ *     end too — a market can't trade above 100¢, so the axis ceiling
+ *     clamps at 100 the same way price's floor clamps at 0 — plus cents
+ *     labels instead of dollars.
  * Everything else (nice-number ticks, the crosshair/tooltip hover layer,
  * x-axis time labels, the live-value pulse, loading/empty states) is
- * identical between the two.
+ * identical between all three.
  */
 export default function TimeSeriesChart({ points, period, loading, mode = "pnl", emptyText }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null); // { idx, tipX, tipY, side }
   const isPnl = mode === "pnl";
-  const label = isPnl ? deltaLabel : priceLabel;
-  const labelExact = isPnl ? deltaLabelExact : priceLabel;
+  const isProbability = mode === "probability";
+  const label = isPnl ? deltaLabel : isProbability ? probabilityLabel : priceLabel;
+  const labelExact = isPnl ? deltaLabelExact : isProbability ? probabilityLabel : priceLabel;
 
   if (loading) {
     return <div className="ts-chart-skeleton" aria-hidden="true" />;
@@ -232,7 +246,11 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   // floor is the whole point) the padded-down floor gets clamped at zero
   // instead of occasionally landing on an ugly, meaningless "-$5" tick.
   const axisFloor = isPnl ? vMin - vPad : Math.max(0, vMin - vPad);
-  const { ticks: yTicks, niceMin, niceMax } = niceTicks(axisFloor, vMax + vPad, 5);
+  // Probability has a ceiling too — a market can't trade above 100¢, so a
+  // near-certain market (98¢) shouldn't pad its axis past 100 the same way
+  // the floor above won't pad price below 0.
+  const axisCeil = isProbability ? Math.min(100, vMax + vPad) : vMax + vPad;
+  const { ticks: yTicks, niceMin, niceMax } = niceTicks(axisFloor, axisCeil, 5);
   const vLo = niceMin, vHi = niceMax;
   const tMin = points[0].ts, tMax = points[points.length - 1].ts;
   const tRange = tMax - tMin || 1;
@@ -325,7 +343,7 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
   // precision; this only trims the small print running down the y-axis.
   const tickStep = yTicks.length > 1 ? Math.abs(yTicks[1] - yTicks[0]) : 1;
   const yTickLabel = (v) => {
-    if (isPnl) return label(v);
+    if (isPnl || isProbability) return label(v);
     if (Math.abs(v) >= 1000) return `$${(v / 1000).toLocaleString(undefined, { maximumFractionDigits: tickStep >= 1000 ? 0 : 1 })}k`;
     if (tickStep >= 1) return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
     return `$${v.toFixed(tickStep >= 0.1 ? 2 : 4)}`;
@@ -353,7 +371,7 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
       }}
       tabIndex={0}
       role="img"
-      aria-label={`${isPnl ? "P&L" : "Price"} over the selected period, currently ${labelExact(last)}, ranging from ${labelExact(low)} to ${labelExact(high)}. Use arrow keys to inspect individual points.`}
+      aria-label={`${isPnl ? "P&L" : isProbability ? "Probability" : "Price"} over the selected period, currently ${labelExact(last)}, ranging from ${labelExact(low)} to ${labelExact(high)}. Use arrow keys to inspect individual points.`}
     >
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="ts-chart-svg" preserveAspectRatio="xMidYMid meet">
         <defs>

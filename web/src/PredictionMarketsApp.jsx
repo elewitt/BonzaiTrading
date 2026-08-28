@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "./lib/api.js";
+import PredictionMarketDetailModal from "./components/PredictionMarketDetailModal.jsx";
 
 // Mirrors the allowlist in server/src/predictionMarkets.js — kept in sync
 // manually since one is a curated product decision (client tabs) and the
@@ -34,11 +35,12 @@ async function fetchMarkets({ category, q, offset }) {
   return r.json();
 }
 
-function MarketRow({ m }) {
+function MarketRow({ m, onClick }) {
   const yes = centsPrice(m.yesAsk ?? m.yesBid);
   const no = centsPrice(m.noAsk ?? m.noBid);
   return (
-    <div className="trow trow-predictions pm-row">
+    <div className="trow trow-predictions pm-row" onClick={onClick} role="button" tabIndex={0}
+      onKeyDown={(e) => e.key === "Enter" && onClick()}>
       <span className="asset">
         <span className="serif">{m.title}</span>
         <span className="tiny muted">{m.category}{m.eventTitle && m.eventTitle !== m.title ? ` · ${m.eventTitle}` : ""}</span>
@@ -58,6 +60,7 @@ export default function PredictionMarketsApp({ onBack }) {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedMarket, setSelectedMarket] = useState(null);
 
   // Debounced — every keystroke would otherwise fire a new server request
   // (this can't filter client-side like EquitiesMarketsApp does; the full
@@ -124,13 +127,17 @@ export default function PredictionMarketsApp({ onBack }) {
         </div>
         {!data && loading && <p className="muted" style={{ padding: "16px 0" }}>Loading…</p>}
         {data && markets.length === 0 && <p className="muted" style={{ padding: "16px 0" }}>No matches.</p>}
-        {markets.map((m) => <MarketRow key={m.marketTicker} m={m} />)}
+        {markets.map((m) => <MarketRow key={m.marketTicker} m={m} onClick={() => setSelectedMarket(m)} />)}
       </div>
 
       {hasMore && (
         <button className="btn ghost" style={{ width: "100%", marginTop: 14 }} disabled={loading} onClick={loadMore}>
           {loading ? "Loading…" : `Show more (${markets.length} of ${total.toLocaleString()})`}
         </button>
+      )}
+
+      {selectedMarket && (
+        <PredictionMarketDetailModal market={selectedMarket} onClose={() => setSelectedMarket(null)} />
       )}
     </div>
   );

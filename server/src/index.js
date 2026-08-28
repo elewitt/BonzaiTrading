@@ -46,6 +46,7 @@ import { getBuilderFeeStatus, claimBuilderRewards, withdrawFromSponsor, getUserP
 import { getMarketHealthSnapshot, startMarketHealthMonitor } from "./marketHealth.js";
 import { searchOfac, getOfacListStatus } from "./ofacScreening.js";
 import { getPredictionMarketsSnapshot, startPredictionMarketsMonitor } from "./predictionMarkets.js";
+import { getPredictionMarketCandles } from "./kalshiCandles.js";
 
 // A real stuck deposit had 0.00002 ETH and failed to cover the
 // approve+deposit gas needed for the Hyperliquid Bridge2 step — this
@@ -605,6 +606,19 @@ app.get("/api/predictions/markets", (req, res) => {
     categoryCounts,
     markets: filtered.slice(offset, offset + limit),
   });
+});
+
+// Chart data for one market — hits Kalshi's own candlesticks endpoint
+// directly (see kalshiCandles.js's header for why this is per-click rather
+// than folded into the snapshot crawl above). Public/unauthenticated, same
+// tier as /api/predictions/markets and /api/market/:symbol/chart.
+app.get("/api/predictions/:seriesTicker/:marketTicker/candles", async (req, res) => {
+  try {
+    const range = String(req.query.range || "perpWeek");
+    res.json(await getPredictionMarketCandles(req.params.seriesTicker, req.params.marketTicker, range));
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
 });
 
 /* ————— holdings (RPC, both token programs — xStocks are Token-2022) ————— */

@@ -1800,6 +1800,7 @@ a.trow { color: inherit; text-decoration: none; }
 .asset-row-clickable:hover { background: var(--paper); }
 
 /* ——— Prediction Markets list ——— */
+.pm-row { cursor: pointer; transition: background .15s; }
 .pm-row:hover { background: var(--paper); }
 .pm-outcome {
   font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600;
