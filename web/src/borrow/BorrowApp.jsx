@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { useSolanaWallets, useSignTransaction } from "@privy-io/react-auth/solana";
+import { useCallback, useMemo, useState } from "react";
+import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
+import { signVersionedTxWithPrivy } from "../lib/privySolana.js";
 import { useKaminoReserves, useKaminoPositions } from "./useKamino.js";
 import BorrowTicket from "./BorrowTicket.jsx";
 import PositionCard from "./PositionCard.jsx";
@@ -22,12 +23,12 @@ export default function BorrowApp({ solanaAddress, solBalance = 0, portfolioRows
   // Own Solana wallet/signing hooks, same pattern PerpsApp uses — a
   // self-contained sub-app doesn't share App.jsx's wallet state directly.
   const { signTransaction } = useSignTransaction();
-  const { wallets: solanaWallets } = useSolanaWallets();
-  const solanaWallet = solanaWallets.find((w) => w.walletClientType === "privy") || solanaWallets[0];
-  const signWithWallet = async (tx) => {
-    if (solanaWallet?.signTransaction) return solanaWallet.signTransaction(tx);
-    return signTransaction({ transaction: tx, wallet: solanaWallet });
-  };
+  const { wallets: solanaWallets } = useWallets();
+  const solanaWallet = solanaWallets.find((w) => w.standardWallet?.isPrivyWallet) || solanaWallets[0];
+  const signWithWallet = useCallback(
+    (tx) => signVersionedTxWithPrivy(tx, solanaWallet, signTransaction),
+    [solanaWallet, signTransaction],
+  );
 
   const { reserves } = useKaminoReserves();
   const { positions, loading: positionsLoading } = useKaminoPositions(solanaAddress);

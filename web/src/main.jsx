@@ -66,7 +66,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <PrivyProvider
           appId={PRIVY_APP_ID}
           config={{
-            loginMethods: ["email", "google"],
+            // Email only — Google OAuth is disabled on the Privy app, and
+            // requesting a login method the app doesn't have enabled breaks
+            // the v3 login modal ("Something went wrong"). Re-add "google"
+            // here only after enabling it in the Privy dashboard.
+            loginMethods: ["email"],
             appearance: { theme: "light", accentColor: "#1C4A38" },
             embeddedWallets: {
               solana: { createOnLogin: "users-without-wallets" },

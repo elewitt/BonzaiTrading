@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallets, useSendTransaction, useCreateWallet, useUser, useSignTypedData } from "@privy-io/react-auth";
-import { useSignTransaction, useSignMessage as useSolanaSignMessage } from "@privy-io/react-auth/solana";
+import { useWallets as useSolanaWallets, useSignTransaction, useSignMessage as useSolanaSignMessage } from "@privy-io/react-auth/solana";
 import { VersionedTransaction, Transaction, Connection, PublicKey } from "@solana/web3.js";
 
 import { DEFAULT_CONFIG, EQUITY_DEX, EQUITY_DEX_LABEL } from "./config.js";
@@ -88,7 +88,10 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // ——— Wallets —��—
   const { wallets } = useWallets();
   const { user: privyUser, refreshUser } = useUser();
-  const evmWallet = wallets.find((w) => w.walletClientType === "privy" && w.chainType === "ethereum");
+  // Privy v3's EVM `useWallets()` returns wallets keyed by `type`
+  // ('ethereum'), where v2 used `chainType` — accept either so this keeps
+  // working across the SDK bump.
+  const evmWallet = wallets.find((w) => w.walletClientType === "privy" && (w.chainType ?? w.type) === "ethereum");
   // Fallback to the account's linkedAccounts list when useWallets() hasn't
   // synced this wallet — confirmed via the Privy dashboard that the wallet
   // genuinely exists even when useWallets() doesn't surface it. This lets
@@ -184,6 +187,11 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
   // ConnectedSolanaWallet.signTransaction) since only the hook form accepts
   // uiOptions to skip Privy's own confirmation modal.
   const { signTransaction: signSolanaTx } = useSignTransaction();
+  // Privy v3's Solana sign hooks need the wallet object passed in (they no
+  // longer resolve it from an address). This app configures no external
+  // Solana connectors, so the embedded Privy wallet is the only one.
+  const { wallets: solanaWallets } = useSolanaWallets();
+  const solanaWallet = solanaWallets.find((w) => w.standardWallet?.isPrivyWallet) || solanaWallets[0];
 
   // ——— HL client + assets ———
   const hl = useLongviewHl(DEFAULT_CONFIG);
@@ -286,14 +294,14 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
       // which has no uiOptions support at all) — deposit is the first flow
       // opted into skipping Privy's own confirmation modal in favor of this
       // app's own "Deposit"/"Complete Deposit" buttons as the sole gate.
-      const signed = await signSolanaTx({
-        transaction: tx,
-        connection,
-        address: solanaAddress,
-        uiOptions: { showWalletUIs: false },
+      // Privy v3 takes/returns raw bytes, not a web3.js tx object.
+      const { signedTransaction } = await signSolanaTx({
+        transaction: tx.serialize(),
+        wallet: solanaWallet,
+        options: { uiOptions: { showWalletUIs: false } },
       });
       // Submit to Solana
-      return connection.sendRawTransaction(signed.serialize());
+      return connection.sendRawTransaction(signedTransaction);
     };
 
     const debridgeIo = new RealDeBridgeIo({
@@ -316,13 +324,15 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
       tx.recentBlockhash = blockhash;
       tx.partialSign(messageSentEventKeypair);
 
-      const signed = await signSolanaTx({
-        transaction: tx,
-        connection,
-        address: solanaAddress,
-        uiOptions: { showWalletUIs: false },
+      // Legacy Transaction + already carries the ephemeral co-signer's
+      // partial signature; serialize without requiring the (still missing)
+      // user signature, let Privy add it, submit the result.
+      const { signedTransaction } = await signSolanaTx({
+        transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }),
+        wallet: solanaWallet,
+        options: { uiOptions: { showWalletUIs: false } },
       });
-      return connection.sendRawTransaction(signed.serialize());
+      return connection.sendRawTransaction(signedTransaction);
     };
 
     const cctpIo = new RealCctpIo({
@@ -342,7 +352,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
       },
       store,
     );
-  }, [signSolanaTx, sendEvm, solanaAddress]);
+  }, [signSolanaTx, solanaWallet, sendEvm, solanaAddress]);
 
   const user = useMemo(() => {
     if (!solanaAddress || !evmAddress) return null;
@@ -390,7 +400,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
     const message = buildQaBypassMessage(solanaAddress);
     let signature;
     try {
-      const sigBytes = await signSolanaMessage({ message: new TextEncoder().encode(message) });
+      const { signature: sigBytes } = await signSolanaMessage({ message: new TextEncoder().encode(message), wallet: solanaWallet });
       signature = btoa(String.fromCharCode(...sigBytes));
     } catch (e) {
       setQaBypassStatus(`declined:${e instanceof Error ? e.message : String(e)}`);
@@ -416,7 +426,7 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
     } catch (e) {
       setQaBypassStatus(`network-error:${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [solanaAddress, signSolanaMessage]);
+  }, [solanaAddress, signSolanaMessage, solanaWallet]);
 
   const filteredAssets = useMemo(() => {
     const q = assetSearch.toLowerCase();

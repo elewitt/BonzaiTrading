@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { usePrivy, useSessionSigners, useWallets, useSignTypedData } from "@privy-io/react-auth";
-import { useSolanaWallets, useSignTransaction, useSignMessage, useFundWallet } from "@privy-io/react-auth/solana";
+import { useWallets as useSolanaWallets, useSignTransaction, useSignMessage, useFundWallet } from "@privy-io/react-auth/solana";
 import { QRCodeSVG } from "qrcode.react";
 import Donut from "./components/Donut.jsx";
 import { useLongviewHl, usePositions, useAssets } from "./perps/useHyperliquid.js";
@@ -12,6 +12,7 @@ import MarketsExplorer from "./components/MarketsExplorer.jsx";
 import TradingAgentApp from "./agents/TradingAgentApp.jsx";
 import BottomTabBar from "./components/BottomTabBar.jsx";
 import { TELEGRAM_BOT_USERNAME, TELEGRAM_BOT_URL } from "./lib/telegram.js";
+import { signVersionedTxWithPrivy } from "./lib/privySolana.js";
 import AssetInfoModal from "./components/AssetInfoModal.jsx";
 import NewsPanel from "./components/NewsPanel.jsx";
 import HistoryScreen from "./components/HistoryScreen.jsx";
@@ -404,7 +405,12 @@ export default function App() {
   const { signTransaction } = useSignTransaction();
   const { signMessage } = useSignMessage();
   const { addSessionSigners, removeSessionSigners } = useSessionSigners();
-  const wallet = wallets.find((w) => w.walletClientType === "privy") || wallets[0];
+  // Privy v3's Solana `useWallets` returns ConnectedStandardSolanaWallet
+  // objects — no `walletClientType`; the embedded wallet is the one whose
+  // underlying standard wallet reports `isPrivyWallet`. This app configures
+  // no external Solana connectors, so `wallets[0]` is the same wallet, but
+  // the explicit check keeps it correct if that ever changes.
+  const wallet = wallets.find((w) => w.standardWallet?.isPrivyWallet) || wallets[0];
   const address = wallet?.address;
 
   // Read-only Perps data for the consolidated dashboard's Perps tab —
@@ -414,7 +420,9 @@ export default function App() {
   // confirmed sync gap; falling back to the linkedAccounts list works
   // around it).
   const { wallets: evmWallets } = useWallets();
-  const evmWallet = evmWallets.find((w) => w.walletClientType === "privy" && w.chainType === "ethereum");
+  // Privy v3's EVM `useWallets()` keys wallets by `type` where v2 used
+  // `chainType` — accept either.
+  const evmWallet = evmWallets.find((w) => w.walletClientType === "privy" && (w.chainType ?? w.type) === "ethereum");
   const evmLinkedAccount = user?.linkedAccounts?.find(
     (a) => a.type === "wallet" && a.chainType === "ethereum" && a.walletClientType === "privy"
   );
@@ -461,7 +469,7 @@ export default function App() {
     setQaBypassErr(null);
     try {
       const message = buildQaBypassMessage(address);
-      const sigBytes = await signMessage({ message: new TextEncoder().encode(message) });
+      const { signature: sigBytes } = await signMessage({ message: new TextEncoder().encode(message), wallet });
       const signature = btoa(String.fromCharCode(...sigBytes));
       setQaBypassCredentials({ address, message, signature });
       setQaBypassDone(true);
@@ -470,7 +478,7 @@ export default function App() {
     } finally {
       setQaBypassBusy(false);
     }
-  }, [address, signMessage]);
+  }, [address, signMessage, wallet]);
 
   // Referral attribution — same "capture from URL, persist across the login
   // redirect, consume once" shape as qa_bypass above. The code is stashed
@@ -720,7 +728,7 @@ export default function App() {
       // macOS/iOS with a card in Apple Wallet); Coinbase Onramp's Apple
       // Pay coverage is narrower, so pin to MoonPay rather than leaving
       // Privy to pick.
-      await fundWallet(address, { defaultFundingMethod: "card", card: { preferredProvider: "moonpay" }, asset: "USDC", cluster: { name: "mainnet-beta" } });
+      await fundWallet({ address, options: { defaultFundingMethod: "card", card: { preferredProvider: "moonpay" }, asset: "USDC", chain: "solana:mainnet" } });
     } catch (e) {
       setFundWalletError(e instanceof Error ? e.message : String(e));
     }
@@ -811,10 +819,10 @@ export default function App() {
     () => new Map(kaminoReserves.map((r) => [r.liquidityTokenMint, r])),
     [kaminoReserves]
   );
-  const signKaminoTx = async (tx) => {
-    if (wallet?.signTransaction) return wallet.signTransaction(tx);
-    return signTransaction({ transaction: tx, wallet });
-  };
+  const signKaminoTx = useCallback(
+    (tx) => signVersionedTxWithPrivy(tx, wallet, signTransaction),
+    [wallet, signTransaction],
+  );
 
   const kaminoCollateralDeposits = useMemo(
     () => kaminoLoans.flatMap((l) => l.loanInfo?.collateral?.deposits ?? []),
@@ -984,10 +992,10 @@ export default function App() {
   }, [myPortfolioTotal, portfolio, address]);
 
   /* ——— sign helper: Privy embedded wallet ——— */
-  const signWithWallet = useCallback(async (tx) => {
-    if (wallet?.signTransaction) return wallet.signTransaction(tx);
-    return signTransaction({ transaction: tx, wallet });
-  }, [wallet, signTransaction]);
+  const signWithWallet = useCallback(
+    (tx) => signVersionedTxWithPrivy(tx, wallet, signTransaction),
+    [wallet, signTransaction],
+  );
 
   /* ——— USDT deposit → USDC auto-convert, only after explicit confirmation ——— */
   const confirmUsdtConvert = async () => {
