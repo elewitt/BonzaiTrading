@@ -3,7 +3,7 @@ import { useWallets, useSendTransaction, useCreateWallet, useUser, useSignTypedD
 import { useWallets as useSolanaWallets, useSignTransaction, useSignMessage as useSolanaSignMessage } from "@privy-io/react-auth/solana";
 import { VersionedTransaction, Transaction, Connection, PublicKey } from "@solana/web3.js";
 
-import { DEFAULT_CONFIG, EQUITY_DEX, EQUITY_DEX_LABEL, displayCoin } from "./config.js";
+import { DEFAULT_CONFIG, EQUITY_DEX, EQUITY_DEX_LABEL } from "./config.js";
 import { API_BASE } from "../lib/api.js";
 import { buildQaBypassMessage, setQaBypassCredentials } from "../lib/qaBypass.js";
 import { evaluateGate, fetchIpCountry } from "./compliance/geoGate.js";
@@ -12,7 +12,7 @@ import { DeBridgeProvider } from "./funding/debridge.js";
 import { RealDeBridgeIo } from "./funding/realDebridge.js";
 import { CctpProvider, RealCctpIo } from "./funding/cctp.js";
 import { WithdrawOrchestrator } from "./funding/withdraw.js";
-import { useLongviewHl, useAssets, usePositions, useMoveDexFunds, usePortfolioStats } from "./useHyperliquid.js";
+import { useLongviewHl, useAssets, usePositions, useMoveDexFunds } from "./useHyperliquid.js";
 import { DepositWizard } from "./DepositWizard.jsx";
 import { WithdrawWizard } from "./WithdrawWizard.jsx";
 import { OrderTicket, PositionsPanel, MoveFundsCard } from "./PerpsPanel.jsx";
@@ -224,32 +224,6 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
     ...cryptoAccount.positions, ...equityAccount.positions,
   ], [cryptoAccount.positions, equityAccount.positions]);
   const moveDexFunds = useMoveDexFunds(hl, evmAddress, viemAccount);
-
-  // Fetched once here (not inside PerpsPerformancePanel, where it used to
-  // live) so the Positions tab's per-asset chart below and the performance
-  // panel's realized-P&L/trade-history can share the same fills poll
-  // instead of two independent ones running side by side on the same tab.
-  const { pnlHistory, fills, volume, stats } = usePortfolioStats(hl, evmAddress);
-
-  // Which position's chart shows on the Positions tab. Auto-picks the top
-  // of the open-positions list on load, and re-picks whenever the current
-  // selection is no longer an open position (closed elsewhere, or nothing
-  // selected yet) — but otherwise leaves a manual click alone, including
-  // through the position's own price/size changing on every poll.
-  const [selectedPositionCoin, setSelectedPositionCoin] = useState(null);
-  useEffect(() => {
-    if (!allPositions.length) return;
-    if (allPositions.some((p) => p.coin === selectedPositionCoin)) return;
-    setSelectedPositionCoin(allPositions[0].coin);
-  }, [allPositions, selectedPositionCoin]);
-  // AssetPriceChart only needs a name (for candle lookups) and a display
-  // label — built straight from the position itself rather than
-  // cross-referenced against the Market list, so this works for any open
-  // position regardless of the Trade tab's current category/search filter.
-  const positionsChartAsset = useMemo(() => {
-    const pos = allPositions.find((p) => p.coin === selectedPositionCoin);
-    return pos ? { name: pos.coin, displayName: displayCoin(pos.coin) } : null;
-  }, [allPositions, selectedPositionCoin]);
 
   // Fires once the wallet→Crypto leg of an Equities deposit lands (see
   // equityAutoMove above) — immediately continues with the Crypto→Equities
@@ -846,23 +820,12 @@ export default function PerpsApp({ solanaAddress, solBalance = 0, usdcBalance = 
 
       {tab === "account" && (
         <div className="perps-account-layout">
-          {/* Leads the tab — auto-shows the top open position's chart on
-              load, switches when a different row below is clicked. Same
-              AssetPriceChart the Trade tab uses, so it looks and behaves
-              identically; only the empty-state copy differs since there's
-              no Market list to point at here. */}
-          <AssetPriceChart hl={hl} asset={positionsChartAsset} fills={fills}
-            emptyHint="Open a position to see its chart here." />
-
           <div className="perps-positions-grid">
             <PositionsPanel hl={hl} user={evmAddress}
               tradingWallet={viemAccount}
               onPositionClosed={() => {}}
-              onAddToPosition={handleAddToPosition}
-              selectedCoin={selectedPositionCoin}
-              onSelectPosition={setSelectedPositionCoin} />
-            <PerpsPerformancePanel positions={allPositions}
-              pnlHistory={pnlHistory} fills={fills} volume={volume} stats={stats} />
+              onAddToPosition={handleAddToPosition} />
+            <PerpsPerformancePanel hl={hl} user={evmAddress} positions={allPositions} />
           </div>
         </div>
       )}
