@@ -212,11 +212,20 @@ function svgToClientPoint(svgEl, x, y) {
  * Everything else (nice-number ticks, the crosshair/tooltip hover layer,
  * x-axis time labels, the live-value pulse, loading/empty states) is
  * identical between all three.
+ *
+ * `markers` (price mode only): entry points to flag directly on the line —
+ * built for "where were my buys," but generic on the data ({ts, price,
+ * size}) rather than perps-specific. Rendered as small triangles with
+ * their own independent hover (a separate hit-target per marker, not
+ * folded into the crosshair's continuous pointermove tracking) so hovering
+ * one shows exactly what happened there without fighting the nearest-point
+ * crosshair logic.
  */
-export default function TimeSeriesChart({ points, period, loading, mode = "pnl", emptyText }) {
+export default function TimeSeriesChart({ points, period, loading, mode = "pnl", emptyText, markers }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null); // { idx, tipX, tipY, side }
+  const [markerHover, setMarkerHover] = useState(null); // { marker, tipX, tipY, side }
   const isPnl = mode === "pnl";
   const isProbability = mode === "probability";
   const label = isPnl ? deltaLabel : isProbability ? probabilityLabel : priceLabel;
@@ -273,6 +282,23 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
 
   const high = Math.max(...points.map((p) => p.v));
   const low = Math.min(...points.map((p) => p.v));
+
+  // Only meaningful on a price line, and only within the currently visible
+  // time window — a buy from a month ago has no sensible x position on a
+  // "Day" chart, so it's dropped rather than clamped to an edge (which
+  // would misleadingly suggest it happened at the start/end of this
+  // window). y is clamped to the plot area since a fill's exact executed
+  // price can sit a hair outside the axis range the candle series itself
+  // produced (real trade price vs. that period's rounded close).
+  const mappedMarkers = mode === "price" && markers?.length
+    ? markers
+        .filter((m) => m.ts >= tMin && m.ts <= tMax)
+        .map((m) => ({
+          ...m,
+          x: sx(m.ts),
+          y: Math.max(PAD.top, Math.min(PAD.top + inner.h, sy(m.price))),
+        }))
+    : [];
 
   // 4-5 x-axis labels, evenly spaced by TIME. Real feeds are frequently
   // unevenly sampled (e.g. a "Day" range whose points thin out overnight
@@ -334,6 +360,20 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
 
   const clearHover = () => setHover(null);
   const hoverPoint = hover ? renderPoints[hover.idx] : null;
+
+  // Independent of the crosshair's continuous pointermove tracking above —
+  // fires from each marker's own hit-target on enter/leave, positioned at
+  // that exact marker rather than the nearest line point.
+  const showMarkerTooltip = (marker) => {
+    const svg = svgRef.current;
+    const screen = svg && svgToClientPoint(svg, marker.x, marker.y);
+    const wrapRect = wrapRef.current?.getBoundingClientRect();
+    if (!screen || !wrapRect) return;
+    const relX = screen.x - wrapRect.left;
+    const relY = screen.y - wrapRect.top;
+    setMarkerHover({ marker, tipX: relX, tipY: relY, side: relX > wrapRect.width / 2 ? "left" : "right" });
+  };
+  const clearMarkerHover = () => setMarkerHover(null);
   const colorFor = (v) => (isPnl ? (v >= 0 ? "var(--gain)" : "var(--loss)") : (isGain ? "var(--gain)" : "var(--loss)"));
 
   // Axis ticks only need as much precision as the step between them
@@ -430,6 +470,29 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
           </text>
         ))}
 
+        {/* Buy markers — same green as every other "buy"/"long" accent in
+            the app (trade-chip.buy, pos-side-badge.long), so a marker here
+            reads as the same concept without introducing a new color. A
+            visible small triangle plus a much larger invisible circle
+            underneath it for the actual hover/tap target — the triangle
+            alone is too small to reliably point at, especially on touch. */}
+        {mappedMarkers.map((m, i) => (
+          <g key={i}
+            onPointerEnter={() => showMarkerTooltip(m)}
+            onPointerLeave={clearMarkerHover}
+            style={{ cursor: "pointer" }}>
+            <circle cx={m.x.toFixed(1)} cy={m.y.toFixed(1)} r="11" fill="transparent" />
+            <path
+              d={`M${m.x.toFixed(1)},${(m.y - 9).toFixed(1)} L${(m.x - 5).toFixed(1)},${(m.y - 1).toFixed(1)} L${(m.x + 5).toFixed(1)},${(m.y - 1).toFixed(1)} Z`}
+              fill="var(--gain)"
+              stroke="var(--card)"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              opacity={markerHover?.marker.ts === m.ts ? 1 : 0.85}
+            />
+          </g>
+        ))}
+
         {/* Crosshair + snapped point, only while actively hovering/focused. */}
         {hover && (
           <g pointerEvents="none">
@@ -441,12 +504,21 @@ export default function TimeSeriesChart({ points, period, loading, mode = "pnl",
         )}
       </svg>
 
-      {hoverPoint && (
+      {hoverPoint && !markerHover && (
         <div className={`ts-chart-tooltip ${hover.side}`} style={{ left: hover.tipX, top: hover.tipY }}>
           <span className={`mono ts-chart-tooltip-value ${isPnl ? (hoverPoint.v >= 0 ? "gain" : "loss") : (isGain ? "gain" : "loss")}`}>
             {labelExact(hoverPoint.v)}
           </span>
           <span className="tiny muted">{tooltipTimeLabel(hoverPoint.ts, period)}</span>
+        </div>
+      )}
+
+      {markerHover && (
+        <div className={`ts-chart-tooltip ts-chart-marker-tooltip ${markerHover.side}`} style={{ left: markerHover.tipX, top: markerHover.tipY }}>
+          <span className="mono ts-chart-tooltip-value gain">
+            Bought {markerHover.marker.size} @ {priceLabel(markerHover.marker.price)}
+          </span>
+          <span className="tiny muted">{tooltipTimeLabel(markerHover.marker.ts, period)}</span>
         </div>
       )}
 

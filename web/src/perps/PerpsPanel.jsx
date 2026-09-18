@@ -382,7 +382,7 @@ export function OrderTicket({
 // position reads the same at a glance in both places — dressed up further
 // here with a per-side accent, bolder key numbers, and Add/Close actions,
 // since this is the dedicated account page rather than a compact summary.
-export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAddToPosition }) {
+export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAddToPosition, selectedCoin, onSelectPosition }) {
   // Crypto and equities ("xyz") are independently-margined dexs on
   // Hyperliquid — querying only the crypto dex here meant equities
   // positions never appeared in this panel at all, regardless of how long
@@ -423,7 +423,15 @@ export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAd
             </thead>
             <tbody>
               {positions.map((p) => (
-                <tr key={`${p.dex}-${p.coin}`}>
+                <tr key={`${p.dex}-${p.coin}`}
+                  className={`pt-row-clickable ${selectedCoin === p.coin ? "pt-row-selected" : ""}`}
+                  role={onSelectPosition ? "button" : undefined}
+                  tabIndex={onSelectPosition ? 0 : undefined}
+                  aria-pressed={onSelectPosition ? selectedCoin === p.coin : undefined}
+                  onClick={() => onSelectPosition?.(p.coin)}
+                  onKeyDown={(e) => {
+                    if ((e.key === "Enter" || e.key === " ") && onSelectPosition) { e.preventDefault(); onSelectPosition(p.coin); }
+                  }}>
                   <td className={`pt-asset pos-accent-${p.side}`}>
                     <span className="asset">
                       <span className="serif pos-asset-name">{displayCoin(p.coin)}</span>
@@ -450,7 +458,7 @@ export function PositionsPanel({ hl, user, tradingWallet, onPositionClosed, onAd
                     {p.unrealizedPnl >= 0 ? "+" : ""}${usd(p.unrealizedPnl)}
                   </td>
                   <td data-label="Leverage"><span className="pos-leverage-chip">{p.leverage}x</span></td>
-                  <td className="pt-action">
+                  <td className="pt-action" onClick={(e) => e.stopPropagation()}>
                     <span className="pt-action-group">
                       <button className="lvp-add-btn" onClick={() => onAddToPosition?.(p)}>Add</button>
                       <PerpsCloseCell p={p} hl={hl} user={user} tradingWallet={tradingWallet} onClosed={onPositionClosed} />

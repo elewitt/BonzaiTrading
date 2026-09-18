@@ -899,6 +899,14 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .positions-table tbody tr:last-child td { border-bottom: none; }
 .positions-table tbody tr { transition: background .15s; }
 .positions-table tbody tr:hover { background: var(--paper); }
+/* Clicking a row switches the per-asset chart above (PerpsApp's Positions
+   tab) — same selected-state tint .perps-asset-row.active already uses for
+   the Trade tab's market list, so "this is the thing currently shown in
+   the chart" reads as one consistent visual language across both lists. */
+.positions-table tbody tr.pt-row-clickable { cursor: pointer; }
+.positions-table tbody tr.pt-row-selected,
+.positions-table tbody tr.pt-row-selected:hover { background: rgba(26,68,51,.08); }
+.positions-table tbody tr.pt-row-selected td.pt-action { background: rgba(26,68,51,.08); }
 /* Pinned to the scroll container's right edge — on a table with enough
    columns to force .positions-table-wrap's horizontal scroll (confirmed on
    a real narrow account-page layout: the Add/Close buttons scrolled fully
@@ -2339,7 +2347,7 @@ a.trow { color: inherit; text-decoration: none; }
    (P&L chart, stat tiles, trade history) side by side, each with real
    room — 1040px was sized for the table alone, before it gained a
    neighboring column. */
-.perps-account-layout { padding: 24px 28px; max-width: 1900px; }
+.perps-account-layout { padding: 24px 28px; max-width: 1900px; display: flex; flex-direction: column; gap: 22px; }
 /* The performance panel gets priority (1.5fr vs 1fr) since a price/PnL
    chart reads better with real width — TimeSeriesChart's fixed aspect
    ratio means a wider column is a taller, more legible chart, not just a
@@ -2693,6 +2701,17 @@ a.trow { color: inherit; text-decoration: none; }
 .ts-chart-tooltip-value { font-size: 14px; font-weight: 600; }
 .ts-chart-tooltip-value.gain { color: #1FA971; }
 .ts-chart-tooltip-value.loss { color: #DB5A3C; }
+
+/* Small legend under AssetPriceChart, only shown when there's at least one
+   buy marker on it — a triangle alone (with no key) risks reading as a
+   rendering glitch rather than deliberate, especially the first time
+   someone sees it. */
+.lvp-chart-marker-legend { display: flex; align-items: center; gap: 6px; margin: 10px 2px 0; }
+.lvp-chart-marker-legend-swatch {
+  width: 0; height: 0; display: inline-block;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-bottom: 8px solid var(--gain);
+}
 .ts-chart-tooltip .muted { color: var(--paper); opacity: .65; }
 
 .lvp-stats-row {

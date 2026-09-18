@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { usePortfolioStats, useAssetCandles } from "./useHyperliquid.js";
+import { useAssetCandles } from "./useHyperliquid.js";
 import TimeSeriesChart, { priceLabel } from "../components/TimeSeriesChart.jsx";
 import { displayCoin } from "./config.js";
 
@@ -33,7 +33,7 @@ const PERIOD_LOOKBACK_MS = {
 // you actually want while sizing an order — "what is this market doing
 // right now" — compete for room with account-level info that has nothing
 // to do with the trade in front of you.
-export function AssetPriceChart({ hl, asset }) {
+export function AssetPriceChart({ hl, asset, fills, emptyHint }) {
   const [period, setPeriod] = useState("perpDay");
   const { points: candlePoints, loading: candlesLoading } = useAssetCandles(hl, asset?.name, period);
 
@@ -41,6 +41,16 @@ export function AssetPriceChart({ hl, asset }) {
   const assetLast = assetPoints.length ? assetPoints[assetPoints.length - 1].v : null;
   const assetFirst = assetPoints.length ? assetPoints[0].v : null;
   const assetPctChange = assetFirst ? ((assetLast - assetFirst) / assetFirst) * 100 : null;
+
+  // Where this asset was actually bought — plotted directly on the line so
+  // "how does my entry compare to now" reads at a glance instead of
+  // requiring a mental cross-reference against the Trade History table.
+  // Sells/closes aren't marked — the ask was specifically "when buys were
+  // made," and mixing both would clutter a chart that's meant to answer
+  // one question clearly.
+  const buyMarkers = (fills || [])
+    .filter((f) => f.isBuy && f.coin === asset?.name)
+    .map((f) => ({ ts: f.time, price: f.price, size: f.size }));
 
   return (
     <div className="lvp-card lvp-pnl-card-full lvp-chart-card-lg">
@@ -72,7 +82,14 @@ export function AssetPriceChart({ hl, asset }) {
       </div>
 
       <TimeSeriesChart key={`a-${period}-${asset?.name}`} points={assetPoints} period={period} loading={candlesLoading} mode="price"
-        emptyText={asset ? "No price history available for this asset." : "Select an asset from the Market list to see its chart."} />
+        markers={buyMarkers}
+        emptyText={asset ? "No price history available for this asset." : (emptyHint || "Select an asset from the Market list to see its chart.")} />
+
+      {buyMarkers.length > 0 && (
+        <p className="tiny muted lvp-chart-marker-legend">
+          <span className="lvp-chart-marker-legend-swatch" aria-hidden="true" /> Buy
+        </p>
+      )}
     </div>
   );
 }
@@ -82,11 +99,10 @@ export function AssetPriceChart({ hl, asset }) {
 // asset price chart for space), the account stat tiles, and trade history.
 // No "Open Positions" list of its own — that would just duplicate the real
 // PositionsPanel table this sits beside.
-export function PerpsPerformancePanel({ hl, user, positions }) {
+export function PerpsPerformancePanel({ positions, pnlHistory, fills, volume, stats }) {
   const [period, setPeriod] = useState("perpDay");
   const [metric, setMetric] = useState("unrealized"); // "unrealized" | "realized"
   const [search, setSearch] = useState("");
-  const { pnlHistory, fills, volume, stats } = usePortfolioStats(hl, user);
 
   const unrealizedPnl = useMemo(
     () => (positions || []).reduce((sum, p) => sum + (p.unrealizedPnl || 0), 0),
