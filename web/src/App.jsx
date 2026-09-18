@@ -1691,11 +1691,23 @@ export default function App() {
         const needsWithdraw = intent.action !== "repay";
         let withdrawDeposit = null, withdrawReserve = null, withdrawAmt = 0, withdrawAmtStr = "0", withdrawMax = 0;
         if (needsWithdraw) {
-          const wanted = intent.asset.toUpperCase();
-          withdrawDeposit = kaminoCollateralDeposits.find((d) => d.tokenName?.toUpperCase().replace(/X$/, "") === wanted);
-          if (!withdrawDeposit) throw new Error(`You don't have ${intent.asset} deposited as collateral.`);
+          if (intent.asset) {
+            const wanted = intent.asset.toUpperCase();
+            withdrawDeposit = kaminoCollateralDeposits.find((d) => d.tokenName?.toUpperCase().replace(/X$/, "") === wanted);
+            if (!withdrawDeposit) throw new Error(`You don't have ${intent.asset} deposited as collateral.`);
+          } else {
+            // No specific stock named ("withdraw my collateral") — resolve
+            // against what's actually deposited rather than requiring the
+            // user to name a ticker they may not think of their holding as.
+            if (kaminoCollateralDeposits.length === 0) throw new Error("You don't have any collateral deposited to withdraw.");
+            if (kaminoCollateralDeposits.length > 1) {
+              const held = kaminoCollateralDeposits.map((d) => displayTicker(d.tokenName)).join(", ");
+              throw new Error(`You have collateral in more than one stock (${held}) — say which one, e.g. "withdraw my ${displayTicker(kaminoCollateralDeposits[0].tokenName)}".`);
+            }
+            withdrawDeposit = kaminoCollateralDeposits[0];
+          }
           withdrawReserve = kaminoReserves.find((r) => r.liquidityTokenMint === withdrawDeposit.tokenMint);
-          if (!withdrawReserve) throw new Error(`Couldn't find the reserve for ${intent.asset}.`);
+          if (!withdrawReserve) throw new Error(`Couldn't find the reserve for ${displayTicker(withdrawDeposit.tokenName)}.`);
 
           // Once the full loan is paid off (by this same command, or
           // already zero), the whole deposit unlocks — not just Kamino's

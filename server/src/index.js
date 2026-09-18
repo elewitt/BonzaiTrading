@@ -1041,7 +1041,7 @@ Fields:
   - "repay" — only pay down USDC debt, e.g. "pay back my loan", "repay $200".
   - "withdraw" — only withdraw collateral back to the wallet, e.g. "withdraw my TSLA", "take out my AAPL collateral".
   - "repay_and_withdraw" — pay down debt AND withdraw collateral in the same command, e.g. "pay back my loan and withdraw my TSLA".
-- "asset": the TICKER of the stock/ETF, WITHOUT any trailing "x" suffix (e.g. "Apple"→"AAPL"). Needed for deposit/deposit_and_borrow (what to post as collateral) and withdraw/repay_and_withdraw (what collateral to withdraw). null for borrow/repay (no specific asset needed — debt is always USDC).
+- "asset": the TICKER of the stock/ETF, WITHOUT any trailing "x" suffix (e.g. "Apple"→"AAPL"). REQUIRED for deposit/deposit_and_borrow (what NEW asset to post as collateral — never guess this). For withdraw/repay_and_withdraw, set it when a specific stock is named ("withdraw my TSLA"); leave it null when the user means their collateral generically with no specific stock named ("withdraw my collateral", "pay back my loan and withdraw everything") — that's a valid, common way to phrase it, not a parsing failure. null for borrow/repay (no specific asset needed — debt is always USDC).
 - "depositSizeType": one of "all", "percent", "units" (a specific share count), "usd" (a specific dollar value), or "unspecified". Only relevant for deposit/deposit_and_borrow.
 - "depositSizeValue": the number paired with depositSizeType. null for "all"/"unspecified".
 - "borrowSizeType": one of "all", "percent", "usd", or "unspecified". Only relevant for borrow/deposit_and_borrow.
@@ -1055,7 +1055,8 @@ Fields:
 Rules:
 - NEVER compute or guess a real dollar amount yourself — only extract what the user actually said.
 - Only fill in the size fields relevant to the chosen action — leave the rest "unspecified"/null.
-- "Pay back my loan and withdraw my TSLA" → action "repay_and_withdraw", asset "TSLA", repaySizeType "all", withdrawSizeType "all".`;
+- "Pay back my loan and withdraw my TSLA" → action "repay_and_withdraw", asset "TSLA", repaySizeType "all", withdrawSizeType "all".
+- "Pay back my loan and withdraw my collateral" (no stock named) → action "repay_and_withdraw", asset null, repaySizeType "all", withdrawSizeType "all" — the client resolves which stock(s) against what's actually deposited.`;
 
   const parsed = await callClaudeForJson({ system, prompt, maxTokens: 300, label: "parse-borrow" });
 
@@ -1063,7 +1064,14 @@ Rules:
   const action = validActions.includes(parsed.action) ? parsed.action : null;
   if (!action) throw new Error("Couldn't tell what to do — try \"deposit\", \"borrow\", \"repay\", or \"withdraw\".");
 
-  const needsAsset = ["deposit", "deposit_and_borrow", "withdraw", "repay_and_withdraw"].includes(action);
+  // Only deposit/deposit_and_borrow REQUIRE a named asset — that's a new
+  // collateral choice with no reasonable default. withdraw/repay_and_withdraw
+  // are getting the user's own money back, so "asset" there is optional:
+  // null just means "my collateral" generically ("withdraw everything",
+  // "pay back my loan and withdraw my collateral") — the client resolves
+  // that against what's actually deposited (auto-picks when there's exactly
+  // one position, asks to disambiguate when there's more than one).
+  const needsAsset = ["deposit", "deposit_and_borrow"].includes(action);
   const needsDepositSize = ["deposit", "deposit_and_borrow"].includes(action);
   const needsBorrowSize = ["borrow", "deposit_and_borrow"].includes(action);
   const needsRepaySize = ["repay", "repay_and_withdraw"].includes(action);
