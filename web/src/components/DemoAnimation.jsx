@@ -7,6 +7,12 @@ import { useState, useEffect } from "react";
 // so this actually reads as "the real app," not a generic marketing demo.
 const TABS = ["Brokerage", "Perpetual Futures", "Borrow / Lend", "Predictions"];
 
+// `legs` are what actually plays during the executing phase below — real
+// swap routes (USDC → the thing being bought/sold), same shape and same
+// route-arrow language as the app's own real execute-screen (App.jsx's
+// `.leg`/`legs` — see "Routing your swaps", "{n}/{total} confirmed").
+// Sized to add up to `value` above (or, for brokerage, to each row's own
+// pct of it) so the numbers a viewer glances at all agree with each other.
 const SCENES = [
   {
     kind: "alloc",
@@ -21,6 +27,12 @@ const SCENES = [
       { sym: "GLD",  name: "Gold ETF",    badge: "ETF",        price: "$241.75", pct: 20, color: "#9AC4A8" },
     ],
     confirm: "4 swaps ready to execute",
+    legs: [
+      { route: "USDC → NVDA", usd: "$2,500.00" },
+      { route: "USDC → AAPL", usd: "$2,500.00" },
+      { route: "USDC → SPY",  usd: "$3,000.00" },
+      { route: "USDC → GLD",  usd: "$2,000.00" },
+    ],
   },
   {
     kind: "attrs",
@@ -35,6 +47,7 @@ const SCENES = [
       { code: "PNL",   label: "Unrealized",   value: "+$64.20", gain: true },
     ],
     confirm: "Position opened",
+    legs: [{ route: "USDC → SOL-PERP", usd: "$2,400.00" }],
   },
   {
     kind: "attrs",
@@ -48,6 +61,7 @@ const SCENES = [
       { code: "MAX",  label: "Max LTV",                    value: "55%" },
     ],
     confirm: "Loan opened",
+    legs: [{ route: "TSLA → USDC", usd: "$500.00" }],
   },
   {
     kind: "alloc",
@@ -60,15 +74,27 @@ const SCENES = [
       { sym: "NO",  name: "Fed holds steady", price: "32¢", pct: 32, color: "#963626" },
     ],
     confirm: "Order filled · 42 shares",
+    legs: [{ route: "USDC → YES", usd: "$28.56" }],
   },
 ];
 
-// phases: 0=blank 1=typing 2=processing 3=revealing 4=hold 5=fading
+// Same four states (and the same order) as the real execute screen's
+// per-leg status machine — queued, routing, signing, executing, confirmed.
+const LEG_ICON = { queued: "○", routing: "↻", signing: "◎", executing: "↑", confirmed: "✓" };
+const LEG_LABEL = { queued: "Pending", routing: "Routing…", signing: "Sign in wallet…", executing: "Broadcasting…", confirmed: "Confirmed ↗" };
+const LEG_STAGE_MS = { routing: 260, signing: 380, executing: 260, confirmed: 220 };
+const LEG_STAGE_ORDER = ["routing", "signing", "executing", "confirmed"];
+
+// phases: 0=blank 1=typing 2=executing (real per-leg routing/signing/
+// broadcasting/confirmed, like the app's own execute screen) 3=revealing
+// 4=hold 5=fading
 export default function DemoAnimation({ onSceneChange }) {
   const [sceneIdx, setSceneIdx] = useState(0);
   const [phase, setPhase]       = useState(0);
   const [typedLen, setTypedLen] = useState(0);
   const [shownRows, setShownRows] = useState(0);
+  const [legIdx, setLegIdx]     = useState(0);
+  const [legStage, setLegStage] = useState("routing");
 
   const scene = SCENES[sceneIdx];
 
@@ -90,7 +116,21 @@ export default function DemoAnimation({ onSceneChange }) {
         t = setTimeout(() => setPhase(2), 500);
       }
     } else if (phase === 2) {
-      t = setTimeout(() => setPhase(3), 1300);
+      // Steps each leg through the exact same routing → signing →
+      // broadcasting → confirmed sequence the real execute screen uses,
+      // one leg at a time — so "4 swaps ready to execute" actually plays
+      // out as 4 real-looking confirmations, not a generic spinner.
+      t = setTimeout(() => {
+        const stagePos = LEG_STAGE_ORDER.indexOf(legStage);
+        if (stagePos < LEG_STAGE_ORDER.length - 1) {
+          setLegStage(LEG_STAGE_ORDER[stagePos + 1]);
+        } else if (legIdx < scene.legs.length - 1) {
+          setLegIdx((i) => i + 1);
+          setLegStage("routing");
+        } else {
+          setPhase(3);
+        }
+      }, LEG_STAGE_MS[legStage]);
     } else if (phase === 3) {
       if (shownRows < scene.rows.length) {
         t = setTimeout(() => setShownRows(n => n + 1), 170);
@@ -103,15 +143,18 @@ export default function DemoAnimation({ onSceneChange }) {
       t = setTimeout(() => {
         setTypedLen(0);
         setShownRows(0);
+        setLegIdx(0);
+        setLegStage("routing");
         setPhase(0);
         setSceneIdx(i => (i + 1) % SCENES.length);
       }, 700);
     }
     return () => clearTimeout(t);
-  }, [phase, typedLen, shownRows, scene]);
+  }, [phase, typedLen, shownRows, legIdx, legStage, scene]);
 
   const showCursor     = phase <= 1;
-  const showProcessing = phase === 2;
+  const showExecuting  = phase === 2;
+  const legsConfirmed  = phase > 2 ? scene.legs.length : legIdx + (legStage === "confirmed" ? 1 : 0);
   const showResult     = phase >= 3;
   const isFading        = phase === 5;
 
@@ -146,12 +189,25 @@ export default function DemoAnimation({ onSceneChange }) {
         ))}
       </div>
 
-      {/* Processing */}
-      <div className={`demo-processing ${showProcessing ? "demo-visible" : ""}`}>
-        <span className="demo-proc-dot" />
-        <span className="demo-proc-dot" />
-        <span className="demo-proc-dot" />
-        <span className="demo-proc-text">Working…</span>
+      {/* Executing — same route-arrow legs, icon badges, and status wording
+          as the real execute screen (App.jsx's own .leg/.leg-icon-badge/
+          .leg-status-badge), just sized to fit this card. */}
+      <div className={`demo-exec ${showExecuting ? "demo-visible" : ""}`}>
+        <div className="demo-exec-head">
+          <span className="demo-exec-title">Routing your {scene.legs.length > 1 ? "swaps" : "order"}</span>
+          <span className="mono tiny muted">{legsConfirmed} / {scene.legs.length} confirmed</span>
+        </div>
+        {scene.legs.map((leg, i) => {
+          const status = i < legIdx ? "confirmed" : i === legIdx ? legStage : "queued";
+          return (
+            <div className={`leg ${status}`} key={i}>
+              <span className={`leg-icon-badge ${status}`}>{LEG_ICON[status]}</span>
+              <span className="leg-route mono">{leg.route}</span>
+              <span className="mono tiny muted">{leg.usd}</span>
+              <span className={`leg-status-badge ${status}`}>{LEG_LABEL[status]}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* Result — a light table-card, same visual language as the real

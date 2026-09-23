@@ -160,6 +160,12 @@ const PRODUCT_TABS = [
         { sym: "GLD",  name: "Gold ETF",    badge: "ETF",   price: "$241.75", pct: 20, color: "#9AC4A8" },
       ],
       confirm: "4 swaps ready to execute",
+      legs: [
+        { route: "USDC → NVDA", usd: "$2,500.00" },
+        { route: "USDC → AAPL", usd: "$2,500.00" },
+        { route: "USDC → SPY",  usd: "$3,000.00" },
+        { route: "USDC → GLD",  usd: "$2,000.00" },
+      ],
     },
   },
   {
@@ -192,6 +198,7 @@ const PRODUCT_TABS = [
         { code: "PNL",   label: "Unrealized",  value: "+$64.20", gain: true },
       ],
       confirm: "Position opened",
+      legs: [{ route: "USDC → SOL-PERP", usd: "$2,400.00" }],
     },
   },
   {
@@ -224,6 +231,7 @@ const PRODUCT_TABS = [
         { code: "MAX",  label: "Max LTV",                    value: "55%" },
       ],
       confirm: "Loan opened",
+      legs: [{ route: "TSLA → USDC", usd: "$500.00" }],
     },
   },
   {
@@ -253,6 +261,7 @@ const PRODUCT_TABS = [
         { sym: "NO",  name: "Fed holds steady", price: "32¢", pct: 32, color: "#963626" },
       ],
       confirm: "Order filled · 42 shares",
+      legs: [{ route: "USDC → YES", usd: "$28.56" }],
     },
   },
 ];

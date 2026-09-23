@@ -284,24 +284,30 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .demo-seg-ctrl { margin-bottom: 16px; width: fit-content; }
 .demo-seg-btn.seg-btn { font-size: 10.5px; padding: 5px 10px; }
 
-/* Processing */
-.demo-processing {
-  display: flex; align-items: center; gap: 8px;
+/* Executing — a shrunk-to-fit version of the real execute screen
+   (.leg/.leg-icon-badge/.leg-status-badge below are the exact same classes
+   App.jsx's own "Routing your swaps" modal uses; only this wrapper and
+   .demo-exec-head are demo-specific, so a leg's colors/icons/wording never
+   drift from what actually shows up mid-trade in the app). */
+.demo-exec {
   height: 0; overflow: hidden; opacity: 0;
   transition: opacity 0.25s, height 0.25s;
   margin-bottom: 0;
 }
-.demo-processing.demo-visible {
-  height: 24px; opacity: 1; margin-bottom: 10px;
+.demo-exec.demo-visible {
+  height: auto; opacity: 1; margin-bottom: 10px;
 }
-.demo-proc-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--pine);
-  animation: demo-proc-pulse 1.2s ease-in-out infinite;
+.demo-exec-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 2px;
 }
-.demo-proc-dot:nth-child(2) { animation-delay: 0.2s; }
-.demo-proc-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes demo-proc-pulse { 0%,100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
-.demo-proc-text { font-size: 11px; color: var(--moss); font-style: italic; }
+.demo-exec-title { font-size: 11px; font-weight: 600; color: var(--ink); }
+.demo-exec .leg {
+  grid-template-columns: 20px 1fr auto auto; gap: 8px; padding: 7px 0;
+}
+.demo-exec .leg-icon-badge { width: 18px; height: 18px; font-size: 9px; }
+.demo-exec .leg-route { font-size: 11.5px; }
+.demo-exec .leg-status-badge { font-size: 9.5px; padding: 2px 7px; }
 
 /* Result panel — the real .table-card, just recessed a shade against the
    lighter card above it so it still reads as its own panel. */
