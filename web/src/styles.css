@@ -3531,7 +3531,16 @@ a.trow { color: inherit; text-decoration: none; }
   animation: pc-materialize .45s cubic-bezier(.2,.8,.2,1) forwards;
 }
 @keyframes pc-materialize { to { opacity: 1; transform: translateY(0) scale(1); } }
-.pc-result-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+.pc-result-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 16px; }
+.pc-result-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+/* Same pill-toggle look as every real period/category switch in the app
+   (.lvp-pct-btn/.sel) — sized down slightly since it sits in a result
+   header rather than a full card top-row. */
+.pc-toggle { display: flex; gap: 4px; background: var(--paper); border-radius: 999px; padding: 3px; }
+.pc-toggle .lvp-pct-btn { padding: 5px 13px; font-size: 11.5px; border-radius: 999px; }
+.pc-toggle .lvp-pct-btn.sel { background: var(--pine); color: #fff; }
+.pc-donut-wrap { display: flex; justify-content: center; padding: 8px 0 4px; }
+.pc-chart-wrap { margin: 4px 0 2px; }
 .pc-result-value { font-size: 26px; margin: 0; color: var(--ink); }
 .pc-rows { display: flex; flex-direction: column; }
 .pc-row {
