@@ -3023,7 +3023,7 @@ export default function App() {
           portfolio={portfolio}
           perpsPositions={perpsPositions} perpsAccountValue={perpsAccountValue} perpsPnl={perpsPnl}
           kaminoCollateralDeposits={kaminoCollateralDeposits} kaminoDebtBorrows={kaminoDebtBorrows}
-          hl={hl} evmAddress={evmAddress}
+          hl={hl} evmAddress={evmAddress} address={address}
           onBack={goHome}
           onNavigate={(target) => (target === "dash" ? goHome() : setView(target))}
         />

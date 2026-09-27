@@ -3513,6 +3513,12 @@ a.trow { color: inherit; text-decoration: none; }
   transition: all .15s;
 }
 .pc-new-btn:hover { border-color: var(--pine); color: var(--pine); }
+.pc-clear-btn {
+  flex-shrink: 0; background: none; border: none; font-family: inherit;
+  font-size: 12px; color: var(--moss); cursor: pointer; padding: 6px 4px; text-decoration: underline;
+  text-decoration-color: var(--line);
+}
+.pc-clear-btn:hover { color: var(--loss); text-decoration-color: var(--loss); }
 
 .pc-examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; max-width: 640px; }
 .pc-example-chip { cursor: pointer; background: var(--card); font-family: inherit; }
@@ -3523,15 +3529,44 @@ a.trow { color: inherit; text-decoration: none; }
 .pc-dot:nth-child(2) { animation-delay: .15s; }
 .pc-dot:nth-child(3) { animation-delay: .3s; }
 @keyframes pc-pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+.pc-unknown { margin-top: 22px; text-align: center; }
 
-/* Result panel — materializes in, doesn't just appear: a slight rise + a
-   soft scale-up reads as something assembling itself, not a page swap. */
-.pc-result {
-  width: min(680px, 92vw); margin-top: 30px; opacity: 0; transform: translateY(10px) scale(.98);
-  animation: pc-materialize .45s cubic-bezier(.2,.8,.2,1) forwards;
+/* The canvas — each card is a real, separately-bordered surface (reuses
+   .lvp-card's own look) so several at once read as distinct, combinable
+   widgets rather than one continuous scroll. auto-fill lets it reflow from
+   one column up to several as cards are added, without a fixed count. */
+.pc-grid {
+  width: min(1160px, 94vw);
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 20px; margin-top: 28px; align-items: start;
 }
+.pc-card {
+  position: relative; cursor: grab;
+  opacity: 0; transform: translateY(10px) scale(.98);
+  animation: pc-materialize .45s cubic-bezier(.2,.8,.2,1) forwards;
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.pc-card:active { cursor: grabbing; }
+.pc-card-focused { border-color: var(--pine); box-shadow: 0 0 0 2px rgba(26,68,51,.12), 0 10px 26px rgba(10,24,18,.08); }
+/* The real Donut's legend table (.alloc-row, shared with the main
+   dashboard) needs more like 650px+ to lay out its own columns without
+   crowding — a plain 400px grid cell clipped it. Spanning two columns
+   gives it that room without a special-cased fixed width; on a narrow
+   viewport with only one column anyway, this collapses to no-op. */
+.pc-card-wide { grid-column: span 2; }
+@media (max-width: 860px) { .pc-card-wide { grid-column: span 1; } }
 @keyframes pc-materialize { to { opacity: 1; transform: translateY(0) scale(1); } }
-.pc-result-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 16px; }
+.pc-card-remove {
+  position: absolute; top: 14px; right: 14px; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--paper); color: var(--moss); font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s;
+}
+.pc-card-remove:hover { background: var(--loss); border-color: var(--loss); color: #fff; }
+@media (max-width: 480px) {
+  .pc-grid { grid-template-columns: 1fr; }
+}
+
+.pc-result-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 16px; padding-right: 24px; }
 .pc-result-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 /* Same pill-toggle look as every real period/category switch in the app
    (.lvp-pct-btn/.sel) — sized down slightly since it sits in a result

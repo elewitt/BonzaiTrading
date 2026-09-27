@@ -1,46 +1,55 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { displayTicker, usd } from "../lib/api.js";
 import { usePortfolioStats } from "../perps/useHyperliquid.js";
 import Donut from "./Donut.jsx";
 import TimeSeriesChart from "./TimeSeriesChart.jsx";
+import PredictionPositionsPanel from "./PredictionPositionsPanel.jsx";
 
 /**
  * An experimental alternate front door to the app: no dashboard, no tabs —
- * just a prompt bar. Ask for a thing, that thing materializes. This is a
- * genuinely working prototype, not a mockup — every number rendered here
- * comes from the same live state (portfolio/perpsPositions/kaminoLoans) the
- * real dashboard and PerpsApp/BorrowApp already compute, and every chart is
- * the app's own real chart component (Donut, TimeSeriesChart) — not a
- * redrawn stand-in — so "make it crisp" means it already inherited the
- * same crisp the rest of the app did.
+ * just a prompt bar. Ask for something and it materializes as a card on a
+ * canvas; ask for something else and it joins the first one instead of
+ * replacing it — "combine them as you see fit" is the actual point, not
+ * just a single-answer lookup. Cards can be dragged to reorder, removed,
+ * and reformatted (typed follow-up OR a clicked pill — both paths land on
+ * the same state), and the whole layout survives a reload via localStorage.
+ * This is a genuinely working prototype, not a mockup: every number comes
+ * from the same live state the real dashboard/PerpsApp/BorrowApp compute,
+ * and every chart is the app's own real chart component (Donut,
+ * TimeSeriesChart) — "make it crisp" mostly meant "reuse what's already
+ * crisp" rather than drawing a new chart language from scratch.
  *
  * Intent matching is a small client-side keyword table, deliberately not a
  * server round-trip to Claude — the whole point being tested here is that
  * asking feels instant. If this direction sticks, swap resolveIntent() for
  * a real classifier without touching anything else; the render side
  * doesn't care how `intentKey` was decided.
- *
- * "Manipulate on the fly" has two paths that land on the same state, by
- * design — a typed follow-up ("show me in pie chart form") and a clicked
- * toggle pill do the exact same setDisplayMode/setPnlPeriod call. Neither
- * is the "real" way to do it; a person should be able to use whichever
- * they reach for first.
  */
 const INTENTS = [
-  { key: "pnl",       label: "P&L",                 test: /p&l|pnl|profit|\bloss(es)?\b|performance/i },
+  { key: "pnl",         label: "P&L",                  test: /p&l|pnl|profit|\bloss(es)?\b|performance/i },
   // \bown\b (not a bare "own" substring) so this doesn't fire on any word
   // that merely contains "own" (shown, brown, downturn, ...) — a real bug
-  // in the first version of this list, caught while extending it.
-  { key: "portfolio", label: "Portfolio",            test: /portfolio|holdings|net worth|stocks|equit|brokerage|\bown\b/i },
-  { key: "perps",     label: "Perpetual positions",  test: /perp|leverage|\blong\b|\bshort\b|liquidat/i },
-  { key: "borrow",    label: "Loans",                test: /loan|borrow|debt|collateral|lend/i },
+  // caught while extending this list the first time.
+  { key: "portfolio",   label: "Portfolio",            test: /portfolio|holdings|net worth|stocks|equit|brokerage|\bown\b/i },
+  { key: "perps",       label: "Perpetual positions",  test: /perp|leverage|\blong\b|\bshort\b|liquidat/i },
+  { key: "borrow",      label: "Loans",                test: /loan|borrow|debt|collateral|lend/i },
+  { key: "predictions", label: "Predictions",          test: /predict|kalshi|wager|\byes\b.*\bno\b/i },
 ];
+
+// One card per kind, singleton — asking for the same kind twice updates
+// the existing card (and brings it into focus) rather than piling up
+// duplicates.
+const CARD_TITLES = {
+  portfolio: "Your Portfolio", pnl: "Perpetual P&L", perps: "Perpetual Positions",
+  borrow: "Loans", predictions: "Predictions",
+};
 
 const EXAMPLES = [
   "Show me my portfolio",
   "Show my portfolio as a pie chart",
   "My P&L from the past month",
   "What are my perp positions?",
+  "Show my predictions",
 ];
 
 const PNL_PERIODS = [
@@ -49,6 +58,8 @@ const PNL_PERIODS = [
   { key: "perpMonth", label: "Month" },
   { key: "perpAllTime", label: "All" },
 ];
+
+const CLEAR_WORDS = /\bclear (the board|everything|all)\b|\bstart over\b|\breset\b/i;
 
 function resolveIntent(text) {
   return INTENTS.find((i) => i.test.test(text)) ?? null;
@@ -74,57 +85,110 @@ function parseDisplayMode(text) {
   return null;
 }
 
+const LAYOUT_KEY = "bonzai_prompt_console_layout_v1";
+function loadLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null; // private-browsing / storage-blocked — fall back to a blank board
+  }
+}
+
 export default function PromptConsole({
   portfolio, perpsPositions = [], perpsAccountValue = 0, perpsPnl = 0,
   kaminoCollateralDeposits = [], kaminoDebtBorrows = [],
-  hl, evmAddress,
+  hl, evmAddress, address,
   onBack, onNavigate,
 }) {
   const [query, setQuery] = useState("");
-  const [phase, setPhase] = useState("idle"); // idle | materializing | shown | unknown
-  const [resultKey, setResultKey] = useState(null);
+  const [phase, setPhase] = useState("idle"); // idle | materializing | unknown | settled
   const [askedFor, setAskedFor] = useState("");
-  const [portfolioMode, setPortfolioMode] = useState("table"); // table | pie
-  const [pnlPeriod, setPnlPeriod] = useState("perpMonth");
+
+  // The user's own arrangement — which cards, in what order, in what
+  // display mode — restored on return so "their interface" actually
+  // persists rather than resetting every visit.
+  const [cards, setCards] = useState(() => loadLayout()?.cards ?? []);
+  const [focusedKind, setFocusedKind] = useState(null);
+  const [portfolioMode, setPortfolioMode] = useState(() => loadLayout()?.portfolioMode ?? "table");
+  const [pnlPeriod, setPnlPeriod] = useState(() => loadLayout()?.pnlPeriod ?? "perpMonth");
+
+  useEffect(() => {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ cards, portfolioMode, pnlPeriod })); } catch {}
+  }, [cards, portfolioMode, pnlPeriod]);
 
   // Only fetched while this screen is mounted — same real hook
   // PerpsPerformancePanel uses for the account's own P&L history.
   const { pnlHistory, stats: pnlStats } = usePortfolioStats(hl, evmAddress);
   const pnlLoading = Object.keys(pnlHistory).length === 0;
 
+  const addOrFocusCard = (kind) => {
+    setCards((prev) => (prev.includes(kind) ? prev : [...prev, kind]));
+    setFocusedKind(kind);
+  };
+  const removeCard = (kind) => {
+    setCards((prev) => prev.filter((k) => k !== kind));
+    setFocusedKind((f) => (f === kind ? null : f));
+  };
+  const reorderCard = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setCards((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  };
+
   const submit = (text) => {
     const q = (text ?? query).trim();
     if (!q || phase === "materializing") return;
     setQuery(q); setAskedFor(q);
 
+    if (CLEAR_WORDS.test(q)) {
+      setPhase("materializing");
+      setTimeout(() => { setCards([]); setFocusedKind(null); setPhase("idle"); }, 260);
+      return;
+    }
+
     const topicMatch = resolveIntent(q);
     const formatMatch = parseDisplayMode(q);
 
     // A bare reformat with no new subject named ("show me in pie chart
-    // form") re-styles whatever's already on screen rather than failing —
-    // "on the fly" means it applies to what you're already looking at, the
-    // same way clicking a toggle pill would.
-    if (!topicMatch && formatMatch && resultKey === "portfolio") {
+    // form") re-styles the focused card rather than failing — "on the
+    // fly" means it applies to whichever card you're already looking at,
+    // the same way clicking that card's own toggle pill would.
+    if (!topicMatch && formatMatch && focusedKind === "portfolio") {
       setPhase("materializing");
-      setTimeout(() => { setPortfolioMode(formatMatch); setPhase("shown"); }, 260);
+      setTimeout(() => { setPortfolioMode(formatMatch); setPhase("settled"); }, 260);
       return;
     }
 
     setPhase("materializing");
     setTimeout(() => {
-      if (!topicMatch) { setResultKey(null); setPhase("unknown"); return; }
-      setResultKey(topicMatch.key);
+      if (!topicMatch) { setPhase("unknown"); return; }
+      addOrFocusCard(topicMatch.key);
       if (topicMatch.key === "portfolio" && formatMatch) setPortfolioMode(formatMatch);
       if (topicMatch.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
-      setPhase("shown");
+      setPhase("settled");
     }, 420);
   };
 
-  const reset = () => {
-    setQuery(""); setAskedFor(""); setResultKey(null); setPhase("idle");
-  };
+  const clearQuery = () => { setQuery(""); setAskedFor(""); setPhase(cards.length ? "settled" : "idle"); };
+  const clearBoard = () => { setCards([]); setFocusedKind(null); setQuery(""); setAskedFor(""); setPhase("idle"); };
 
-  const docked = phase !== "idle";
+  const docked = cards.length > 0 || phase !== "idle";
+
+  const dragPropsFor = (kind, index) => ({
+    draggable: true,
+    onDragStart: (e) => { e.dataTransfer.setData("text/plain", String(index)); e.dataTransfer.effectAllowed = "move"; },
+    onDragOver: (e) => e.preventDefault(),
+    onDrop: (e) => { e.preventDefault(); reorderCard(Number(e.dataTransfer.getData("text/plain")), index); },
+    onClick: () => setFocusedKind(kind),
+  });
+  const frameFor = (kind, index) => ({
+    focused: focusedKind === kind, onRemove: () => removeCard(kind), dragProps: dragPropsFor(kind, index),
+  });
 
   return (
     <div className="pc-shell">
@@ -150,19 +214,22 @@ export default function PromptConsole({
             autoFocus
           />
           {docked ? (
-            <button type="button" className="pc-new-btn" onClick={reset}>New question</button>
+            <>
+              <button type="button" className="pc-new-btn" onClick={clearQuery}>New question</button>
+              {cards.length > 0 && (
+                <button type="button" className="pc-clear-btn" onClick={clearBoard}>Clear board</button>
+              )}
+            </>
           ) : (
             <button type="submit" className="btn primary pc-go-btn">Go</button>
           )}
         </form>
 
-        {!docked && (
-          <div className="pc-examples">
-            {EXAMPLES.map((e) => (
-              <button key={e} className="chip pc-example-chip" onClick={() => submit(e)}>{e}</button>
-            ))}
-          </div>
-        )}
+        <div className="pc-examples">
+          {EXAMPLES.map((e) => (
+            <button key={e} className="chip pc-example-chip" onClick={() => submit(e)}>{e}</button>
+          ))}
+        </div>
 
         {phase === "materializing" && (
           <div className="pc-materializing">
@@ -171,30 +238,41 @@ export default function PromptConsole({
         )}
 
         {phase === "unknown" && (
-          <div className="pc-result pc-visible">
+          <div className="pc-unknown">
             <p className="muted">
-              I don't have a view for &ldquo;{askedFor}&rdquo; yet in this prototype — try one of these:
+              I don't have a view for &ldquo;{askedFor}&rdquo; yet in this prototype — try one of the examples above.
             </p>
-            <div className="pc-examples" style={{ marginTop: 12 }}>
-              {EXAMPLES.map((e) => (
-                <button key={e} className="chip pc-example-chip" onClick={() => submit(e)}>{e}</button>
-              ))}
-            </div>
           </div>
         )}
 
-        {phase === "shown" && resultKey === "portfolio" && (
-          <PortfolioResult portfolio={portfolio} mode={portfolioMode} onModeChange={setPortfolioMode} onNavigate={onNavigate} />
-        )}
-        {phase === "shown" && resultKey === "pnl" && (
-          <PnlResult pnlHistory={pnlHistory} stats={pnlStats} loading={pnlLoading}
-            period={pnlPeriod} onPeriodChange={setPnlPeriod} onNavigate={onNavigate} />
-        )}
-        {phase === "shown" && resultKey === "perps" && (
-          <PerpsResult positions={perpsPositions} accountValue={perpsAccountValue} pnl={perpsPnl} onNavigate={onNavigate} />
-        )}
-        {phase === "shown" && resultKey === "borrow" && (
-          <BorrowResult deposits={kaminoCollateralDeposits} borrows={kaminoDebtBorrows} onNavigate={onNavigate} />
+        {cards.length > 0 && (
+          <div className="pc-grid">
+            {cards.map((kind, i) => {
+              const frame = frameFor(kind, i);
+              if (kind === "portfolio") return (
+                <PortfolioResult key={kind} portfolio={portfolio} mode={portfolioMode}
+                  onModeChange={(m) => { setPortfolioMode(m); setFocusedKind("portfolio"); }}
+                  onNavigate={onNavigate} {...frame} />
+              );
+              if (kind === "pnl") return (
+                <PnlResult key={kind} pnlHistory={pnlHistory} stats={pnlStats} loading={pnlLoading}
+                  period={pnlPeriod} onPeriodChange={(p) => { setPnlPeriod(p); setFocusedKind("pnl"); }}
+                  onNavigate={onNavigate} {...frame} />
+              );
+              if (kind === "perps") return (
+                <PerpsResult key={kind} positions={perpsPositions} accountValue={perpsAccountValue} pnl={perpsPnl}
+                  onNavigate={onNavigate} {...frame} />
+              );
+              if (kind === "borrow") return (
+                <BorrowResult key={kind} deposits={kaminoCollateralDeposits} borrows={kaminoDebtBorrows}
+                  onNavigate={onNavigate} {...frame} />
+              );
+              if (kind === "predictions") return (
+                <PredictionsResult key={kind} address={address} onNavigate={onNavigate} {...frame} />
+              );
+              return null;
+            })}
+          </div>
         )}
       </div>
     </div>
@@ -218,7 +296,7 @@ function PillToggle({ options, value, onChange }) {
     <div className="pc-toggle">
       {options.map((o) => (
         <button key={o.key} type="button" className={`lvp-pct-btn ${value === o.key ? "sel" : ""}`}
-          onClick={() => onChange(o.key)}>
+          onClick={(e) => { e.stopPropagation(); onChange(o.key); }}>
           {o.label}
         </button>
       ))}
@@ -226,9 +304,25 @@ function PillToggle({ options, value, onChange }) {
   );
 }
 
-function ResultShell({ title, headValue, valueClass, headSub, toggle, onNavigate, navLabel, navTarget, children }) {
+/** Every card's outer frame — draggable (native HTML5 DnD, no library:
+ * grab anywhere on the card, drop it on another to swap places), focusable
+ * (click sets it as the target of the next typed "show me as a ___"), and
+ * removable. Same frame whether the content inside is a hand-built result
+ * (ResultShell) or a whole reused real component (PredictionsResult). */
+function CardFrame({ focused, wide, onRemove, dragProps, title, children }) {
   return (
-    <div className="pc-result pc-visible">
+    <div className={`pc-card lvp-card ${focused ? "pc-card-focused" : ""} ${wide ? "pc-card-wide" : ""}`} {...dragProps} aria-label={title}>
+      <button type="button" className="pc-card-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }} aria-label={`Remove ${title}`}>
+        ×
+      </button>
+      {children}
+    </div>
+  );
+}
+
+function ResultShell({ title, headValue, valueClass, headSub, toggle, onNavigate, navLabel, navTarget, children, focused, wide, onRemove, dragProps }) {
+  return (
+    <CardFrame focused={focused} wide={wide} onRemove={onRemove} dragProps={dragProps} title={title}>
       <div className="pc-result-head">
         <div>
           <p className="table-card-title" style={{ margin: 0 }}>{title}</p>
@@ -241,17 +335,19 @@ function ResultShell({ title, headValue, valueClass, headSub, toggle, onNavigate
       </div>
       {children}
       {onNavigate && (
-        <button className="btn ghost pc-open-btn" onClick={() => onNavigate(navTarget)}>{navLabel} →</button>
+        <button className="btn ghost pc-open-btn" onClick={(e) => { e.stopPropagation(); onNavigate(navTarget); }}>
+          {navLabel} →
+        </button>
       )}
-    </div>
+    </CardFrame>
   );
 }
 
-function PortfolioResult({ portfolio, mode, onModeChange, onNavigate }) {
+function PortfolioResult({ portfolio, mode, onModeChange, onNavigate, ...frame }) {
   const rows = portfolio?.rows ?? [];
   if (!rows.length) {
     return (
-      <ResultShell title="Your Portfolio" headSub="Brokerage account">
+      <ResultShell title="Your Portfolio" headSub="Brokerage account" {...frame}>
         <p className="muted" style={{ padding: "12px 0" }}>No holdings yet — your portfolio is all cash.</p>
       </ResultShell>
     );
@@ -266,6 +362,7 @@ function PortfolioResult({ portfolio, mode, onModeChange, onNavigate }) {
       headValue={`$${usd(portfolio.total)}`}
       toggle={toggle}
       onNavigate={onNavigate} navLabel="Open Brokerage" navTarget="dash"
+      {...frame} wide={mode === "pie"}
     >
       {mode === "pie" ? (
         <div className="pc-donut-wrap">
@@ -297,7 +394,7 @@ function PortfolioResult({ portfolio, mode, onModeChange, onNavigate }) {
   );
 }
 
-function PnlResult({ pnlHistory, stats, loading, period, onPeriodChange, onNavigate }) {
+function PnlResult({ pnlHistory, stats, loading, period, onPeriodChange, onNavigate, ...frame }) {
   const points = (pnlHistory[period] || []).map(([ts, v]) => ({ ts, v: Number(v) }));
   const total = points.length ? points[points.length - 1].v : 0;
   const periodPhrase = period === "perpAllTime" ? "All time" : `Past ${(PNL_PERIODS.find((p) => p.key === period)?.label ?? "Month").toLowerCase()}`;
@@ -309,6 +406,7 @@ function PnlResult({ pnlHistory, stats, loading, period, onPeriodChange, onNavig
       valueClass={total >= 0 ? "gain" : "warn"}
       toggle={<PillToggle options={PNL_PERIODS} value={period} onChange={onPeriodChange} />}
       onNavigate={onNavigate} navLabel="Open Perps" navTarget="perps"
+      {...frame}
     >
       <div className="pc-chart-wrap">
         <TimeSeriesChart points={points} period={period} loading={loading} mode="pnl"
@@ -318,10 +416,10 @@ function PnlResult({ pnlHistory, stats, loading, period, onPeriodChange, onNavig
   );
 }
 
-function PerpsResult({ positions, accountValue, pnl, onNavigate }) {
+function PerpsResult({ positions, accountValue, pnl, onNavigate, ...frame }) {
   if (!positions.length) {
     return (
-      <ResultShell title="Perpetual Positions" headSub="Hyperliquid">
+      <ResultShell title="Perpetual Positions" headSub="Hyperliquid" {...frame}>
         <p className="muted" style={{ padding: "12px 0" }}>No open perp positions right now.</p>
       </ResultShell>
     );
@@ -333,6 +431,7 @@ function PerpsResult({ positions, accountValue, pnl, onNavigate }) {
       headValue={`${pnl >= 0 ? "+" : ""}$${usd(pnl)}`}
       valueClass={pnl >= 0 ? "gain" : "warn"}
       onNavigate={onNavigate} navLabel="Open Perps" navTarget="perps"
+      {...frame}
     >
       <div className="pc-rows">
         {positions.map((p, i) => (
@@ -355,10 +454,10 @@ function PerpsResult({ positions, accountValue, pnl, onNavigate }) {
   );
 }
 
-function BorrowResult({ deposits, borrows, onNavigate }) {
+function BorrowResult({ deposits, borrows, onNavigate, ...frame }) {
   if (!deposits.length && !borrows.length) {
     return (
-      <ResultShell title="Loans" headSub="Kamino tokenized-stocks market">
+      <ResultShell title="Loans" headSub="Kamino tokenized-stocks market" {...frame}>
         <p className="muted" style={{ padding: "12px 0" }}>No open loans — nothing posted as collateral.</p>
       </ResultShell>
     );
@@ -370,6 +469,7 @@ function BorrowResult({ deposits, borrows, onNavigate }) {
       headSub="Kamino tokenized-stocks market"
       headValue={`$${usd(totalDebt)} owed`}
       onNavigate={onNavigate} navLabel="Open Borrow / Lend" navTarget="borrow"
+      {...frame}
     >
       <div className="pc-rows">
         {deposits.map((d, i) => (
@@ -396,5 +496,21 @@ function BorrowResult({ deposits, borrows, onNavigate }) {
         ))}
       </div>
     </ResultShell>
+  );
+}
+
+/** The one card that's a whole reused real screen (PredictionPositionsPanel
+ * already fetches its own data and renders its own header/table) rather
+ * than a hand-built ResultShell body — CardFrame doesn't care which. */
+function PredictionsResult({ address, onNavigate, ...frame }) {
+  return (
+    <CardFrame title="Predictions" {...frame}>
+      <PredictionPositionsPanel address={address} />
+      {onNavigate && (
+        <button className="btn ghost pc-open-btn" onClick={(e) => { e.stopPropagation(); onNavigate("predictions"); }}>
+          Open Predictions →
+        </button>
+      )}
+    </CardFrame>
   );
 }
