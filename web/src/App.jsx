@@ -29,6 +29,7 @@ import PortfoliosApp from "./PortfoliosApp.jsx";
 import PredictionMarketsApp from "./PredictionMarketsApp.jsx";
 import ReferralsApp from "./ReferralsApp.jsx";
 import BorrowApp from "./borrow/BorrowApp.jsx";
+import PromptConsole from "./components/PromptConsole.jsx";
 import PositionCard from "./borrow/PositionCard.jsx";
 import { useKaminoReserves, useKaminoAction } from "./borrow/useKamino.js";
 import { api, executeSwap, executeWithdraw, executeKaminoAction, KAMINO_FEE_BPS, derivePortfolio, planTrades, mergePortfolioCollateral, stripKaminoDust, usd, short, displayTicker, XSTOCK_TICKER_RE, ONDO_TICKER_RE, setAuthTokenProvider } from "./lib/api.js";
@@ -2447,6 +2448,7 @@ export default function App() {
     : view === "borrow" ? "borrow"
     : view === "agents" ? "agents"
     : view === "referrals" ? "referrals"
+    : view === "prompt" ? "prompt"
     : "dash";
 
   // ——— Mobile dashboard reorder: the per-product account-summary card
@@ -2682,6 +2684,9 @@ export default function App() {
               )}
             </div>
             <button className={`head-nav-btn ${screen === "agents" ? "active" : ""}`} onClick={() => setView("agents")}>Trading Agent</button>
+            <button className={`head-nav-btn ${screen === "prompt" ? "active" : ""}`} onClick={() => setView("prompt")}>
+              Prompt Mode <span className="cat-badge" style={{ marginLeft: 4 }}>BETA</span>
+            </button>
             <div className="profile-wrap" ref={profileRef}>
               <button className="head-nav-btn profile-btn" onClick={() => setProfileOpen((o) => !o)}>
                 My Profile
@@ -3011,6 +3016,16 @@ export default function App() {
 
       {screen === "referrals" && (
         <ReferralsApp onBack={goHome} />
+      )}
+
+      {screen === "prompt" && (
+        <PromptConsole
+          portfolio={portfolio}
+          perpsPositions={perpsPositions} perpsAccountValue={perpsAccountValue} perpsPnl={perpsPnl}
+          kaminoCollateralDeposits={kaminoCollateralDeposits} kaminoDebtBorrows={kaminoDebtBorrows}
+          onBack={goHome}
+          onNavigate={(target) => (target === "dash" ? goHome() : setView(target))}
+        />
       )}
 
       {screen === "dash" && portfolio && (
