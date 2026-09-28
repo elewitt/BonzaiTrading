@@ -144,6 +144,28 @@ const PC_FONTS = [
     google: "IBM+Plex+Serif:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600" },
 ];
 
+/**
+ * Colors alone can't evoke an actual PLACE — "make it feel like Tokyo"
+ * landing as a dark palette with pink/purple accents is defensible as a
+ * mood, but it doesn't read as Tokyo to look at. This is the honest fix:
+ * a small curated set of real background SCENES, drawn entirely in CSS/
+ * SVG from the same palette tokens (never a fetched image, never
+ * arbitrary markup) — a city skyline, rain, a starfield, waves, aurora
+ * bands, mountains. Bounded the same way the palette itself is bounded:
+ * a fixed, curated vocabulary the request maps onto, not "generate any
+ * image of anything," but concrete enough that "Tokyo" can actually look
+ * like a lit-window skyline at night instead of just a color.
+ */
+const PC_SCENES = [
+  { key: "none", label: "None" },
+  { key: "skyline", label: "Skyline" },
+  { key: "rain", label: "Rain" },
+  { key: "stars", label: "Stars" },
+  { key: "waves", label: "Waves" },
+  { key: "aurora", label: "Aurora" },
+  { key: "mountains", label: "Mountains" },
+];
+
 function ensureFontLoaded(fontKey) {
   const font = PC_FONTS.find((f) => f.key === fontKey);
   if (!font?.google || typeof document === "undefined") return;
@@ -271,6 +293,17 @@ function resolveDesignLocal(text) {
   for (const f of PC_FONTS) {
     if (new RegExp(`\\b${f.key}\\b`, "i").test(text)) { out.font = f.key; matched = true; }
   }
+  // Explicit scene words only — a PLACE name ("Tokyo", "Paris") carries no
+  // fixed keyword on the same principle as hasOpenColorIntent, so that
+  // always needs the AI to interpret. This only catches someone naming
+  // the scene itself directly.
+  if (/\bno background\b|\bplain background\b|\bremove the (scene|backdrop)\b|\bclear the backdrop\b/i.test(text)) { out.scene = "none"; matched = true; }
+  else if (/\bskyline\b|\bcity(scape)?\b|\bbuildings?\b|\burban\b/i.test(text)) { out.scene = "skyline"; matched = true; }
+  else if (/\brain(y|ing)?\b|\bstorm(y)?\b/i.test(text)) { out.scene = "rain"; matched = true; }
+  else if (/\bstars?\b|\bstarry\b|\bnight sky\b/i.test(text)) { out.scene = "stars"; matched = true; }
+  else if (/\bwaves?\b|\bocean\b|\bsea\b|\bbeach\b/i.test(text)) { out.scene = "waves"; matched = true; }
+  else if (/\baurora\b|\bnorthern lights\b/i.test(text)) { out.scene = "aurora"; matched = true; }
+  else if (/\bmountains?\b|\balpine\b|\bpeaks?\b/i.test(text)) { out.scene = "mountains"; matched = true; }
   return matched ? out : null;
 }
 
@@ -333,6 +366,8 @@ export default function PromptConsole({
   const [shadow, setShadow] = useState(() => loadLayout()?.shadow ?? "soft");
   const [font, setFont] = useState(() => loadLayout()?.font ?? "editorial");
   const [density, setDensity] = useState(() => loadLayout()?.density ?? "cozy");
+  // The actual "place" layer — see PC_SCENES' own comment.
+  const [scene, setScene] = useState(() => loadLayout()?.scene ?? "none");
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const customizeRef = useRef(null);
 
@@ -340,10 +375,10 @@ export default function PromptConsole({
     try {
       localStorage.setItem(LAYOUT_KEY, JSON.stringify({
         cards, portfolioMode, portfolioSort, pnlPeriod, wideCards: [...wideCards],
-        theme, customPalette, radius, shadow, font, density,
+        theme, customPalette, radius, shadow, font, density, scene,
       }));
     } catch {}
-  }, [cards, portfolioMode, portfolioSort, pnlPeriod, wideCards, theme, customPalette, radius, shadow, font, density]);
+  }, [cards, portfolioMode, portfolioSort, pnlPeriod, wideCards, theme, customPalette, radius, shadow, font, density, scene]);
 
   useEffect(() => { ensureFontLoaded(font); }, [font]);
 
@@ -357,6 +392,7 @@ export default function PromptConsole({
     if (d.shadow) setShadow(d.shadow);
     if (d.font) setFont(d.font);
     if (d.density) setDensity(d.density);
+    if (d.scene) setScene(d.scene);
   };
 
   // "Put my P&L up top", "make the portfolio card bigger", "get rid of
@@ -498,8 +534,11 @@ export default function PromptConsole({
     // phrasing and returns a structured spec covering three independent
     // things a request can ask for — which data to show (dataSource,
     // display, sort, limit, period), what it should look like (a full
-    // custom color palette, corner rounding, shadow depth, a typeface
-    // pairing), and how it should be arranged (bring a card to the front,
+    // custom color palette, an actual background SCENE — skyline, rain,
+    // stars, waves, aurora, mountains, drawn from that same palette, so a
+    // place like "Tokyo" can look like one instead of just being a color
+    // — corner rounding, shadow depth, a typeface pairing), and how it
+    // should be arranged (bring a card to the front,
     // widen/narrow it, remove it, shuffle the whole order) — any
     // combination of the three can come back from one sentence. A VAGUE
     // ask with no specifics ("change the color scheme", "shuffle the
@@ -517,7 +556,7 @@ export default function PromptConsole({
       // which cards exist to rearrange — instead of the server having to
       // guess blind and either invent a near-duplicate or do nothing.
       const context = {
-        cards, theme, customPalette, radius, shadow, font,
+        cards, theme, customPalette, radius, shadow, font, scene,
       };
       const ai = await api.parseConsole(q, context);
       let matched = false;
@@ -610,29 +649,34 @@ export default function PromptConsole({
               shadow={shadow} onShadowChange={setShadow}
               font={font} onFontChange={setFont}
               density={density} onDensityChange={setDensity}
+              scene={scene} onSceneChange={setScene}
             />
           )}
         </div>
       </div>
 
       <div className={`pc-center ${docked ? "pc-docked" : ""}`}>
-        {!docked && (
-          <div className="pc-hero-bg" aria-hidden="true">
-            <span className="pc-orb pc-orb-a" />
-            <span className="pc-orb pc-orb-b" />
-            <span className="pc-orb pc-orb-c" />
-            <span className="pc-grid-texture" />
-            {HERO_ORBIT_ICONS.map(({ Icon, top, left, size, rot }, i) => (
-              <span
-                key={i}
-                className="pc-orbit-icon"
-                style={{ top, left, width: size, height: size, transform: `rotate(${rot}deg)` }}
-              >
-                <Icon />
-              </span>
-            ))}
-          </div>
-        )}
+        {/* The color orbs, scene, and grid texture are a persistent page
+            background — "customize MY background" should mean it stays
+            once you've actually asked for something, not just decorate
+            the empty landing state. Only the orbit-icon flourish (tied to
+            the "what would you like to see" invitation) is idle-only. */}
+        <div className="pc-hero-bg" aria-hidden="true">
+          <span className="pc-orb pc-orb-a" />
+          <span className="pc-orb pc-orb-b" />
+          <span className="pc-orb pc-orb-c" />
+          <SceneLayer scene={scene} />
+          <span className="pc-grid-texture" />
+          {!docked && HERO_ORBIT_ICONS.map(({ Icon, top, left, size, rot }, i) => (
+            <span
+              key={i}
+              className="pc-orbit-icon"
+              style={{ top, left, width: size, height: size, transform: `rotate(${rot}deg)` }}
+            >
+              <Icon />
+            </span>
+          ))}
+        </div>
 
         {!docked && (
           <>
@@ -740,6 +784,72 @@ function MicIcon() {
   );
 }
 
+/** The actual "place" layer of the hero background — see PC_SCENES'
+ * comment for why this exists alongside the color palette. Renders
+ * nothing for "none"/unset, same as today. */
+function SceneLayer({ scene }) {
+  if (scene === "skyline") return <SkylineScene />;
+  if (scene === "rain") return <RainScene />;
+  if (scene === "stars") return <StarsScene />;
+  if (scene === "waves") return <WavesScene />;
+  if (scene === "aurora") return <AuroraScene />;
+  if (scene === "mountains") return <MountainsScene />;
+  return null;
+}
+
+const SKYLINE_BUILDINGS = [
+  { left: "1%", width: "4.5%", height: "20%" }, { left: "6.5%", width: "3%", height: "32%" },
+  { left: "10.5%", width: "5.5%", height: "17%" }, { left: "17%", width: "3.5%", height: "38%" },
+  { left: "22%", width: "5%", height: "25%" }, { left: "28%", width: "3%", height: "14%" },
+  { left: "73%", width: "3.5%", height: "28%" }, { left: "78%", width: "5.5%", height: "19%" },
+  { left: "85%", width: "3%", height: "36%" }, { left: "89.5%", width: "4.5%", height: "23%" },
+  { left: "95%", width: "3%", height: "15%" },
+];
+function SkylineScene() {
+  return (
+    <div className="pc-scene pc-scene-skyline">
+      {SKYLINE_BUILDINGS.map((b, i) => (
+        <span key={i} className="pc-building" style={{ left: b.left, width: b.width, height: b.height }}>
+          {Array.from({ length: 6 }).map((_, w) => (
+            <span
+              key={w}
+              className="pc-window"
+              style={{ left: `${14 + (w % 2) * 45}%`, top: `${12 + Math.floor(w / 2) * 30}%`, opacity: (i * 3 + w) % 5 === 0 ? 0 : (i + w) % 3 === 0 ? 0.85 : 0.3 }}
+            />
+          ))}
+        </span>
+      ))}
+    </div>
+  );
+}
+function RainScene() {
+  return <div className="pc-scene pc-scene-rain" />;
+}
+function StarsScene() {
+  return <div className="pc-scene pc-scene-stars" />;
+}
+function WavesScene() {
+  return (
+    <div className="pc-scene pc-scene-waves">
+      <span className="pc-wave pc-wave-1" /><span className="pc-wave pc-wave-2" /><span className="pc-wave pc-wave-3" />
+    </div>
+  );
+}
+function AuroraScene() {
+  return (
+    <div className="pc-scene pc-scene-aurora">
+      <span className="pc-aurora-band pc-aurora-1" /><span className="pc-aurora-band pc-aurora-2" /><span className="pc-aurora-band pc-aurora-3" />
+    </div>
+  );
+}
+function MountainsScene() {
+  return (
+    <div className="pc-scene pc-scene-mountains">
+      <span className="pc-mountain pc-mountain-1" /><span className="pc-mountain pc-mountain-2" /><span className="pc-mountain pc-mountain-3" />
+    </div>
+  );
+}
+
 function PaintIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -810,7 +920,7 @@ function StrategiesGlyph() {
 function CustomizePanel({
   theme, onThemeChange, customPalette,
   radius, onRadiusChange, shadow, onShadowChange, font, onFontChange,
-  density, onDensityChange,
+  density, onDensityChange, scene, onSceneChange,
 }) {
   return (
     <div className="pc-customize-panel">
@@ -844,7 +954,9 @@ function CustomizePanel({
       <PillToggle options={PC_FONTS.map((f) => ({ key: f.key, label: f.label }))} value={font} onChange={onFontChange} />
       <p className="pc-customize-label">Density</p>
       <PillToggle options={PC_DENSITIES} value={density} onChange={onDensityChange} />
-      <p className="pc-customize-hint">Or just ask the prompt bar — “make it dark and rounded”, “give it a warm amber accent”, “put my P&amp;L up top”.</p>
+      <p className="pc-customize-label">Backdrop</p>
+      <PillToggle options={PC_SCENES} value={scene} onChange={onSceneChange} />
+      <p className="pc-customize-hint">Or just ask the prompt bar — “make it feel like Tokyo”, “give it a warm amber accent”, “put my P&amp;L up top”.</p>
     </div>
   );
 }
