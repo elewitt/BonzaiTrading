@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { displayTicker, usd } from "../lib/api.js";
+import { useEffect, useRef, useState } from "react";
+import { api, displayTicker, usd } from "../lib/api.js";
 import { usePortfolioStats } from "../perps/useHyperliquid.js";
 import Donut from "./Donut.jsx";
 import TimeSeriesChart from "./TimeSeriesChart.jsx";
@@ -34,15 +34,8 @@ const INTENTS = [
   { key: "perps",       label: "Perpetual positions",  test: /perp|leverage|\blong\b|\bshort\b|liquidat/i },
   { key: "borrow",      label: "Loans",                test: /loan|borrow|debt|collateral|lend/i },
   { key: "predictions", label: "Predictions",          test: /predict|kalshi|wager|\byes\b.*\bno\b/i },
+  { key: "strategies",  label: "Trading Agents",       test: /\bstrategy\b|strategies|trading agent|\bdca\b|automat/i },
 ];
-
-// One card per kind, singleton — asking for the same kind twice updates
-// the existing card (and brings it into focus) rather than piling up
-// duplicates.
-const CARD_TITLES = {
-  portfolio: "Your Portfolio", pnl: "Perpetual P&L", perps: "Perpetual Positions",
-  borrow: "Loans", predictions: "Predictions",
-};
 
 const EXAMPLES = [
   "Show me my portfolio",
@@ -50,6 +43,7 @@ const EXAMPLES = [
   "My P&L from the past month",
   "What are my perp positions?",
   "Show my predictions",
+  "Show my trading agents",
 ];
 
 const PNL_PERIODS = [
@@ -60,6 +54,55 @@ const PNL_PERIODS = [
 ];
 
 const CLEAR_WORDS = /\bclear (the board|everything|all)\b|\bstart over\b|\breset\b/i;
+
+/**
+ * "Customize the design" — a curated set of full palettes (not an
+ * open-ended color picker, which on a financial dashboard is much more
+ * likely to produce something illegible than something nice) rather than
+ * fake choice. Every entry here remaps the SAME custom-property names the
+ * rest of the app already reads (--paper/--card/--ink/--pine/--moss/
+ * --line/--gold) — applied inline on .pc-shell, they cascade into every
+ * card, including reused real components (Donut, TimeSeriesChart,
+ * PredictionPositionsPanel) for free, since those already read the same
+ * variables rather than hardcoded colors.
+ *
+ * --gain/--loss are deliberately NOT remapped — green-for-gain and
+ * red-for-loss are financial convention, not brand decoration, and should
+ * mean the same thing in every theme. Donut's own wedge palette
+ * (SEG_COLORS) is a handful of hardcoded hex values, not a variable, so
+ * wedge hues stay constant across themes too — a real, honest limit on
+ * "fully custom" worth knowing rather than papering over.
+ */
+const PC_THEMES = [
+  { key: "sage", label: "Sage (default)", swatch: "#1A4433", tokens: {} },
+  { key: "ocean", label: "Ocean", swatch: "#1D4C74", tokens: {
+    paper: "#E3E9F0", card: "#F9FAFD", ink: "#10202E", pine: "#1D4C74", moss: "#5C6E7E", line: "#CDD7E0", gold: "#6B5A2E",
+  } },
+  { key: "clay", label: "Clay", swatch: "#8B4A2B", tokens: {
+    paper: "#EFE6DA", card: "#FBF7F1", ink: "#2B1E14", pine: "#8B4A2B", moss: "#7A6858", line: "#E0D2C0", gold: "#A6741F",
+  } },
+  { key: "slate", label: "Slate (dark)", swatch: "#0F1618", tokens: {
+    paper: "#14181A", card: "#1E2426", ink: "#ECEFEA", pine: "#6FA98A", moss: "#92A39A", line: "#333B3D", gold: "#C9A227",
+  } },
+];
+const PC_DENSITIES = [{ key: "cozy", label: "Cozy" }, { key: "compact", label: "Compact" }];
+
+function themeStyleVars(themeKey) {
+  const theme = PC_THEMES.find((t) => t.key === themeKey) ?? PC_THEMES[0];
+  return Object.fromEntries(Object.entries(theme.tokens).map(([k, v]) => [`--${k}`, v]));
+}
+
+function describeStrategy(s) {
+  const p = s.params || {};
+  if (s.type === "delta_neutral") return `${usd(p.notionalUsd)} delta-neutral ${displayTicker(p.symbol)} at ${p.leverage}x`;
+  if (s.type === "twap" || s.type === "vwap") return `${usd(p.totalUsd)} ${s.type.toUpperCase()} into ${displayTicker(p.symbol)} over ${p.durationHours}h`;
+  if (s.type === "trigger") {
+    const level = p.thresholdType === "pct_change" ? `${p.thresholdValue}%` : `$${p.thresholdValue}`;
+    return `${p.side === "buy" ? "Buy" : "Sell"} ${displayTicker(p.symbol)} if price ${p.direction === "above" ? "rises above" : "drops below"} ${level}`;
+  }
+  const every = p.intervalDays === 1 ? "day" : p.intervalDays === 7 ? "week" : `${p.intervalDays}d`;
+  return `$${usd(p.usdPerInterval)} of ${displayTicker(p.symbol)} every ${every}`;
+}
 
 function resolveIntent(text) {
   return INTENTS.find((i) => i.test.test(text)) ?? null;
@@ -112,10 +155,29 @@ export default function PromptConsole({
   const [focusedKind, setFocusedKind] = useState(null);
   const [portfolioMode, setPortfolioMode] = useState(() => loadLayout()?.portfolioMode ?? "table");
   const [pnlPeriod, setPnlPeriod] = useState(() => loadLayout()?.pnlPeriod ?? "perpMonth");
+  // The design half of "their own interface" — a palette and a density,
+  // same persistence treatment as the layout itself.
+  const [theme, setTheme] = useState(() => loadLayout()?.theme ?? "sage");
+  const [density, setDensity] = useState(() => loadLayout()?.density ?? "cozy");
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const customizeRef = useRef(null);
 
   useEffect(() => {
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ cards, portfolioMode, pnlPeriod })); } catch {}
-  }, [cards, portfolioMode, pnlPeriod]);
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ cards, portfolioMode, pnlPeriod, theme, density })); } catch {}
+  }, [cards, portfolioMode, pnlPeriod, theme, density]);
+
+  // Same click-outside convention as the main dashboard's own profile/
+  // markets dropdowns (a ref + a mousedown listener) — not a full-screen
+  // backdrop, which would sit above the toggle button itself and block
+  // using that same button to close what it just opened.
+  useEffect(() => {
+    if (!customizeOpen) return;
+    const onDocClick = (e) => {
+      if (customizeRef.current && !customizeRef.current.contains(e.target)) setCustomizeOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [customizeOpen]);
 
   // Only fetched while this screen is mounted — same real hook
   // PerpsPerformancePanel uses for the account's own P&L history.
@@ -191,9 +253,17 @@ export default function PromptConsole({
   });
 
   return (
-    <div className="pc-shell">
+    <div className={`pc-shell pc-density-${density}`} style={themeStyleVars(theme)}>
       <div className="pc-top">
         <button className="pc-back" onClick={onBack}>← Back to classic view</button>
+        <div className="pc-customize-wrap" ref={customizeRef}>
+          <button type="button" className="pc-customize-btn" onClick={() => setCustomizeOpen((o) => !o)}>
+            <PaintIcon /> Customize
+          </button>
+          {customizeOpen && (
+            <CustomizePanel theme={theme} onThemeChange={setTheme} density={density} onDensityChange={setDensity} />
+          )}
+        </div>
       </div>
 
       <div className={`pc-center ${docked ? "pc-docked" : ""}`}>
@@ -270,11 +340,49 @@ export default function PromptConsole({
               if (kind === "predictions") return (
                 <PredictionsResult key={kind} address={address} onNavigate={onNavigate} {...frame} />
               );
+              if (kind === "strategies") return (
+                <StrategiesResult key={kind} address={address} onNavigate={onNavigate} {...frame} />
+              );
               return null;
             })}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function PaintIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22a9 9 0 1 1 6-15.5A3.5 3.5 0 0 1 15.5 13H14a2 2 0 0 0 0 4h.5a1.5 1.5 0 0 1 0 3H12" />
+      <circle cx="7.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
+      <circle cx="11" cy="7" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="8" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** "Customize the design" — palette swatches + a density switch, both
+ * persisted alongside the layout. Click-outside (the backdrop) closes it,
+ * same convention as the app's other popovers (profile/markets menus). */
+function CustomizePanel({ theme, onThemeChange, density, onDensityChange }) {
+  return (
+    <div className="pc-customize-panel">
+      <p className="pc-customize-label">Theme</p>
+      <div className="pc-swatches">
+        {PC_THEMES.map((t) => (
+          <button key={t.key} type="button"
+            className={`pc-swatch ${theme === t.key ? "pc-swatch-active" : ""}`}
+            style={{ background: t.swatch }}
+            onClick={() => onThemeChange(t.key)}
+            aria-label={t.label} title={t.label} aria-pressed={theme === t.key}
+          />
+        ))}
+      </div>
+      <p className="pc-customize-label">Density</p>
+      <PillToggle options={PC_DENSITIES} value={density} onChange={onDensityChange} />
     </div>
   );
 }
@@ -512,5 +620,62 @@ function PredictionsResult({ address, onNavigate, ...frame }) {
         </button>
       )}
     </CardFrame>
+  );
+}
+
+/** Trading Agents — self-fetches, same pattern PredictionPositionsPanel
+ * uses, rather than threading yet another poll through App.jsx's already
+ * large top-level state. A summary line per strategy (describeStrategy),
+ * not the full configure/confirm flow the real Trading Agent page has —
+ * this card is "what's running," not a second place to set one up. */
+function StrategiesResult({ address, onNavigate, ...frame }) {
+  const [state, setState] = useState({ loading: true, strategies: [] });
+
+  useEffect(() => {
+    if (!address) { setState({ loading: false, strategies: [] }); return; }
+    let cancelled = false;
+    api.listStrategies(address)
+      .then((d) => {
+        if (cancelled) return;
+        setState({ loading: false, strategies: (d.strategies || []).filter((s) => s.status !== "cancelled") });
+      })
+      .catch(() => { if (!cancelled) setState({ loading: false, strategies: [] }); });
+    return () => { cancelled = true; };
+  }, [address]);
+
+  const { loading, strategies } = state;
+  if (loading) {
+    return (
+      <ResultShell title="Trading Agents" headSub="Automated strategies" {...frame}>
+        <p className="muted" style={{ padding: "12px 0" }}>Loading…</p>
+      </ResultShell>
+    );
+  }
+  if (!strategies.length) {
+    return (
+      <ResultShell title="Trading Agents" headSub="Automated strategies" {...frame}>
+        <p className="muted" style={{ padding: "12px 0" }}>No active strategies yet.</p>
+      </ResultShell>
+    );
+  }
+  return (
+    <ResultShell
+      title="Trading Agents"
+      headSub={`${strategies.length} active`}
+      onNavigate={onNavigate} navLabel="Open Trading Agent" navTarget="agents"
+      {...frame}
+    >
+      <div className="pc-rows">
+        {strategies.map((s, i) => (
+          <div key={s.id ?? i} className="pc-row pc-row-strategy" style={{ animationDelay: `${i * 45}ms` }}>
+            <span className="lg-identity">
+              <span className="serif lg-name">{s.type.replace("_", " ")}</span>
+              <span className={`strategy-status strategy-status-${s.status}`}>{s.status}</span>
+            </span>
+            <span className="tiny muted">{describeStrategy(s)}</span>
+          </div>
+        ))}
+      </div>
+    </ResultShell>
   );
 }

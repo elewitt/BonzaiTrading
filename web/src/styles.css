@@ -3473,7 +3473,38 @@ a.trow { color: inherit; text-decoration: none; }
 .pc-shell {
   min-height: 100vh; background: var(--paper); display: flex; flex-direction: column;
 }
-.pc-top { padding: 20px 24px; }
+.pc-top { padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; }
+.pc-customize-wrap { position: relative; }
+.pc-customize-btn {
+  display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 999px; padding: 7px 14px; font-family: inherit; font-size: 12.5px; color: var(--moss);
+  cursor: pointer; transition: all .15s;
+}
+.pc-customize-btn:hover { border-color: var(--pine); color: var(--pine); }
+.pc-customize-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: 220px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+  box-shadow: 0 10px 30px rgba(10,24,18,.14);
+}
+.pc-customize-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--moss);
+  margin: 0 0 8px;
+}
+.pc-customize-panel > .pc-customize-label:not(:first-child) { margin-top: 16px; }
+.pc-swatches { display: flex; gap: 8px; }
+.pc-swatch {
+  width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(10,24,18,.12); transition: transform .15s, border-color .15s;
+}
+.pc-swatch:hover { transform: scale(1.08); }
+.pc-swatch-active { border-color: var(--ink); }
+
+/* Density — a compact reader trades white space for more visible rows at
+   once, same trade-off Notion/Linear-style density settings make. */
+.pc-density-compact .pc-grid { gap: 14px; }
+.pc-density-compact .pc-card { padding: 14px 16px 12px; }
+.pc-density-compact .pc-row, .pc-density-compact .pc-row-attrs, .pc-density-compact .pc-row-strategy { padding: 7px 0; }
+.pc-density-compact .pc-result-head { margin-bottom: 8px; }
 .pc-back {
   background: none; border: none; font-family: inherit; font-size: 13px;
   color: var(--moss); cursor: pointer; padding: 6px 2px;
@@ -3584,6 +3615,10 @@ a.trow { color: inherit; text-decoration: none; }
   opacity: 0; animation: pc-row-in .35s ease forwards;
 }
 .pc-row-attrs { grid-template-columns: 1.4fr 1fr .6fr .9fr; }
+/* Strategies are identity + one free-text summary line, not four fixed
+   stat columns — its own simpler two-column shape rather than forcing
+   describeStrategy()'s sentence into cells built for numbers. */
+.pc-row-strategy { grid-template-columns: 1fr 1.6fr; }
 .pc-row:last-child { border-bottom: none; }
 .pc-row-value { text-align: right; font-size: 14px; }
 @keyframes pc-row-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
