@@ -1183,11 +1183,27 @@ function contrastRatio(hexA, hexB) {
  * that gets executed. Colors are validated hex and contrast-checked
  * server-side before ever reaching the client.
  */
-async function parseConsolePrompt({ prompt }) {
+async function parseConsolePrompt({ prompt, context }) {
   if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
   if (!prompt) throw new Error("prompt required");
 
-  const system = `You classify a request about a financial dashboard's UI into a structured spec. The request may ask for real data to be shown, for the interface's look to change, for cards to be rearranged, or any combination of those in one sentence. Respond with ONLY a JSON object — no markdown, no prose.
+  // What's currently on screen — lets a VAGUE request ("change the color
+  // scheme", "shuffle it") act on real state: picking something different
+  // from what's already active, and knowing which cards actually exist to
+  // rearrange. Best-effort only: an old client or a fresh board sends
+  // none of this, and the prompt still has to resolve without it.
+  const ctxLines = [];
+  if (Array.isArray(context?.cards) && context.cards.length) ctxLines.push(`Cards currently on the board: ${context.cards.join(", ")}.`);
+  if (context?.theme) ctxLines.push(`Current theme preset: ${context.theme}.`);
+  if (context?.customPalette && typeof context.customPalette === "object") {
+    ctxLines.push(`Current custom palette: ${JSON.stringify(context.customPalette)}.`);
+  }
+  if (context?.radius) ctxLines.push(`Current corner radius: ${context.radius}.`);
+  if (context?.shadow) ctxLines.push(`Current shadow: ${context.shadow}.`);
+  if (context?.font) ctxLines.push(`Current typeface: ${context.font}.`);
+  const contextBlock = ctxLines.length ? `\n\nCURRENT STATE (use this to make a vague request concrete — e.g. pick a palette genuinely different from the current one, or know which cards exist to rearrange):\n${ctxLines.join("\n")}` : "";
+
+  const system = `You classify a request about a financial dashboard's UI into a structured spec. The request may ask for real data to be shown, for the interface's look to change, for cards to be rearranged, or any combination of those in one sentence. Respond with ONLY a JSON object — no markdown, no prose.${contextBlock}
 
 Shape:
 {"dataSource":null,"display":null,"sortBy":null,"sortDir":null,"limit":null,"pnlPeriod":null,
@@ -1222,14 +1238,17 @@ Set "design" to null if nothing about appearance was requested. Otherwise an obj
 - "font": "editorial" (the current default — a literary serif + humanist sans), "classic" (a traditional book serif + clean sans, for "classic"/"traditional"/"newspaper" asks), "modern" (a contemporary display serif + geometric sans, for "modern"/"sleek"/"contemporary" asks), "technical" (an engineering/data feel, for "technical"/"precise" asks) — only if a font/typography change was requested.
 - "density": "cozy" or "compact" — only if spacing was requested.
 
+VAGUE CHANGE REQUESTS — this is the important case, read carefully: "change the color scheme", "give it a new look", "switch it up", "try something different", "surprise me", "change the design" all CLEARLY ask for an appearance change but name no specifics. Do NOT return null here just because nothing concrete was named — a null design on a request like this means the button silently does nothing, which is worse than any reasonable guess. Instead, exercise real creative judgment and generate a full "customPalette" anyway: invent one specific, cohesive, tasteful direction of your own (pick an actual mood, place, era, or material — "1970s terracotta", "deep-sea bioluminescence", "brutalist concrete" — anything genuinely distinct, not a bland default), the same way you would for an explicit vibe description. If CURRENT STATE above shows an existing palette or theme, make the new one clearly different from it, not a near-duplicate. This "invent on a vague ask" rule applies ONLY to color/appearance — still leave "dataSource", "sortBy", "limit", "pnlPeriod" etc. null when unspecified, since guessing which numbers to show (rather than how something looks) really would be wrong.
+
 === LAYOUT (how cards are arranged) ===
-Set "layout" to null if nothing about arrangement was requested. Otherwise an object, each field one of the six data-source keys above (naming which EXISTING or newly-requested card the instruction targets) or null:
-{"bringToFront":null,"widen":null,"narrow":null,"remove":null}
+Set "layout" to null if nothing about arrangement was requested. Otherwise an object, each field one of the six data-source keys above (naming which EXISTING or newly-requested card the instruction targets) or null, plus "shuffle":
+{"bringToFront":null,"widen":null,"narrow":null,"remove":null,"shuffle":false}
 - "bringToFront": a card the request wants moved to the top/first position ("put my portfolio up top", "show my P&L first").
 - "widen": a card the request wants made bigger/wider ("make my P&L bigger", "give the portfolio more room").
 - "narrow": a card the request wants made smaller/narrower again.
 - "remove": a card the request wants taken off the board ("get rid of my loans card", "remove predictions").
-Only set a field when a specific card is clearly named or unambiguously implied — never guess which card an ambiguous "make it bigger" refers to if none is named.
+- "shuffle": true for a VAGUE rearrangement request that names no specific card ("shuffle the cards", "change the layout", "mix it up", "rearrange this") — same reasoning as the vague-color case: a clear intent to rearrange shouldn't resolve to nothing just because no card was named. Only meaningful if CURRENT STATE above lists 2+ cards; otherwise leave false. Never combine shuffle with bringToFront/widen/narrow/remove in the same response — if a specific card IS named, use the specific field instead.
+Only set bringToFront/widen/narrow/remove when a specific card is clearly named or unambiguously implied — never guess which card an ambiguous "make it bigger" refers to if none is named (use "shuffle" for the genuinely vague case instead).
 
 - "summary": one short plain sentence restating what you understood across all of the above.`;
 
@@ -1263,8 +1282,9 @@ Only set a field when a specific card is clearly named or unambiguously implied 
     widen: oneOf(CARD_KINDS, parsed.layout.widen),
     narrow: oneOf(CARD_KINDS, parsed.layout.narrow),
     remove: oneOf(CARD_KINDS, parsed.layout.remove),
+    shuffle: parsed.layout.shuffle === true && Array.isArray(context?.cards) && context.cards.length >= 2,
   } : null;
-  const layoutIsEmpty = layout && Object.values(layout).every((v) => v === null);
+  const layoutIsEmpty = layout && !layout.shuffle && [layout.bringToFront, layout.widen, layout.narrow, layout.remove].every((v) => v === null);
 
   return {
     dataSource: oneOf(CARD_KINDS, parsed.dataSource),
@@ -1281,8 +1301,8 @@ Only set a field when a specific card is clearly named or unambiguously implied 
 
 app.post("/api/parse-console", requireAuth, parseLimiter, async (req, res) => {
   try {
-    const { prompt } = req.body || {};
-    res.json(await parseConsolePrompt({ prompt }));
+    const { prompt, context } = req.body || {};
+    res.json(await parseConsolePrompt({ prompt, context }));
   } catch (e) {
     res.status(422).json({ error: String(e.message || e) });
   }

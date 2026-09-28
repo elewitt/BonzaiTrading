@@ -376,6 +376,21 @@ export default function PromptConsole({
     if (l.narrow) {
       setWideCards((prev) => { const next = new Set(prev); next.delete(l.narrow); return next; });
     }
+    // "Shuffle the cards", "change the layout" — a genuinely vague
+    // rearrangement ask (no specific card named) still has to DO
+    // something rather than resolve to nothing; a real reshuffle of the
+    // existing order is the honest equivalent of "surprise me" for data
+    // cards, the same way a vague color ask gets a genuinely new palette.
+    if (l.shuffle) {
+      setCards((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [next[i], next[j]] = [next[j], next[i]];
+        }
+        return next;
+      });
+    }
   };
 
   // Same click-outside convention as the main dashboard's own profile/
@@ -485,12 +500,26 @@ export default function PromptConsole({
     // display, sort, limit, period), what it should look like (a full
     // custom color palette, corner rounding, shadow depth, a typeface
     // pairing), and how it should be arranged (bring a card to the front,
-    // widen/narrow it, remove it) — any combination of the three can come
-    // back from one sentence. Deliberately bounded, not a code generator:
-    // every field lands on a real, already-built control, never arbitrary
-    // markup or script — see parseConsolePrompt's own comment server-side.
+    // widen/narrow it, remove it, shuffle the whole order) — any
+    // combination of the three can come back from one sentence. A VAGUE
+    // ask with no specifics ("change the color scheme", "shuffle the
+    // cards") still has to do something real, not resolve to null and
+    // silently no-op — the server is told to genuinely invent a new,
+    // distinct palette or reshuffle rather than bail out just because
+    // nothing concrete was named. Deliberately bounded, not a code
+    // generator: every field lands on a real, already-built control,
+    // never arbitrary markup or script — see parseConsolePrompt's own
+    // comment server-side.
     try {
-      const ai = await api.parseConsole(q);
+      // Current state, so a VAGUE ask ("change the color scheme",
+      // "shuffle the cards") can act on something real — pick a palette
+      // that's actually different from the one already active, or know
+      // which cards exist to rearrange — instead of the server having to
+      // guess blind and either invent a near-duplicate or do nothing.
+      const context = {
+        cards, theme, customPalette, radius, shadow, font,
+      };
+      const ai = await api.parseConsole(q, context);
       let matched = false;
       if (ai.dataSource) {
         matched = true;
