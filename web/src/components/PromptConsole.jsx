@@ -52,13 +52,21 @@ const INTENTS = [
   { key: "strategies",  label: "Trading Agents",       test: /\bstrategy\b|strategies|trading agent|\bdca\b|automat/i },
 ];
 
-const EXAMPLES = [
-  "Show me my portfolio",
-  "Show my portfolio as a pie chart",
-  "My P&L from the past month",
-  "What are my perp positions?",
-  "Show my trading agents",
-  "Make it dark, rounded, and give it a warm gold accent",
+// Purely decorative — NOT clickable suggestions (the whole point of
+// removing the example chips was one dominant bar, not a second set of
+// prompts in icon form). Six faint glyphs scattered around the hero,
+// positioned by eye rather than a grid, so the ring reads as ambient
+// texture ("everything lives behind this one bar") instead of UI. The
+// Icon components are function declarations further down this file —
+// hoisted, so referencing them here before their textual definition
+// works fine.
+const HERO_ORBIT_ICONS = [
+  { Icon: PortfolioGlyph, top: "8%", left: "9%", size: 30, rot: -12 },
+  { Icon: PerpsGlyph, top: "13%", left: "87%", size: 27, rot: 9 },
+  { Icon: PnlGlyph, top: "52%", left: "4%", size: 23, rot: 7 },
+  { Icon: PredictionsGlyph, top: "58%", left: "93%", size: 28, rot: -8 },
+  { Icon: BorrowGlyph, top: "87%", left: "15%", size: 24, rot: 13 },
+  { Icon: StrategiesGlyph, top: "83%", left: "81%", size: 22, rot: -14 },
 ];
 
 const PNL_PERIODS = [
@@ -580,11 +588,33 @@ export default function PromptConsole({
 
       <div className={`pc-center ${docked ? "pc-docked" : ""}`}>
         {!docked && (
-          <p className="serif pc-headline">What would you like to see?</p>
+          <div className="pc-hero-bg" aria-hidden="true">
+            <span className="pc-orb pc-orb-a" />
+            <span className="pc-orb pc-orb-b" />
+            <span className="pc-orb pc-orb-c" />
+            <span className="pc-grid-texture" />
+            {HERO_ORBIT_ICONS.map(({ Icon, top, left, size, rot }, i) => (
+              <span
+                key={i}
+                className="pc-orbit-icon"
+                style={{ top, left, width: size, height: size, transform: `rotate(${rot}deg)` }}
+              >
+                <Icon />
+              </span>
+            ))}
+          </div>
+        )}
+
+        {!docked && (
+          <>
+            <p className="pc-eyebrow">Prompt Mode</p>
+            <p className="serif pc-headline">What would you like to see?</p>
+            <p className="pc-subhead">One bar for everything Bonzai does — your portfolio, positions, P&amp;L, even the interface itself.</p>
+          </>
         )}
 
         <form
-          className={`pc-bar ${docked ? "pc-bar-docked" : ""}`}
+          className={`pc-bar ${docked ? "pc-bar-docked" : "pc-bar-hero"}`}
           onSubmit={(e) => { e.preventDefault(); submit(); }}
         >
           <SparkleIcon />
@@ -618,12 +648,6 @@ export default function PromptConsole({
           )}
         </form>
 
-        <div className="pc-examples">
-          {EXAMPLES.map((e) => (
-            <button key={e} className="chip pc-example-chip" onClick={() => submit(e)}>{e}</button>
-          ))}
-        </div>
-
         {phase === "materializing" && (
           <div className="pc-materializing">
             <span className="pc-dot" /><span className="pc-dot" /><span className="pc-dot" />
@@ -633,7 +657,7 @@ export default function PromptConsole({
         {phase === "unknown" && (
           <div className="pc-unknown">
             <p className="muted">
-              I don't have a view for &ldquo;{askedFor}&rdquo; yet in this prototype — try one of the examples above.
+              I don't have a view for &ldquo;{askedFor}&rdquo; yet — try naming a product (portfolio, perps, P&amp;L, predictions, loans, trading agents) or a look you want.
             </p>
           </div>
         )}
@@ -695,6 +719,58 @@ function PaintIcon() {
       <circle cx="7.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
       <circle cx="11" cy="7" r="1" fill="currentColor" stroke="none" />
       <circle cx="15.5" cy="8" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/* Six ambient glyphs, one per real product, used ONLY as faint background
+ * texture in the hero (see HERO_ORBIT_ICONS) — never rendered as a
+ * clickable label or paired with prompt text, so this stays decoration
+ * and doesn't quietly become a second set of "suggested prompts." Same
+ * minimal line-icon style as PaintIcon/MicIcon above. */
+function PortfolioGlyph() {
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 3v9h9" />
+    </svg>
+  );
+}
+function PerpsGlyph() {
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="6" y1="4" x2="6" y2="20" /><rect x="4" y="9" width="4" height="7" rx="1" />
+      <line x1="12" y1="2" x2="12" y2="22" /><rect x="10" y="6" width="4" height="10" rx="1" />
+      <line x1="18" y1="6" x2="18" y2="18" /><rect x="16" y="10" width="4" height="5" rx="1" />
+    </svg>
+  );
+}
+function PnlGlyph() {
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 17l6-6 4 4 8-9" /><path d="M15 6h6v6" />
+    </svg>
+  );
+}
+function PredictionsGlyph() {
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function BorrowGlyph() {
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 10l9-6 9 6" /><path d="M5 10v9M9.5 10v9M14.5 10v9M19 10v9" /><path d="M3 21h18" />
+    </svg>
+  );
+}
+function StrategiesGlyph() {
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
     </svg>
   );
 }
