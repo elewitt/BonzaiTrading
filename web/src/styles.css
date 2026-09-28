@@ -3472,7 +3472,15 @@ a.trow { color: inherit; text-decoration: none; }
    different visual language from the rest of Bonzai. */
 .pc-shell {
   min-height: 100vh; background: var(--paper); display: flex; flex-direction: column;
+  font-family: var(--pc-font-body, inherit);
 }
+/* A promptable typeface pairing ("give it a more modern font") — remaps
+   the same .serif/.display classes and the Donut's own SVG text classes
+   the rest of the app already uses, same cascade-from-.pc-shell pattern
+   as the color tokens. .mono is deliberately left alone — numbers stay in
+   a real monospace no matter which pairing is picked. */
+.pc-shell .serif, .pc-shell .display, .pc-shell .donut-value { font-family: var(--pc-font-display, 'Young Serif', Georgia, serif); }
+.pc-shell .donut-label, .pc-shell .donut-sub { font-family: var(--pc-font-body, 'Instrument Sans', system-ui, sans-serif); }
 .pc-top { padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; }
 .pc-customize-wrap { position: relative; }
 .pc-customize-btn {
@@ -3482,7 +3490,7 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .pc-customize-btn:hover { border-color: var(--pine); color: var(--pine); }
 .pc-customize-panel {
-  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: 220px;
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: 264px;
   background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
   box-shadow: 0 10px 30px rgba(10,24,18,.14);
 }
@@ -3491,6 +3499,10 @@ a.trow { color: inherit; text-decoration: none; }
   margin: 0 0 8px;
 }
 .pc-customize-panel > .pc-customize-label:not(:first-child) { margin-top: 16px; }
+.pc-customize-hint {
+  margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line);
+  font-size: 11px; line-height: 1.5; color: var(--moss);
+}
 .pc-swatches { display: flex; gap: 8px; }
 .pc-swatch {
   width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
@@ -3590,7 +3602,13 @@ a.trow { color: inherit; text-decoration: none; }
   position: relative; cursor: grab;
   opacity: 0; transform: translateY(10px) scale(.98);
   animation: pc-materialize .45s cubic-bezier(.2,.8,.2,1) forwards;
-  transition: box-shadow .2s ease, border-color .2s ease;
+  transition: box-shadow .2s ease, border-color .2s ease, border-radius .2s ease;
+  /* --pc-radius/--pc-shadow are the design-request knobs (Customize panel
+     or a prompt like "flatten the shadows") — falls back to the original
+     fixed look so a shell with no design vars set (none yet applied) is
+     unchanged. */
+  border-radius: var(--pc-radius, 14px);
+  box-shadow: var(--pc-shadow, 0 1px 2px rgba(10,24,18,.04), 0 6px 22px rgba(10,24,18,.05));
 }
 .pc-card:active { cursor: grabbing; }
 .pc-card-focused { border-color: var(--pine); box-shadow: 0 0 0 2px rgba(26,68,51,.12), 0 10px 26px rgba(10,24,18,.08); }
@@ -3617,7 +3635,14 @@ a.trow { color: inherit; text-decoration: none; }
 /* Same pill-toggle look as every real period/category switch in the app
    (.lvp-pct-btn/.sel) — sized down slightly since it sits in a result
    header rather than a full card top-row. */
-.pc-toggle { display: flex; gap: 4px; background: var(--paper); border-radius: 999px; padding: 3px; }
+.pc-toggle { display: flex; flex-wrap: wrap; gap: 4px; background: var(--paper); border-radius: 999px; padding: 3px; }
+/* Four short labels (radius/shadow/font options) in the Customize panel's
+   narrower column need tighter pills than the 2-3-item toggles elsewhere
+   get away with, and may still wrap to a second row on the smallest
+   panel widths — the shared pill radius just softens into a rounded-rect
+   once that happens, rather than a giant single pill trying to wrap. */
+.pc-customize-panel .pc-toggle { border-radius: 14px; }
+.pc-customize-panel .pc-toggle .lvp-pct-btn { padding: 5px 10px; }
 .pc-toggle .lvp-pct-btn { padding: 5px 13px; font-size: 11.5px; border-radius: 999px; }
 .pc-toggle .lvp-pct-btn.sel { background: var(--pine); color: #fff; }
 .pc-donut-wrap { display: flex; justify-content: center; padding: 8px 0 4px; }

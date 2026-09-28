@@ -1145,26 +1145,57 @@ app.post("/api/parse-borrow", requireAuth, parseLimiter, async (req, res) => {
   }
 });
 
+const CARD_KINDS = ["portfolio", "perps", "pnl", "borrow", "predictions", "strategies"];
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+const PALETTE_KEYS = ["paper", "card", "ink", "pine", "moss", "line", "gold"];
+
+/** WCAG relative-luminance contrast ratio — used to reject a generated
+ * palette where body text wouldn't actually be readable against the page,
+ * rather than trusting the model's color sense unchecked. */
+function contrastRatio(hexA, hexB) {
+  const lum = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  };
+  const [l1, l2] = [lum(hexA), lum(hexB)].sort((a, b) => b - a);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+
 /**
  * Prompt Mode's fallback classifier — the console's own client-side
- * keyword table (PromptConsole.jsx's resolveIntent) handles the common,
- * exactly-phrased cases instantly with no network round trip; this only
- * ever runs when that local match fails, so a genuinely novel phrasing
- * ("what's my biggest position", "sort my portfolio by size") still
- * resolves into something real instead of a dead "I don't understand."
+ * keyword tables (PromptConsole.jsx's resolveIntent/resolveDesignLocal)
+ * handle the common, exactly-phrased cases instantly with no network
+ * round trip; this only ever runs when neither local match fires, so a
+ * genuinely novel or compound request ("what's my biggest position",
+ * "show my portfolio and make it dark", "put my P&L up top and give it a
+ * warm amber accent") still resolves into something real.
  *
- * Deliberately bounded, not a code generator: this maps a request onto a
- * fixed set of Bonzai's own real data sources plus a small, honest set of
- * display/sort/filter knobs that actually exist on that data — never
- * arbitrary UI, since nothing about "any custom interface" should mean
- * executing model-authored code against a real financial dashboard.
+ * "Prompt it like a normal LLM" is the actual goal here, so this covers
+ * three independent things one sentence can ask for at once — which real
+ * data to show, what the interface should look like (including a fully
+ * custom color palette generated from a mood/vibe description, not just
+ * a fixed list), and how the cards should be arranged. What keeps this
+ * bounded rather than a code generator: every field the model can return
+ * still lands on a real control this app already has (a CSS variable it
+ * already reads, a sort it already knows how to do) — it can describe
+ * "what" and "how it should feel," never author markup, CSS, or script
+ * that gets executed. Colors are validated hex and contrast-checked
+ * server-side before ever reaching the client.
  */
 async function parseConsolePrompt({ prompt }) {
   if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
   if (!prompt) throw new Error("prompt required");
 
-  const system = `You classify a request to view financial data into a structured spec, for a product where the request drives which card appears on screen and how. Respond with ONLY a JSON object — no markdown, no prose.
+  const system = `You classify a request about a financial dashboard's UI into a structured spec. The request may ask for real data to be shown, for the interface's look to change, for cards to be rearranged, or any combination of those in one sentence. Respond with ONLY a JSON object — no markdown, no prose.
 
+Shape:
+{"dataSource":null,"display":null,"sortBy":null,"sortDir":null,"limit":null,"pnlPeriod":null,
+ "design":null,
+ "layout":null,
+ "summary":"one short plain sentence"}
+
+=== DATA (what to show) ===
 Available data sources (a request must clearly be about one of these, or dataSource is null):
 - portfolio: the user's tokenized-stock/ETF holdings — each position has a symbol, name, price, dollar value, % weight of the portfolio, and quantity held.
 - perps: open leveraged perpetual-futures positions (Hyperliquid).
@@ -1173,33 +1204,77 @@ Available data sources (a request must clearly be about one of these, or dataSou
 - predictions: open Kalshi prediction-market positions.
 - strategies: active automated trading agents (DCA, delta-neutral, TWAP/VWAP, price triggers).
 
-Shape: {"dataSource":"portfolio","display":"pie","sortBy":"value","sortDir":"desc","limit":3,"pnlPeriod":null,"summary":"one short plain sentence"}
-
-Fields:
-- "dataSource": one of "portfolio","perps","pnl","borrow","predictions","strategies", or null if the request isn't clearly about any of them (small talk, something unrelated, something else entirely).
+- "dataSource": one of the six keys above, or null if the request isn't clearly about any of them.
 - "display": "table", "pie", or "line" if a specific visualization was asked for; otherwise null. "pie"/"donut" -> pie. "line"/"graph"/"chart"/"over time" -> line. "table"/"list" -> table.
 - "sortBy": one of "value","weight","name","price" — ONLY meaningful for portfolio, null otherwise or if unspecified.
 - "sortDir": "asc" or "desc", or null.
 - "limit": a positive integer if a specific count was named or implied ("top 3" -> 3, "my biggest position" -> 1), otherwise null.
-- "pnlPeriod": one of "perpDay","perpWeek","perpMonth","perpAllTime" — ONLY meaningful for pnl ("today"->perpDay, "this week"->perpWeek, "this month"->perpMonth, "all time"->perpAllTime), null otherwise or if unspecified.
-- "summary": one short plain sentence restating what you understood.
+- "pnlPeriod": one of "perpDay","perpWeek","perpMonth","perpAllTime" — ONLY meaningful for pnl, null otherwise or if unspecified.
+Rules: "biggest"/"largest"/"top N" -> sortBy "value", sortDir "desc", limit N (or 1). "smallest"/"worst" -> sortDir "asc". "alphabetically"/"by name" -> sortBy "name". Never invent a dataSource, count, or period the request doesn't support — leave null rather than guess.
 
-Rules:
-- "biggest"/"largest"/"top N" -> sortBy "value", sortDir "desc", limit N (or 1 if no number given).
-- "smallest"/"worst" -> sortDir "asc".
-- "alphabetically"/"by name" -> sortBy "name".
-- Never invent a dataSource, count, or period the request doesn't support — leave the field null rather than guess.`;
+=== DESIGN (what it should look like) ===
+Set "design" to null if nothing about appearance was requested. Otherwise an object with any of these, each null unless that specific thing was asked for:
+{"theme":null,"customPalette":null,"radius":null,"shadow":null,"font":null,"density":null}
+- "theme": one of "sage","ocean","clay","slate" ONLY if the request names one of these exact preset words, or unambiguously just means "dark mode" (-> "slate") or "light mode" (-> "sage"). For any other color/mood request, leave this null and fill "customPalette" instead — never both.
+- "customPalette": for a color, mood, or vibe request that ISN'T one of the four preset names ("make it look like a rainy Tokyo evening", "warm amber accent", "give it a purple dusk feel", a specific hex or color name) — generate a full, COHESIVE, LEGIBLE palette as {"paper":"#hex","card":"#hex","ink":"#hex","pine":"#hex","moss":"#hex","line":"#hex","gold":"#hex"}, ALL SIX-DIGIT HEX. paper = page background (usually light and low-saturation, unless a dark mood was clearly requested). card = surface color for content cards, close to paper but distinguishable. ink = primary text — MUST have strong contrast against both paper and card (this is checked and rejected server-side if it doesn't, so make it count: near-black on a light paper, near-white on a dark paper). pine = the primary accent (headings, buttons, focus states) — this is where the requested color/mood should show up most. moss = secondary/muted text, between ink and paper in contrast. line = subtle border color, between paper and card. gold = a secondary accent, a complementary or analogous color to pine. Never reuse the exact same hex for two different keys.
+- "radius": "sharp" (barely-rounded), "soft" (default, moderately rounded), or "round" (very rounded) — only if corner rounding was requested.
+- "shadow": "flat" (no shadow), "soft" (default, subtle), or "bold" (strong, dramatic) — only if elevation/depth was requested.
+- "font": "editorial" (the current default — a literary serif + humanist sans), "classic" (a traditional book serif + clean sans, for "classic"/"traditional"/"newspaper" asks), "modern" (a contemporary display serif + geometric sans, for "modern"/"sleek"/"contemporary" asks), "technical" (an engineering/data feel, for "technical"/"precise" asks) — only if a font/typography change was requested.
+- "density": "cozy" or "compact" — only if spacing was requested.
 
-  const parsed = await callClaudeForJson({ system, prompt, maxTokens: 250, label: "parse-console" });
+=== LAYOUT (how cards are arranged) ===
+Set "layout" to null if nothing about arrangement was requested. Otherwise an object, each field one of the six data-source keys above (naming which EXISTING or newly-requested card the instruction targets) or null:
+{"bringToFront":null,"widen":null,"narrow":null,"remove":null}
+- "bringToFront": a card the request wants moved to the top/first position ("put my portfolio up top", "show my P&L first").
+- "widen": a card the request wants made bigger/wider ("make my P&L bigger", "give the portfolio more room").
+- "narrow": a card the request wants made smaller/narrower again.
+- "remove": a card the request wants taken off the board ("get rid of my loans card", "remove predictions").
+Only set a field when a specific card is clearly named or unambiguously implied — never guess which card an ambiguous "make it bigger" refers to if none is named.
+
+- "summary": one short plain sentence restating what you understood across all of the above.`;
+
+  const parsed = await callClaudeForJson({ system, prompt, maxTokens: 500, label: "parse-console" });
 
   const oneOf = (list, v) => (list.includes(v) ? v : null);
+
+  let customPalette = null;
+  if (parsed.design?.customPalette && typeof parsed.design.customPalette === "object") {
+    const cp = parsed.design.customPalette;
+    const allValidHex = PALETTE_KEYS.every((k) => typeof cp[k] === "string" && HEX_RE.test(cp[k]));
+    // Reject the whole palette (fall back to no color change) rather than
+    // ship something illegible — AA body-text contrast against both
+    // surfaces the ink color actually appears on.
+    if (allValidHex && contrastRatio(cp.ink, cp.paper) >= 4.5 && contrastRatio(cp.ink, cp.card) >= 4.5) {
+      customPalette = Object.fromEntries(PALETTE_KEYS.map((k) => [k, cp[k].toLowerCase()]));
+    }
+  }
+  const design = parsed.design ? {
+    theme: customPalette ? null : oneOf(["sage", "ocean", "clay", "slate"], parsed.design.theme),
+    customPalette,
+    radius: oneOf(["sharp", "soft", "round"], parsed.design.radius),
+    shadow: oneOf(["flat", "soft", "bold"], parsed.design.shadow),
+    font: oneOf(["editorial", "classic", "modern", "technical"], parsed.design.font),
+    density: oneOf(["cozy", "compact"], parsed.design.density),
+  } : null;
+  const designIsEmpty = design && Object.values(design).every((v) => v === null);
+
+  const layout = parsed.layout ? {
+    bringToFront: oneOf(CARD_KINDS, parsed.layout.bringToFront),
+    widen: oneOf(CARD_KINDS, parsed.layout.widen),
+    narrow: oneOf(CARD_KINDS, parsed.layout.narrow),
+    remove: oneOf(CARD_KINDS, parsed.layout.remove),
+  } : null;
+  const layoutIsEmpty = layout && Object.values(layout).every((v) => v === null);
+
   return {
-    dataSource: oneOf(["portfolio", "perps", "pnl", "borrow", "predictions", "strategies"], parsed.dataSource),
+    dataSource: oneOf(CARD_KINDS, parsed.dataSource),
     display: oneOf(["table", "pie", "line"], parsed.display),
     sortBy: oneOf(["value", "weight", "name", "price"], parsed.sortBy),
     sortDir: oneOf(["asc", "desc"], parsed.sortDir),
     limit: Number.isInteger(parsed.limit) && parsed.limit > 0 ? parsed.limit : null,
     pnlPeriod: oneOf(["perpDay", "perpWeek", "perpMonth", "perpAllTime"], parsed.pnlPeriod),
+    design: designIsEmpty ? null : design,
+    layout: layoutIsEmpty ? null : layout,
     summary: typeof parsed.summary === "string" ? parsed.summary : "",
   };
 }

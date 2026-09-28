@@ -22,14 +22,23 @@ import PredictionPositionsPanel from "./PredictionPositionsPanel.jsx";
  * Intent matching is a small client-side keyword table first — the whole
  * point being tested here is that asking feels instant — and only when
  * that local match fails does it fall back to a real Claude call
- * (api.parseConsole, server-side in /api/parse-console) that classifies
- * genuinely novel phrasing onto the same fixed set of real data sources
- * plus a small, honest set of display/sort/filter knobs. That fallback is
- * deliberately NOT a code/UI generator — "any custom interface" here means
- * any request that resolves onto Bonzai's own real data, never arbitrary
- * model-authored code running against a real financial dashboard. Both
- * paths converge on the same addOrFocusCard/setPortfolioSort/etc. state,
- * so the render side never needs to know which one decided.
+ * (api.parseConsole, server-side in /api/parse-console) that reads
+ * genuinely novel or compound phrasing ("show my portfolio and make it
+ * dark", "put my P&L up top and give it an amber accent") and returns a
+ * spec covering three independent things one prompt can ask for at once:
+ * WHICH DATA to show (dataSource/display/sort/limit/period — the same
+ * fixed set of Bonzai's real products), WHAT IT LOOKS LIKE (a full custom
+ * color palette, corner rounding, shadow depth, a typeface pairing — see
+ * PC_THEMES/PC_RADII/PC_SHADOWS/PC_FONTS), and HOW IT'S ARRANGED (bring a
+ * card to the front, widen/narrow it, remove it). "Prompt it like a
+ * normal LLM" is the actual UX goal; what keeps this safe on a real
+ * financial dashboard is that every one of those fields still lands on a
+ * real, already-built control (a CSS variable this app already reads, a
+ * sort this app already knows how to do) — never arbitrary markup, CSS,
+ * or script the model writes and this executes. All three paths (local
+ * topic table, local design-word table, AI fallback) converge on the same
+ * addOrFocusCard/applyDesignPatch/applyLayoutPatch state, so the render
+ * side never needs to know which one decided.
  */
 const INTENTS = [
   { key: "pnl",         label: "P&L",                  test: /p&l|pnl|profit|\bloss(es)?\b|performance/i },
@@ -48,8 +57,8 @@ const EXAMPLES = [
   "Show my portfolio as a pie chart",
   "My P&L from the past month",
   "What are my perp positions?",
-  "Show my predictions",
   "Show my trading agents",
+  "Make it dark, rounded, and give it a warm gold accent",
 ];
 
 const PNL_PERIODS = [
@@ -62,21 +71,23 @@ const PNL_PERIODS = [
 const CLEAR_WORDS = /\bclear (the )?(board|everything|all)\b|\bstart over\b|\breset\b/i;
 
 /**
- * "Customize the design" — a curated set of full palettes (not an
- * open-ended color picker, which on a financial dashboard is much more
- * likely to produce something illegible than something nice) rather than
- * fake choice. Every entry here remaps the SAME custom-property names the
- * rest of the app already reads (--paper/--card/--ink/--pine/--moss/
- * --line/--gold) — applied inline on .pc-shell, they cascade into every
- * card, including reused real components (Donut, TimeSeriesChart,
- * PredictionPositionsPanel) for free, since those already read the same
- * variables rather than hardcoded colors.
+ * "Customize the design" — four curated full palettes for a one-click
+ * pick, PLUS a genuinely open-ended fifth: "custom", filled in from
+ * whatever colors a prompt asks for ("make it look like a rainy Tokyo
+ * evening") via the server's AI classifier (validated hex, contrast-
+ * checked — see /api/parse-console's paletteFromDesign). Every entry here
+ * remaps the SAME custom-property names the rest of the app already reads
+ * (--paper/--card/--ink/--pine/--moss/--line/--gold) — applied inline on
+ * .pc-shell, they cascade into every card, including reused real
+ * components (Donut, TimeSeriesChart, PredictionPositionsPanel) for free,
+ * since those already read the same variables rather than hardcoded colors.
  *
- * --gain/--loss are deliberately NOT remapped — green-for-gain and
- * red-for-loss are financial convention, not brand decoration, and should
- * mean the same thing in every theme. Donut's own wedge palette
- * (SEG_COLORS) is a handful of hardcoded hex values, not a variable, so
- * wedge hues stay constant across themes too — a real, honest limit on
+ * --gain/--loss are deliberately NOT remapped, in either the presets or a
+ * custom palette — green-for-gain and red-for-loss are financial
+ * convention, not brand decoration, and should mean the same thing no
+ * matter what the rest of the interface looks like. Donut's own wedge
+ * palette (SEG_COLORS) is a handful of hardcoded hex values, not a
+ * variable, so wedge hues stay constant too — a real, honest limit on
  * "fully custom" worth knowing rather than papering over.
  */
 const PC_THEMES = [
@@ -93,9 +104,63 @@ const PC_THEMES = [
 ];
 const PC_DENSITIES = [{ key: "cozy", label: "Cozy" }, { key: "compact", label: "Compact" }];
 
-function themeStyleVars(themeKey) {
-  const theme = PC_THEMES.find((t) => t.key === themeKey) ?? PC_THEMES[0];
-  return Object.fromEntries(Object.entries(theme.tokens).map(([k, v]) => [`--${k}`, v]));
+// Rounding and elevation as the same kind of promptable knob as color —
+// "make the corners sharper", "flatten the shadows" — applied via CSS
+// vars so the same three values also drive the manual Customize panel.
+const PC_RADII = [
+  { key: "sharp", label: "Sharp", value: "4px" },
+  { key: "soft", label: "Soft (default)", value: "16px" },
+  { key: "round", label: "Round", value: "26px" },
+];
+const PC_SHADOWS = [
+  { key: "flat", label: "Flat", value: "none" },
+  { key: "soft", label: "Soft (default)", value: "0 1px 2px rgba(10,24,18,.04), 0 6px 22px rgba(10,24,18,.05)" },
+  { key: "bold", label: "Bold", value: "0 4px 10px rgba(10,24,18,.10), 0 22px 48px rgba(10,24,18,.18)" },
+];
+
+// A curated set of typeface PAIRINGS, not an open text-font request — the
+// same reasoning as the color palettes above: a live financial dashboard
+// where any arbitrary webfont could be requested is much more likely to
+// break layout or legibility than to look good. Each pairing is a real,
+// distinct typographic voice (not just weight tweaks), and — since only
+// "Editorial" ships in the app's own index — a non-default choice lazy-
+// loads its Google Fonts stylesheet the first time it's picked (see
+// ensureFontLoaded below); this is a network stylesheet fetch, never code.
+const PC_FONTS = [
+  { key: "editorial", label: "Editorial", display: "'Young Serif', Georgia, serif", body: "'Instrument Sans', system-ui, sans-serif" },
+  { key: "classic", label: "Classic", display: "'Libre Baskerville', Georgia, serif", body: "'Source Sans 3', system-ui, sans-serif",
+    google: "Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Source+Sans+3:wght@400;500;600" },
+  { key: "modern", label: "Modern", display: "'Fraunces', Georgia, serif", body: "'Inter', system-ui, sans-serif",
+    google: "Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600" },
+  { key: "technical", label: "Technical", display: "'IBM Plex Serif', Georgia, serif", body: "'IBM Plex Sans', system-ui, sans-serif",
+    google: "IBM+Plex+Serif:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600" },
+];
+
+function ensureFontLoaded(fontKey) {
+  const font = PC_FONTS.find((f) => f.key === fontKey);
+  if (!font?.google || typeof document === "undefined") return;
+  if (document.querySelector(`link[data-pc-font="${fontKey}"]`)) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?family=${font.google}&display=swap`;
+  link.dataset.pcFont = fontKey;
+  document.head.appendChild(link);
+}
+
+/** Builds the full inline style object for .pc-shell: color tokens from
+ * either a preset or a validated custom palette, plus the radius/shadow/
+ * font knobs — one place where "the design" becomes real CSS variables
+ * that cascade into every reused real component. */
+function designStyleVars({ theme, customPalette, radius, shadow, font }) {
+  const preset = PC_THEMES.find((t) => t.key === theme);
+  const colorTokens = theme === "custom" && customPalette ? customPalette : (preset?.tokens ?? {});
+  const fontDef = PC_FONTS.find((f) => f.key === font) ?? PC_FONTS[0];
+  const vars = Object.fromEntries(Object.entries(colorTokens).map(([k, v]) => [`--${k}`, v]));
+  vars["--pc-radius"] = PC_RADII.find((r) => r.key === radius)?.value ?? PC_RADII[1].value;
+  vars["--pc-shadow"] = PC_SHADOWS.find((s) => s.key === shadow)?.value ?? PC_SHADOWS[1].value;
+  vars["--pc-font-display"] = fontDef.display;
+  vars["--pc-font-body"] = fontDef.body;
+  return vars;
 }
 
 function describeStrategy(s) {
@@ -155,6 +220,70 @@ function parsePortfolioSort(text) {
   };
 }
 
+/** Any language suggesting an open-ended color/mood/aesthetic request
+ * ("amber accent", "give it a moody vibe", "make it feel like a rainy
+ * evening in Tokyo") needs the AI's actual color generation — there's no
+ * fixed keyword for "what should this look like" on principle. An exact
+ * preset name is still unambiguous enough to resolve instantly even
+ * alongside a color word ("switch to ocean, love that color"), so that
+ * case doesn't count. Exported as its own check (not just baked into
+ * resolveDesignLocal) because submit() also needs it: a topic match
+ * ("show my portfolio...") is instant on its own, but must NOT take the
+ * local fast path when the SAME sentence also carries unresolved color
+ * intent ("...and give it a warm amber accent") — that combination has to
+ * reach the AI too, or the color half silently never gets applied. */
+function hasOpenColorIntent(text) {
+  const namesPreset = PC_THEMES.some((t) => t.key !== "sage" && new RegExp(`\\b${t.key}\\b`, "i").test(text));
+  return /\b(color|colour|accent|palette|hue|shade|mood|vibe|tone|aesthetic)\b/i.test(text) && !namesPreset;
+}
+
+/** The instant, no-network half of "change any aspect of the design" —
+ * obvious, unambiguous design words ("dark mode", "sharper corners", "no
+ * shadow") resolve locally same as the topic keyword table does. A
+ * genuinely open-ended ask carries no fixed keyword to match on
+ * principle (see hasOpenColorIntent), so it always falls through to the
+ * AI classifier below — that's the real "prompt it like an LLM" half of
+ * this, not this table. */
+function resolveDesignLocal(text) {
+  if (hasOpenColorIntent(text)) return null;
+
+  const out = {};
+  let matched = false;
+  if (/\bdark mode\b|\bnight mode\b|\bmake it dark\b|\bgo dark\b/i.test(text)) { out.theme = "slate"; matched = true; }
+  else if (/\blight mode\b|\bmake it light\b/i.test(text)) { out.theme = "sage"; matched = true; }
+  for (const t of PC_THEMES) {
+    if (t.key !== "sage" && new RegExp(`\\b${t.key}\\b`, "i").test(text)) { out.theme = t.key; matched = true; }
+  }
+  if (/\bsharp(er)? corners?\b|\bsquare corners?\b|\bno round(ing|ed corners)?\b/i.test(text)) { out.radius = "sharp"; matched = true; }
+  else if (/\bround(ed|er)? corners?\b|\bmore round(ed)?\b/i.test(text)) { out.radius = "round"; matched = true; }
+  if (/\bflat(ten)?\b.*\bshadow/i.test(text) || /\bno shadow/i.test(text)) { out.shadow = "flat"; matched = true; }
+  else if (/\bbold(er)? shadow/i.test(text) || /\bdramatic shadow/i.test(text) || /\bmore shadow/i.test(text)) { out.shadow = "bold"; matched = true; }
+  if (/\bcompact\b|\btighter\b|\bdenser\b/i.test(text)) { out.density = "compact"; matched = true; }
+  else if (/\bcozy\b|\bmore (breathing room|space|room)\b|\bspac(ious|e (it )?out)\b/i.test(text)) { out.density = "cozy"; matched = true; }
+  for (const f of PC_FONTS) {
+    if (new RegExp(`\\b${f.key}\\b`, "i").test(text)) { out.font = f.key; matched = true; }
+  }
+  return matched ? out : null;
+}
+
+/** Arrangement verbs ("get rid of", "up top", "bigger") — checked locally
+ * alongside a topic match for exactly the reason parsePortfolioSort
+ * exists: "get rid of my loans card" matches the "loans" topic keyword
+ * and would otherwise just add/focus a Loans card instead of removing it,
+ * since a topic match never falls through to the AI layout path. Returns
+ * EVERY action the sentence named, not just the first — "put my P&L up
+ * top AND make it bigger" asks for two actions in one sentence, and since
+ * a topic match already commits to the instant local path, only checking
+ * one verb would silently drop whichever one wasn't checked first. */
+function resolveLayoutVerbsLocal(text) {
+  if (/\bremove\b|\bget rid of\b|\bdelete\b|\btake (it |that )?off\b|\bhide\b/i.test(text)) return ["remove"];
+  const verbs = [];
+  if (/\bup top\b|\bto the top\b|\b(bring|move) .*(to the )?front\b/i.test(text)) verbs.push("bringToFront");
+  if (/\bbigger\b|\bwider\b|\blarger\b|\bmore room\b/i.test(text)) verbs.push("widen");
+  if (/\bsmaller\b|\bnarrower\b/i.test(text)) verbs.push("narrow");
+  return verbs;
+}
+
 const LAYOUT_KEY = "bonzai_prompt_console_layout_v1";
 function loadLayout() {
   try {
@@ -183,16 +312,63 @@ export default function PromptConsole({
   const [portfolioMode, setPortfolioMode] = useState(() => loadLayout()?.portfolioMode ?? "table");
   const [portfolioSort, setPortfolioSort] = useState(() => loadLayout()?.portfolioSort ?? { by: null, dir: null, limit: null });
   const [pnlPeriod, setPnlPeriod] = useState(() => loadLayout()?.pnlPeriod ?? "perpMonth");
-  // The design half of "their own interface" — a palette and a density,
-  // same persistence treatment as the layout itself.
+  // Which cards the user has explicitly widened via a request ("make my
+  // P&L bigger") — separate from the portfolio card's own auto-wide-when-
+  // pie behavior, so both can apply independently.
+  const [wideCards, setWideCards] = useState(() => new Set(loadLayout()?.wideCards ?? []));
+  // The design half of "their own interface" — color palette (a preset OR
+  // a fully custom one filled in from a prompt), corner rounding, shadow
+  // depth, and a typeface pairing — same persistence treatment as layout.
   const [theme, setTheme] = useState(() => loadLayout()?.theme ?? "sage");
+  const [customPalette, setCustomPalette] = useState(() => loadLayout()?.customPalette ?? null);
+  const [radius, setRadius] = useState(() => loadLayout()?.radius ?? "soft");
+  const [shadow, setShadow] = useState(() => loadLayout()?.shadow ?? "soft");
+  const [font, setFont] = useState(() => loadLayout()?.font ?? "editorial");
   const [density, setDensity] = useState(() => loadLayout()?.density ?? "cozy");
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const customizeRef = useRef(null);
 
   useEffect(() => {
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ cards, portfolioMode, portfolioSort, pnlPeriod, theme, density })); } catch {}
-  }, [cards, portfolioMode, portfolioSort, pnlPeriod, theme, density]);
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({
+        cards, portfolioMode, portfolioSort, pnlPeriod, wideCards: [...wideCards],
+        theme, customPalette, radius, shadow, font, density,
+      }));
+    } catch {}
+  }, [cards, portfolioMode, portfolioSort, pnlPeriod, wideCards, theme, customPalette, radius, shadow, font, density]);
+
+  useEffect(() => { ensureFontLoaded(font); }, [font]);
+
+  // Applies whichever design fields a request actually named — a prompt
+  // that only says "make it dark" shouldn't reset the font or corners the
+  // user already picked, so each field is independently optional.
+  const applyDesignPatch = (d) => {
+    if (d.customPalette) { setCustomPalette(d.customPalette); setTheme("custom"); }
+    else if (d.theme) setTheme(d.theme);
+    if (d.radius) setRadius(d.radius);
+    if (d.shadow) setShadow(d.shadow);
+    if (d.font) setFont(d.font);
+    if (d.density) setDensity(d.density);
+  };
+
+  // "Put my P&L up top", "make the portfolio card bigger", "get rid of
+  // the loans card" — arrangement requests resolved the same way a topic
+  // or design request is: converge on the same card-canvas state whether
+  // it came from a click, a drag, or a typed/spoken ask.
+  const applyLayoutPatch = (l) => {
+    if (l.remove) removeCard(l.remove);
+    if (l.bringToFront) {
+      addOrFocusCard(l.bringToFront);
+      setCards((prev) => [l.bringToFront, ...prev.filter((k) => k !== l.bringToFront)]);
+    }
+    if (l.widen) {
+      addOrFocusCard(l.widen);
+      setWideCards((prev) => new Set(prev).add(l.widen));
+    }
+    if (l.narrow) {
+      setWideCards((prev) => { const next = new Set(prev); next.delete(l.narrow); return next; });
+    }
+  };
 
   // Same click-outside convention as the main dashboard's own profile/
   // markets dropdowns (a ref + a mousedown listener) — not a full-screen
@@ -243,12 +419,20 @@ export default function PromptConsole({
 
     const topicMatch = resolveIntent(q);
     const formatMatch = parseDisplayMode(q);
+    const designMatch = resolveDesignLocal(q);
+    // A topic match alone is normally instant, but not when the SAME
+    // sentence also carries color/mood language neither resolveIntent nor
+    // resolveDesignLocal can resolve ("show my portfolio and give it a
+    // warm amber accent") — taking the local path there would apply the
+    // topic and silently drop the color ask, since it'd never reach the
+    // AI call below. See hasOpenColorIntent's own comment for why.
+    const openColorIntent = hasOpenColorIntent(q);
 
     // A bare reformat with no new subject named ("show me in pie chart
     // form") re-styles the focused card rather than failing — "on the
     // fly" means it applies to whichever card you're already looking at,
     // the same way clicking that card's own toggle pill would.
-    if (!topicMatch && formatMatch && focusedKind === "portfolio") {
+    if (!topicMatch && !designMatch && !openColorIntent && formatMatch && focusedKind === "portfolio") {
       setPhase("materializing");
       setTimeout(() => { setPortfolioMode(formatMatch); setPhase("settled"); }, 260);
       return;
@@ -262,35 +446,56 @@ export default function PromptConsole({
     // holdings...") still applies locally — otherwise a topic keyword like
     // "holdings" would win the match and silently swallow the "top 3" that
     // was asked for right alongside it, since it'd never reach the AI path.
-    if (topicMatch) {
+    // A design word in the same sentence ("show my portfolio, make it
+    // dark") applies right alongside the topic, same reasoning.
+    if ((topicMatch || designMatch) && !openColorIntent) {
+      const layoutVerbs = topicMatch ? resolveLayoutVerbsLocal(q) : [];
       setTimeout(() => {
-        addOrFocusCard(topicMatch.key);
-        if (topicMatch.key === "portfolio") {
-          if (formatMatch) setPortfolioMode(formatMatch);
-          setPortfolioSort(parsePortfolioSort(q) ?? { by: null, dir: null, limit: null });
+        if (topicMatch) {
+          if (layoutVerbs.includes("remove")) {
+            removeCard(topicMatch.key);
+          } else {
+            addOrFocusCard(topicMatch.key);
+            if (topicMatch.key === "portfolio") {
+              if (formatMatch) setPortfolioMode(formatMatch);
+              setPortfolioSort(parsePortfolioSort(q) ?? { by: null, dir: null, limit: null });
+            }
+            if (topicMatch.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
+            for (const verb of layoutVerbs) applyLayoutPatch({ [verb]: topicMatch.key });
+          }
         }
-        if (topicMatch.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
+        if (designMatch) applyDesignPatch(designMatch);
         setPhase("settled");
       }, 420);
       return;
     }
 
-    // No local keyword match — this is the "literally any request" path:
-    // a real Claude call maps genuinely novel phrasing ("what's my
-    // biggest position", "sort my portfolio by size, smallest first",
-    // "top 3 holdings as a pie chart") onto the same real data sources
-    // instead of a flat "I don't understand." Bounded, not a code
-    // generator — see parseConsolePrompt's own comment server-side for why.
+    // No local keyword match — this is "prompt it like an LLM": a real
+    // Claude call (server-side, /api/parse-console) reads genuinely novel
+    // phrasing and returns a structured spec covering three independent
+    // things a request can ask for — which data to show (dataSource,
+    // display, sort, limit, period), what it should look like (a full
+    // custom color palette, corner rounding, shadow depth, a typeface
+    // pairing), and how it should be arranged (bring a card to the front,
+    // widen/narrow it, remove it) — any combination of the three can come
+    // back from one sentence. Deliberately bounded, not a code generator:
+    // every field lands on a real, already-built control, never arbitrary
+    // markup or script — see parseConsolePrompt's own comment server-side.
     try {
       const ai = await api.parseConsole(q);
-      if (!ai.dataSource) { setPhase("unknown"); return; }
-      addOrFocusCard(ai.dataSource);
-      if (ai.dataSource === "portfolio") {
-        if (ai.display) setPortfolioMode(ai.display === "line" ? "table" : ai.display);
-        setPortfolioSort({ by: ai.sortBy, dir: ai.sortDir, limit: ai.limit });
+      let matched = false;
+      if (ai.dataSource) {
+        matched = true;
+        addOrFocusCard(ai.dataSource);
+        if (ai.dataSource === "portfolio") {
+          if (ai.display) setPortfolioMode(ai.display === "line" ? "table" : ai.display);
+          setPortfolioSort({ by: ai.sortBy, dir: ai.sortDir, limit: ai.limit });
+        }
+        if (ai.dataSource === "pnl" && ai.pnlPeriod) setPnlPeriod(ai.pnlPeriod);
       }
-      if (ai.dataSource === "pnl" && ai.pnlPeriod) setPnlPeriod(ai.pnlPeriod);
-      setPhase("settled");
+      if (ai.design) { matched = true; applyDesignPatch(ai.design); }
+      if (ai.layout) { matched = true; applyLayoutPatch(ai.layout); }
+      setPhase(matched ? "settled" : "unknown");
     } catch {
       setPhase("unknown");
     }
@@ -349,11 +554,12 @@ export default function PromptConsole({
     onClick: () => setFocusedKind(kind),
   });
   const frameFor = (kind, index) => ({
-    focused: focusedKind === kind, onRemove: () => removeCard(kind), dragProps: dragPropsFor(kind, index),
+    focused: focusedKind === kind, wide: wideCards.has(kind),
+    onRemove: () => removeCard(kind), dragProps: dragPropsFor(kind, index),
   });
 
   return (
-    <div className={`pc-shell pc-density-${density}`} style={themeStyleVars(theme)}>
+    <div className={`pc-shell pc-density-${density}`} style={designStyleVars({ theme, customPalette, radius, shadow, font })}>
       <div className="pc-top">
         <button className="pc-back" onClick={onBack}>← Back to classic view</button>
         <div className="pc-customize-wrap" ref={customizeRef}>
@@ -361,7 +567,13 @@ export default function PromptConsole({
             <PaintIcon /> Customize
           </button>
           {customizeOpen && (
-            <CustomizePanel theme={theme} onThemeChange={setTheme} density={density} onDensityChange={setDensity} />
+            <CustomizePanel
+              theme={theme} onThemeChange={(k) => { setTheme(k); }} customPalette={customPalette}
+              radius={radius} onRadiusChange={setRadius}
+              shadow={shadow} onShadowChange={setShadow}
+              font={font} onFontChange={setFont}
+              density={density} onDensityChange={setDensity}
+            />
           )}
         </div>
       </div>
@@ -490,10 +702,14 @@ function PaintIcon() {
 /** "Customize the design" — palette swatches + a density switch, both
  * persisted alongside the layout. Click-outside (the backdrop) closes it,
  * same convention as the app's other popovers (profile/markets menus). */
-function CustomizePanel({ theme, onThemeChange, density, onDensityChange }) {
+function CustomizePanel({
+  theme, onThemeChange, customPalette,
+  radius, onRadiusChange, shadow, onShadowChange, font, onFontChange,
+  density, onDensityChange,
+}) {
   return (
     <div className="pc-customize-panel">
-      <p className="pc-customize-label">Theme</p>
+      <p className="pc-customize-label">Palette</p>
       <div className="pc-swatches">
         {PC_THEMES.map((t) => (
           <button key={t.key} type="button"
@@ -503,9 +719,27 @@ function CustomizePanel({ theme, onThemeChange, density, onDensityChange }) {
             aria-label={t.label} title={t.label} aria-pressed={theme === t.key}
           />
         ))}
+        {/* Only appears once a prompt has actually produced one — "ask for
+            a color and it becomes a real, re-selectable option here too,"
+            not just a one-off applied in the background. */}
+        {customPalette && (
+          <button type="button"
+            className={`pc-swatch ${theme === "custom" ? "pc-swatch-active" : ""}`}
+            style={{ background: `linear-gradient(135deg, ${customPalette.pine || "#1A4433"}, ${customPalette.gold || "#B08D33"})` }}
+            onClick={() => onThemeChange("custom")}
+            aria-label="Custom (from your prompt)" title="Custom (from your prompt)" aria-pressed={theme === "custom"}
+          />
+        )}
       </div>
+      <p className="pc-customize-label">Corners</p>
+      <PillToggle options={PC_RADII.map((r) => ({ key: r.key, label: r.label }))} value={radius} onChange={onRadiusChange} />
+      <p className="pc-customize-label">Shadow</p>
+      <PillToggle options={PC_SHADOWS.map((s) => ({ key: s.key, label: s.label }))} value={shadow} onChange={onShadowChange} />
+      <p className="pc-customize-label">Typeface</p>
+      <PillToggle options={PC_FONTS.map((f) => ({ key: f.key, label: f.label }))} value={font} onChange={onFontChange} />
       <p className="pc-customize-label">Density</p>
       <PillToggle options={PC_DENSITIES} value={density} onChange={onDensityChange} />
+      <p className="pc-customize-hint">Or just ask the prompt bar — “make it dark and rounded”, “give it a warm amber accent”, “put my P&amp;L up top”.</p>
     </div>
   );
 }
@@ -615,7 +849,7 @@ function PortfolioResult({ portfolio, mode, sort, onModeChange, onNavigate, ...f
       headValue={`$${usd(limitedTotal)}`}
       toggle={toggle}
       onNavigate={onNavigate} navLabel="Open Brokerage" navTarget="dash"
-      {...frame} wide={mode === "pie"}
+      {...frame} wide={frame.wide || mode === "pie"}
     >
       {mode === "pie" ? (
         <div className="pc-donut-wrap">
