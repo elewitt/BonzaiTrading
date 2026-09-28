@@ -44,8 +44,14 @@ const INTENTS = [
   { key: "pnl",         label: "P&L",                  test: /p&l|pnl|profit|\bloss(es)?\b|performance/i },
   // \bown\b (not a bare "own" substring) so this doesn't fire on any word
   // that merely contains "own" (shown, brown, downturn, ...) — a real bug
-  // caught while extending this list the first time.
-  { key: "portfolio",   label: "Portfolio",            test: /portfolio|holdings|net worth|stocks|equit|brokerage|\bown\b/i },
+  // caught while extending this list the first time. The negative
+  // lookbehind is a second, later fix: "my own"/"your own"/etc is a
+  // generic possessive-emphasis construction ("build my own trading
+  // view"), not an ownership reference like "what do I own" — without
+  // excluding it, "build my own view" matched portfolio here and took
+  // the single-topic instant path before ever reaching the AI that would
+  // have composed the actual multi-card view being asked for.
+  { key: "portfolio",   label: "Portfolio",            test: /portfolio|holdings|net worth|stocks|equit|brokerage|(?<!my |your |their |his |her |our )\bown\b/i },
   { key: "perps",       label: "Perpetual positions",  test: /perp|leverage|\blong\b|\bshort\b|liquidat/i },
   { key: "borrow",      label: "Loans",                test: /loan|borrow|debt|collateral|lend/i },
   { key: "predictions", label: "Predictions",          test: /predict|kalshi|wager|\byes\b.*\bno\b/i },
@@ -205,8 +211,12 @@ function describeStrategy(s) {
   return `$${usd(p.usdPerInterval)} of ${displayTicker(p.symbol)} every ${every}`;
 }
 
-function resolveIntent(text) {
-  return INTENTS.find((i) => i.test.test(text)) ?? null;
+/** Every topic named, not just the first — "build a view with my
+ * portfolio, P&L, and perps" names three at once, and a real "build my
+ * own trading view" request is exactly this shape: several products
+ * composed from one sentence, not one card added at a time. */
+function resolveIntents(text) {
+  return INTENTS.filter((i) => i.test.test(text));
 }
 
 /** A time-scope word in the same sentence as a P&L request — "the past
@@ -265,6 +275,21 @@ function parsePortfolioSort(text) {
 function hasOpenColorIntent(text) {
   const namesPreset = PC_THEMES.some((t) => t.key !== "sage" && new RegExp(`\\b${t.key}\\b`, "i").test(text));
   return /\b(color|colour|accent|palette|hue|shade|mood|vibe|tone|aesthetic)\b/i.test(text) && !namesPreset;
+}
+
+/** Same idea as hasOpenColorIntent, for a gap the multi-topic table
+ * exposed: "open positions" doesn't contain "perp" so resolveIntents
+ * never matches it as the perps topic, but a bare "position(s)" is real
+ * signal — perps is the only thing this app calls a "position." Left
+ * unguarded, "build a view with my P&L, portfolio, and open positions"
+ * would match pnl+portfolio locally, take the instant multi-topic path
+ * on THOSE TWO, and never reach the AI that would have understood all
+ * three — silently shipping an incomplete view instead of a complete
+ * one. If "position(s)" appears and perps wasn't already matched, the
+ * local table can't be trusted as complete, so this defers to the AI
+ * even when it DID resolve something real. */
+function hasUnresolvedPositionMention(text, topicMatches) {
+  return /\bpositions?\b/i.test(text) && !topicMatches.some((t) => t.key === "perps");
 }
 
 /** The instant, no-network half of "change any aspect of the design" —
@@ -476,22 +501,35 @@ export default function PromptConsole({
       return;
     }
 
-    const topicMatch = resolveIntent(q);
+    const topicMatches = resolveIntents(q);
     const formatMatch = parseDisplayMode(q);
     const designMatch = resolveDesignLocal(q);
     // A topic match alone is normally instant, but not when the SAME
-    // sentence also carries color/mood language neither resolveIntent nor
+    // sentence also carries color/mood language neither resolveIntents nor
     // resolveDesignLocal can resolve ("show my portfolio and give it a
     // warm amber accent") — taking the local path there would apply the
     // topic and silently drop the color ask, since it'd never reach the
     // AI call below. See hasOpenColorIntent's own comment for why.
     const openColorIntent = hasOpenColorIntent(q);
+    // A single topic can safely combine with a local arrangement verb
+    // ("get rid of my loans card") because there's exactly one card the
+    // verb could mean. With several topics at once ("widen my portfolio
+    // and perps") that's genuinely ambiguous — which verb targets which
+    // card isn't something a keyword table can untangle — so this defers
+    // the WHOLE request to the AI rather than guessing.
+    const layoutVerbsLocal = resolveLayoutVerbsLocal(q);
+    const ambiguousMultiTopicLayout = topicMatches.length > 1 && layoutVerbsLocal.length > 0;
+    // "Open positions" alongside topics the local table DID resolve
+    // ("build a view with my P&L, portfolio, and open positions") — see
+    // hasUnresolvedPositionMention's own comment for why this has to
+    // defer the whole request rather than ship the partial local match.
+    const unresolvedPosition = hasUnresolvedPositionMention(q, topicMatches);
 
     // A bare reformat with no new subject named ("show me in pie chart
     // form") re-styles the focused card rather than failing — "on the
     // fly" means it applies to whichever card you're already looking at,
     // the same way clicking that card's own toggle pill would.
-    if (!topicMatch && !designMatch && !openColorIntent && formatMatch && focusedKind === "portfolio") {
+    if (!topicMatches.length && !designMatch && !openColorIntent && formatMatch && focusedKind === "portfolio") {
       setPhase("materializing");
       setTimeout(() => { setPortfolioMode(formatMatch); setPhase("settled"); }, 260);
       return;
@@ -506,21 +544,33 @@ export default function PromptConsole({
     // "holdings" would win the match and silently swallow the "top 3" that
     // was asked for right alongside it, since it'd never reach the AI path.
     // A design word in the same sentence ("show my portfolio, make it
-    // dark") applies right alongside the topic, same reasoning.
-    if ((topicMatch || designMatch) && !openColorIntent) {
-      const layoutVerbs = topicMatch ? resolveLayoutVerbsLocal(q) : [];
+    // dark") applies right alongside the topic, same reasoning. Naming
+    // SEVERAL topics at once ("build a view with my portfolio, P&L, and
+    // perps") adds all of them together — this is the actual "build my
+    // own trading view" case: one sentence composing a whole board.
+    if ((topicMatches.length || designMatch) && !openColorIntent && !ambiguousMultiTopicLayout && !unresolvedPosition) {
       setTimeout(() => {
-        if (topicMatch) {
-          if (layoutVerbs.includes("remove")) {
-            removeCard(topicMatch.key);
+        if (topicMatches.length === 1) {
+          const [tm] = topicMatches;
+          if (layoutVerbsLocal.includes("remove")) {
+            removeCard(tm.key);
           } else {
-            addOrFocusCard(topicMatch.key);
-            if (topicMatch.key === "portfolio") {
+            addOrFocusCard(tm.key);
+            if (tm.key === "portfolio") {
               if (formatMatch) setPortfolioMode(formatMatch);
               setPortfolioSort(parsePortfolioSort(q) ?? { by: null, dir: null, limit: null });
             }
-            if (topicMatch.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
-            for (const verb of layoutVerbs) applyLayoutPatch({ [verb]: topicMatch.key });
+            if (tm.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
+            for (const verb of layoutVerbsLocal) applyLayoutPatch({ [verb]: tm.key });
+          }
+        } else {
+          for (const tm of topicMatches) {
+            addOrFocusCard(tm.key);
+            if (tm.key === "portfolio") {
+              if (formatMatch) setPortfolioMode(formatMatch);
+              setPortfolioSort(parsePortfolioSort(q) ?? { by: null, dir: null, limit: null });
+            }
+            if (tm.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
           }
         }
         if (designMatch) applyDesignPatch(designMatch);
@@ -560,14 +610,17 @@ export default function PromptConsole({
       };
       const ai = await api.parseConsole(q, context);
       let matched = false;
-      if (ai.dataSource) {
+      // "Build a view with my portfolio, P&L, and perps" names several at
+      // once — dataSources is an array precisely so one sentence can
+      // compose a whole board, not just add a single card per request.
+      for (const src of ai.dataSources ?? []) {
         matched = true;
-        addOrFocusCard(ai.dataSource);
-        if (ai.dataSource === "portfolio") {
+        addOrFocusCard(src);
+        if (src === "portfolio") {
           if (ai.display) setPortfolioMode(ai.display === "line" ? "table" : ai.display);
           setPortfolioSort({ by: ai.sortBy, dir: ai.sortDir, limit: ai.limit });
         }
-        if (ai.dataSource === "pnl" && ai.pnlPeriod) setPnlPeriod(ai.pnlPeriod);
+        if (src === "pnl" && ai.pnlPeriod) setPnlPeriod(ai.pnlPeriod);
       }
       if (ai.design) { matched = true; applyDesignPatch(ai.design); }
       if (ai.layout) { matched = true; applyLayoutPatch(ai.layout); }

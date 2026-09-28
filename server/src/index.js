@@ -1207,13 +1207,13 @@ async function parseConsolePrompt({ prompt, context }) {
   const system = `You classify a request about a financial dashboard's UI into a structured spec. The request may ask for real data to be shown, for the interface's look to change, for cards to be rearranged, or any combination of those in one sentence. Respond with ONLY a JSON object — no markdown, no prose.${contextBlock}
 
 Shape:
-{"dataSource":null,"display":null,"sortBy":null,"sortDir":null,"limit":null,"pnlPeriod":null,
+{"dataSources":[],"display":null,"sortBy":null,"sortDir":null,"limit":null,"pnlPeriod":null,
  "design":null,
  "layout":null,
  "summary":"one short plain sentence"}
 
 === DATA (what to show) ===
-Available data sources (a request must clearly be about one of these, or dataSource is null):
+Available data sources (list every one the request clearly names — a request can name several at once, e.g. "build a view with my portfolio, P&L, and perps" -> all three; "build my own trading view" IS this case, so read for every product mentioned rather than stopping at the first):
 - portfolio: the user's tokenized-stock/ETF holdings — each position has a symbol, name, price, dollar value, % weight of the portfolio, and quantity held.
 - perps: open leveraged perpetual-futures positions (Hyperliquid).
 - pnl: the account's perpetual-futures profit & loss over time, shown as a chart.
@@ -1221,13 +1221,13 @@ Available data sources (a request must clearly be about one of these, or dataSou
 - predictions: open Kalshi prediction-market positions.
 - strategies: active automated trading agents (DCA, delta-neutral, TWAP/VWAP, price triggers).
 
-- "dataSource": one of the six keys above, or null if the request isn't clearly about any of them.
-- "display": "table", "pie", or "line" if a specific visualization was asked for; otherwise null. "pie"/"donut" -> pie. "line"/"graph"/"chart"/"over time" -> line. "table"/"list" -> table.
+- "dataSources": an ARRAY of zero or more of the six keys above, in the order mentioned — empty array if the request isn't clearly about any of them (small talk, pure design/layout request, off-topic). "open positions" -> perps. "holdings"/"stocks"/"equities" -> portfolio. Never list a source the request doesn't actually name or clearly imply, and never list the same one twice.
+- "display": "table", "pie", or "line" if a specific visualization was asked for; otherwise null. "pie"/"donut" -> pie. "line"/"graph"/"chart"/"over time" -> line. "table"/"list" -> table. Applies to whichever listed source it's actually relevant to (display only means something for portfolio/pnl).
 - "sortBy": one of "value","weight","name","price" — ONLY meaningful for portfolio, null otherwise or if unspecified.
 - "sortDir": "asc" or "desc", or null.
 - "limit": a positive integer if a specific count was named or implied ("top 3" -> 3, "my biggest position" -> 1), otherwise null.
 - "pnlPeriod": one of "perpDay","perpWeek","perpMonth","perpAllTime" — ONLY meaningful for pnl, null otherwise or if unspecified.
-Rules: "biggest"/"largest"/"top N" -> sortBy "value", sortDir "desc", limit N (or 1). "smallest"/"worst" -> sortDir "asc". "alphabetically"/"by name" -> sortBy "name". Never invent a dataSource, count, or period the request doesn't support — leave null rather than guess.
+Rules: "biggest"/"largest"/"top N" -> sortBy "value", sortDir "desc", limit N (or 1). "smallest"/"worst" -> sortDir "asc". "alphabetically"/"by name" -> sortBy "name". Never invent a data source, count, or period the request doesn't support — leave out/null rather than guess.
 
 === DESIGN (what it should look like) ===
 Set "design" to null if nothing about appearance was requested. Otherwise an object with any of these, each null unless that specific thing was asked for:
@@ -1240,7 +1240,7 @@ Set "design" to null if nothing about appearance was requested. Otherwise an obj
 - "density": "cozy" or "compact" — only if spacing was requested.
 - "scene": one of "skyline","rain","stars","waves","aurora","mountains","none" — an actual background SCENE drawn behind everything else, not just a color. Colors alone can't evoke a specific PLACE, so use this whenever the request names or clearly evokes one: a city or skyline ("Tokyo", "New York", "downtown", "skyscrapers", "urban") -> "skyline". Rain/storm imagery ("rainy evening", "a storm") -> "rain". Night sky / stars / space -> "stars". Ocean/sea/beach/waves -> "waves". Aurora / northern lights / arctic -> "aurora". Mountains / alpine / peaks -> "mountains". "remove the background"/"plain background"/"no scene" -> "none". Leave null if the request is purely about color with no place/scene implied (e.g. "warm amber accent" alone -> customPalette only, scene stays null). When a place name implies BOTH a mood (color) and a visual motif (scene) — like "Tokyo" — set BOTH customPalette and scene in the same response; they're independent fields, not alternatives. If more than one scene could arguably apply, pick the single most visually distinctive one rather than guessing between several.
 
-VAGUE CHANGE REQUESTS — this is the important case, read carefully: "change the color scheme", "give it a new look", "switch it up", "try something different", "surprise me", "change the design" all CLEARLY ask for an appearance change but name no specifics. Do NOT return null here just because nothing concrete was named — a null design on a request like this means the button silently does nothing, which is worse than any reasonable guess. Instead, exercise real creative judgment and generate a full "customPalette" anyway (a scene is optional here — only add one if your chosen direction genuinely implies a place, don't force it): invent one specific, cohesive, tasteful direction of your own (pick an actual mood, place, era, or material — "1970s terracotta", "deep-sea bioluminescence", "brutalist concrete" — anything genuinely distinct, not a bland default), the same way you would for an explicit vibe description. If CURRENT STATE above shows an existing palette or theme, make the new one clearly different from it, not a near-duplicate. This "invent on a vague ask" rule applies ONLY to color/appearance — still leave "dataSource", "sortBy", "limit", "pnlPeriod" etc. null when unspecified, since guessing which numbers to show (rather than how something looks) really would be wrong.
+VAGUE CHANGE REQUESTS — this is the important case, read carefully: "change the color scheme", "give it a new look", "switch it up", "try something different", "surprise me", "change the design" all CLEARLY ask for an appearance change but name no specifics. Do NOT return null here just because nothing concrete was named — a null design on a request like this means the button silently does nothing, which is worse than any reasonable guess. Instead, exercise real creative judgment and generate a full "customPalette" anyway (a scene is optional here — only add one if your chosen direction genuinely implies a place, don't force it): invent one specific, cohesive, tasteful direction of your own (pick an actual mood, place, era, or material — "1970s terracotta", "deep-sea bioluminescence", "brutalist concrete" — anything genuinely distinct, not a bland default), the same way you would for an explicit vibe description. If CURRENT STATE above shows an existing palette or theme, make the new one clearly different from it, not a near-duplicate. This "invent on a vague ask" rule applies ONLY to color/appearance — still leave "dataSources" empty and "sortBy"/"limit"/"pnlPeriod" null when unspecified, since guessing which numbers to show (rather than how something looks) really would be wrong.
 
 === LAYOUT (how cards are arranged) ===
 Set "layout" to null if nothing about arrangement was requested. Otherwise an object, each field one of the six data-source keys above (naming which EXISTING or newly-requested card the instruction targets) or null, plus "shuffle":
@@ -1289,8 +1289,16 @@ Only set bringToFront/widen/narrow/remove when a specific card is clearly named 
   } : null;
   const layoutIsEmpty = layout && !layout.shuffle && [layout.bringToFront, layout.widen, layout.narrow, layout.remove].every((v) => v === null);
 
+  // Accepts the new array shape, with a defensive fallback to the old
+  // singular "dataSource" the model could in principle still emit —
+  // costs nothing and means a stray response format still resolves.
+  const rawSources = Array.isArray(parsed.dataSources)
+    ? parsed.dataSources
+    : (parsed.dataSource ? [parsed.dataSource] : []);
+  const dataSources = [...new Set(rawSources.filter((v) => CARD_KINDS.includes(v)))];
+
   return {
-    dataSource: oneOf(CARD_KINDS, parsed.dataSource),
+    dataSources,
     display: oneOf(["table", "pie", "line"], parsed.display),
     sortBy: oneOf(["value", "weight", "name", "price"], parsed.sortBy),
     sortDir: oneOf(["asc", "desc"], parsed.sortDir),
