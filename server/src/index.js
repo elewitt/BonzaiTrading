@@ -1146,6 +1146,74 @@ app.post("/api/parse-borrow", requireAuth, parseLimiter, async (req, res) => {
 });
 
 /**
+ * Prompt Mode's fallback classifier — the console's own client-side
+ * keyword table (PromptConsole.jsx's resolveIntent) handles the common,
+ * exactly-phrased cases instantly with no network round trip; this only
+ * ever runs when that local match fails, so a genuinely novel phrasing
+ * ("what's my biggest position", "sort my portfolio by size") still
+ * resolves into something real instead of a dead "I don't understand."
+ *
+ * Deliberately bounded, not a code generator: this maps a request onto a
+ * fixed set of Bonzai's own real data sources plus a small, honest set of
+ * display/sort/filter knobs that actually exist on that data — never
+ * arbitrary UI, since nothing about "any custom interface" should mean
+ * executing model-authored code against a real financial dashboard.
+ */
+async function parseConsolePrompt({ prompt }) {
+  if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not set on server");
+  if (!prompt) throw new Error("prompt required");
+
+  const system = `You classify a request to view financial data into a structured spec, for a product where the request drives which card appears on screen and how. Respond with ONLY a JSON object — no markdown, no prose.
+
+Available data sources (a request must clearly be about one of these, or dataSource is null):
+- portfolio: the user's tokenized-stock/ETF holdings — each position has a symbol, name, price, dollar value, % weight of the portfolio, and quantity held.
+- perps: open leveraged perpetual-futures positions (Hyperliquid).
+- pnl: the account's perpetual-futures profit & loss over time, shown as a chart.
+- borrow: collateral posted and USDC borrowed against it (Kamino).
+- predictions: open Kalshi prediction-market positions.
+- strategies: active automated trading agents (DCA, delta-neutral, TWAP/VWAP, price triggers).
+
+Shape: {"dataSource":"portfolio","display":"pie","sortBy":"value","sortDir":"desc","limit":3,"pnlPeriod":null,"summary":"one short plain sentence"}
+
+Fields:
+- "dataSource": one of "portfolio","perps","pnl","borrow","predictions","strategies", or null if the request isn't clearly about any of them (small talk, something unrelated, something else entirely).
+- "display": "table", "pie", or "line" if a specific visualization was asked for; otherwise null. "pie"/"donut" -> pie. "line"/"graph"/"chart"/"over time" -> line. "table"/"list" -> table.
+- "sortBy": one of "value","weight","name","price" — ONLY meaningful for portfolio, null otherwise or if unspecified.
+- "sortDir": "asc" or "desc", or null.
+- "limit": a positive integer if a specific count was named or implied ("top 3" -> 3, "my biggest position" -> 1), otherwise null.
+- "pnlPeriod": one of "perpDay","perpWeek","perpMonth","perpAllTime" — ONLY meaningful for pnl ("today"->perpDay, "this week"->perpWeek, "this month"->perpMonth, "all time"->perpAllTime), null otherwise or if unspecified.
+- "summary": one short plain sentence restating what you understood.
+
+Rules:
+- "biggest"/"largest"/"top N" -> sortBy "value", sortDir "desc", limit N (or 1 if no number given).
+- "smallest"/"worst" -> sortDir "asc".
+- "alphabetically"/"by name" -> sortBy "name".
+- Never invent a dataSource, count, or period the request doesn't support — leave the field null rather than guess.`;
+
+  const parsed = await callClaudeForJson({ system, prompt, maxTokens: 250, label: "parse-console" });
+
+  const oneOf = (list, v) => (list.includes(v) ? v : null);
+  return {
+    dataSource: oneOf(["portfolio", "perps", "pnl", "borrow", "predictions", "strategies"], parsed.dataSource),
+    display: oneOf(["table", "pie", "line"], parsed.display),
+    sortBy: oneOf(["value", "weight", "name", "price"], parsed.sortBy),
+    sortDir: oneOf(["asc", "desc"], parsed.sortDir),
+    limit: Number.isInteger(parsed.limit) && parsed.limit > 0 ? parsed.limit : null,
+    pnlPeriod: oneOf(["perpDay", "perpWeek", "perpMonth", "perpAllTime"], parsed.pnlPeriod),
+    summary: typeof parsed.summary === "string" ? parsed.summary : "",
+  };
+}
+
+app.post("/api/parse-console", requireAuth, parseLimiter, async (req, res) => {
+  try {
+    const { prompt } = req.body || {};
+    res.json(await parseConsolePrompt({ prompt }));
+  } catch (e) {
+    res.status(422).json({ error: String(e.message || e) });
+  }
+});
+
+/**
  * Prompt → a recurring DCA (dollar-cost averaging) plan — the ONLY thing
  * this parses. This is a deliberate scope boundary, not a limitation to
  * paper over: Strategy Agents intentionally supports curated, reviewed

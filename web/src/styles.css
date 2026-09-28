@@ -3551,6 +3551,21 @@ a.trow { color: inherit; text-decoration: none; }
 }
 .pc-clear-btn:hover { color: var(--loss); text-decoration-color: var(--loss); }
 
+.pc-mic-btn {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line);
+  background: none; color: var(--moss); cursor: pointer; transition: all .15s;
+}
+.pc-mic-btn:hover { border-color: var(--pine); color: var(--pine); }
+.pc-mic-listening {
+  border-color: var(--gold); color: var(--gold); background: color-mix(in srgb, var(--gold) 12%, transparent);
+  animation: pc-mic-pulse 1.3s ease-in-out infinite;
+}
+@keyframes pc-mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 35%, transparent); }
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--gold) 0%, transparent); }
+}
+
 .pc-examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; max-width: 640px; }
 .pc-example-chip { cursor: pointer; background: var(--card); font-family: inherit; }
 .pc-example-chip:hover { border-color: var(--pine); color: var(--pine); }

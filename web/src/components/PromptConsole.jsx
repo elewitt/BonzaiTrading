@@ -19,11 +19,17 @@ import PredictionPositionsPanel from "./PredictionPositionsPanel.jsx";
  * TimeSeriesChart) — "make it crisp" mostly meant "reuse what's already
  * crisp" rather than drawing a new chart language from scratch.
  *
- * Intent matching is a small client-side keyword table, deliberately not a
- * server round-trip to Claude — the whole point being tested here is that
- * asking feels instant. If this direction sticks, swap resolveIntent() for
- * a real classifier without touching anything else; the render side
- * doesn't care how `intentKey` was decided.
+ * Intent matching is a small client-side keyword table first — the whole
+ * point being tested here is that asking feels instant — and only when
+ * that local match fails does it fall back to a real Claude call
+ * (api.parseConsole, server-side in /api/parse-console) that classifies
+ * genuinely novel phrasing onto the same fixed set of real data sources
+ * plus a small, honest set of display/sort/filter knobs. That fallback is
+ * deliberately NOT a code/UI generator — "any custom interface" here means
+ * any request that resolves onto Bonzai's own real data, never arbitrary
+ * model-authored code running against a real financial dashboard. Both
+ * paths converge on the same addOrFocusCard/setPortfolioSort/etc. state,
+ * so the render side never needs to know which one decided.
  */
 const INTENTS = [
   { key: "pnl",         label: "P&L",                  test: /p&l|pnl|profit|\bloss(es)?\b|performance/i },
@@ -53,7 +59,7 @@ const PNL_PERIODS = [
   { key: "perpAllTime", label: "All" },
 ];
 
-const CLEAR_WORDS = /\bclear (the board|everything|all)\b|\bstart over\b|\breset\b/i;
+const CLEAR_WORDS = /\bclear (the )?(board|everything|all)\b|\bstart over\b|\breset\b/i;
 
 /**
  * "Customize the design" — a curated set of full palettes (not an
@@ -128,6 +134,27 @@ function parseDisplayMode(text) {
   return null;
 }
 
+/** A sort/limit word ("top 3", "biggest", "smallest first", "alphabetically")
+ * — checked locally, same rules as the server's parse-console prompt, so
+ * a request like "top 3 holdings as a pie chart" gets its limit applied
+ * instantly even though "holdings" alone already resolves the portfolio
+ * topic locally and would otherwise never reach the AI fallback. Returns
+ * null when the text carries no sort/limit signal at all, so the caller
+ * can fall back to clearing any previous sort. */
+function parsePortfolioSort(text) {
+  const topMatch = text.match(/\btop\s+(\d+)\b/i);
+  const smallest = /\bsmallest\b|\bworst\b|\blowest\b/i.test(text);
+  const biggest = /\bbiggest\b|\blargest\b|\bhighest\b/i.test(text);
+  const byName = /\balphabetical(ly)?\b|\bby name\b/i.test(text);
+  if (!topMatch && !smallest && !biggest && !byName) return null;
+  if (byName) return { by: "name", dir: smallest ? "desc" : "asc", limit: topMatch ? Number(topMatch[1]) : null };
+  return {
+    by: "value",
+    dir: smallest ? "asc" : "desc",
+    limit: topMatch ? Number(topMatch[1]) : (biggest || smallest ? 1 : null),
+  };
+}
+
 const LAYOUT_KEY = "bonzai_prompt_console_layout_v1";
 function loadLayout() {
   try {
@@ -154,6 +181,7 @@ export default function PromptConsole({
   const [cards, setCards] = useState(() => loadLayout()?.cards ?? []);
   const [focusedKind, setFocusedKind] = useState(null);
   const [portfolioMode, setPortfolioMode] = useState(() => loadLayout()?.portfolioMode ?? "table");
+  const [portfolioSort, setPortfolioSort] = useState(() => loadLayout()?.portfolioSort ?? { by: null, dir: null, limit: null });
   const [pnlPeriod, setPnlPeriod] = useState(() => loadLayout()?.pnlPeriod ?? "perpMonth");
   // The design half of "their own interface" — a palette and a density,
   // same persistence treatment as the layout itself.
@@ -163,8 +191,8 @@ export default function PromptConsole({
   const customizeRef = useRef(null);
 
   useEffect(() => {
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ cards, portfolioMode, pnlPeriod, theme, density })); } catch {}
-  }, [cards, portfolioMode, pnlPeriod, theme, density]);
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ cards, portfolioMode, portfolioSort, pnlPeriod, theme, density })); } catch {}
+  }, [cards, portfolioMode, portfolioSort, pnlPeriod, theme, density]);
 
   // Same click-outside convention as the main dashboard's own profile/
   // markets dropdowns (a ref + a mousedown listener) — not a full-screen
@@ -202,7 +230,7 @@ export default function PromptConsole({
     });
   };
 
-  const submit = (text) => {
+  const submit = async (text) => {
     const q = (text ?? query).trim();
     if (!q || phase === "materializing") return;
     setQuery(q); setAskedFor(q);
@@ -227,17 +255,89 @@ export default function PromptConsole({
     }
 
     setPhase("materializing");
-    setTimeout(() => {
-      if (!topicMatch) { setPhase("unknown"); return; }
-      addOrFocusCard(topicMatch.key);
-      if (topicMatch.key === "portfolio" && formatMatch) setPortfolioMode(formatMatch);
-      if (topicMatch.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
+
+    // The fast, instant path — an exact keyword match, no network round
+    // trip. A fresh "show me my portfolio" resets any sort/limit from an
+    // earlier request, but a sort/limit word in the SAME sentence ("top 3
+    // holdings...") still applies locally — otherwise a topic keyword like
+    // "holdings" would win the match and silently swallow the "top 3" that
+    // was asked for right alongside it, since it'd never reach the AI path.
+    if (topicMatch) {
+      setTimeout(() => {
+        addOrFocusCard(topicMatch.key);
+        if (topicMatch.key === "portfolio") {
+          if (formatMatch) setPortfolioMode(formatMatch);
+          setPortfolioSort(parsePortfolioSort(q) ?? { by: null, dir: null, limit: null });
+        }
+        if (topicMatch.key === "pnl") setPnlPeriod(parsePeriodFromText(q) ?? "perpMonth");
+        setPhase("settled");
+      }, 420);
+      return;
+    }
+
+    // No local keyword match — this is the "literally any request" path:
+    // a real Claude call maps genuinely novel phrasing ("what's my
+    // biggest position", "sort my portfolio by size, smallest first",
+    // "top 3 holdings as a pie chart") onto the same real data sources
+    // instead of a flat "I don't understand." Bounded, not a code
+    // generator — see parseConsolePrompt's own comment server-side for why.
+    try {
+      const ai = await api.parseConsole(q);
+      if (!ai.dataSource) { setPhase("unknown"); return; }
+      addOrFocusCard(ai.dataSource);
+      if (ai.dataSource === "portfolio") {
+        if (ai.display) setPortfolioMode(ai.display === "line" ? "table" : ai.display);
+        setPortfolioSort({ by: ai.sortBy, dir: ai.sortDir, limit: ai.limit });
+      }
+      if (ai.dataSource === "pnl" && ai.pnlPeriod) setPnlPeriod(ai.pnlPeriod);
       setPhase("settled");
-    }, 420);
+    } catch {
+      setPhase("unknown");
+    }
   };
 
   const clearQuery = () => { setQuery(""); setAskedFor(""); setPhase(cards.length ? "settled" : "idle"); };
   const clearBoard = () => { setCards([]); setFocusedKind(null); setQuery(""); setAskedFor(""); setPhase("idle"); };
+
+  // "Speak through the prompt" — the browser's own speech recognition
+  // (Chrome/Edge/Safari; no support in Firefox), so the mic button simply
+  // doesn't render where it wouldn't work, rather than a broken control
+  // with an error message explaining why. finalTranscript accumulates in
+  // the closure rather than React state so onend can read the finished
+  // phrase directly without a stale-closure risk.
+  const recognitionRef = useRef(null);
+  const [listening, setListening] = useState(false);
+  const voiceSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  const toggleListening = () => {
+    if (!voiceSupported) return;
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new Recognition();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    let finalTranscript = "";
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTranscript += t;
+        else interim += t;
+      }
+      setQuery((finalTranscript + interim).trim());
+    };
+    rec.onend = () => {
+      setListening(false);
+      // Submits whatever was actually heard as soon as you stop talking —
+      // "speak and it materializes" should feel like asking out loud, not
+      // dictating into a box you still have to press Go on afterward.
+      if (finalTranscript.trim()) submit(finalTranscript.trim());
+    };
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
+  };
 
   const docked = cards.length > 0 || phase !== "idle";
 
@@ -283,6 +383,17 @@ export default function PromptConsole({
             placeholder="Ask for anything — “show me my portfolio”"
             autoFocus
           />
+          {voiceSupported && (
+            <button
+              type="button"
+              className={`pc-mic-btn ${listening ? "pc-mic-listening" : ""}`}
+              onClick={toggleListening}
+              title={listening ? "Stop listening" : "Speak your request"}
+              aria-pressed={listening}
+            >
+              <MicIcon />
+            </button>
+          )}
           {docked ? (
             <>
               <button type="button" className="pc-new-btn" onClick={clearQuery}>New question</button>
@@ -320,7 +431,7 @@ export default function PromptConsole({
             {cards.map((kind, i) => {
               const frame = frameFor(kind, i);
               if (kind === "portfolio") return (
-                <PortfolioResult key={kind} portfolio={portfolio} mode={portfolioMode}
+                <PortfolioResult key={kind} portfolio={portfolio} mode={portfolioMode} sort={portfolioSort}
                   onModeChange={(m) => { setPortfolioMode(m); setFocusedKind("portfolio"); }}
                   onNavigate={onNavigate} {...frame} />
               );
@@ -349,6 +460,18 @@ export default function PromptConsole({
         )}
       </div>
     </div>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <line x1="8" y1="22" x2="16" y2="22" />
+    </svg>
   );
 }
 
@@ -451,23 +574,45 @@ function ResultShell({ title, headValue, valueClass, headSub, toggle, onNavigate
   );
 }
 
-function PortfolioResult({ portfolio, mode, onModeChange, onNavigate, ...frame }) {
-  const rows = portfolio?.rows ?? [];
-  if (!rows.length) {
+/** "Top 3 holdings", "smallest position", "sort by size" — applies
+ * server-classified sort/limit to the real rows. Defaults direction when
+ * the request didn't state one (value/weight/price -> biggest first,
+ * name -> A-Z), rather than requiring the model to always supply it. */
+function sortPortfolioRows(rows, sort) {
+  if (!sort?.by) return rows;
+  const dir = sort.dir ?? (sort.by === "name" ? "asc" : "desc");
+  const mul = dir === "asc" ? 1 : -1;
+  const sorted = [...rows].sort((a, b) => sort.by === "name"
+    ? mul * (a.name || a.symbol || "").localeCompare(b.name || b.symbol || "")
+    : mul * ((a[sort.by] ?? 0) - (b[sort.by] ?? 0)));
+  return sort.limit ? sorted.slice(0, sort.limit) : sorted;
+}
+
+function PortfolioResult({ portfolio, mode, sort, onModeChange, onNavigate, ...frame }) {
+  const allRows = portfolio?.rows ?? [];
+  if (!allRows.length) {
     return (
       <ResultShell title="Your Portfolio" headSub="Brokerage account" {...frame}>
         <p className="muted" style={{ padding: "12px 0" }}>No holdings yet — your portfolio is all cash.</p>
       </ResultShell>
     );
   }
+  const rows = sortPortfolioRows(allRows, sort);
+  // A limited subset (e.g. "top 3 holdings") is its own whole for the pie
+  // — proportions among just those positions, not slivers against a total
+  // that includes things not even shown. An unlimited sort still totals
+  // to the real portfolio value; only a limit changes what "100%" means.
+  const limitedTotal = sort?.limit ? rows.reduce((s, r) => s + (r.value || 0), 0) : portfolio.total;
   const toggle = (
     <PillToggle options={[{ key: "table", label: "Table" }, { key: "pie", label: "Pie" }]} value={mode} onChange={onModeChange} />
   );
   return (
     <ResultShell
       title="Your Portfolio"
-      headSub={`${rows.length} position${rows.length === 1 ? "" : "s"} · $${usd(portfolio.cashUsdc)} cash`}
-      headValue={`$${usd(portfolio.total)}`}
+      headSub={sort?.limit
+        ? `Top ${rows.length} of ${allRows.length} positions${sort.by !== "value" ? ` by ${sort.by}` : ""}`
+        : `${rows.length} position${rows.length === 1 ? "" : "s"} · $${usd(portfolio.cashUsdc)} cash`}
+      headValue={`$${usd(limitedTotal)}`}
       toggle={toggle}
       onNavigate={onNavigate} navLabel="Open Brokerage" navTarget="dash"
       {...frame} wide={mode === "pie"}
@@ -476,7 +621,7 @@ function PortfolioResult({ portfolio, mode, onModeChange, onNavigate, ...frame }
         <div className="pc-donut-wrap">
           {/* The real donut — same gradient-shaded wedges, legend, and
               click-to-highlight behavior as the main dashboard's own chart. */}
-          <Donut rows={rows} cash={portfolio.cashUsdc} total={portfolio.total} cashUsdy={portfolio.cashUsdy ?? 0} />
+          <Donut rows={rows} cash={sort?.limit ? 0 : portfolio.cashUsdc} total={limitedTotal} cashUsdy={sort?.limit ? 0 : (portfolio.cashUsdy ?? 0)} />
         </div>
       ) : (
         <div className="pc-rows">

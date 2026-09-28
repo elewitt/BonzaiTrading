@@ -61,6 +61,7 @@ export const api = {
   parse:    (prompt, current, total) => post("/api/parse", { prompt, current, total }),
   parsePerp: (prompt)             => post("/api/parse-perp", { prompt }),
   parseBorrow: (prompt)           => post("/api/parse-borrow", { prompt }),
+  parseConsole: (prompt)          => post("/api/parse-console", { prompt }),
   parseStrategy: (prompt)         => post("/api/parse-strategy", { prompt }),
   myReferralCode: ()              => get("/api/referrals/me"),
   attributeReferral: (body)       => post("/api/referrals/attribute", body),
