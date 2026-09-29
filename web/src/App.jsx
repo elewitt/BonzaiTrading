@@ -2684,9 +2684,15 @@ export default function App() {
               )}
             </div>
             <button className={`head-nav-btn ${screen === "agents" ? "active" : ""}`} onClick={() => setView("agents")}>Trading Agent</button>
+            {/* Prompt Mode nav entry removed 2026-09-29 — pulled from the
+                product while it's reworked further, not deleted. The
+                screen itself (view === "prompt", rendered below with
+                <PromptConsole>) and /api/parse-console server-side are
+                untouched, so restoring access is just re-adding this
+                button — nothing to rebuild.
             <button className={`head-nav-btn ${screen === "prompt" ? "active" : ""}`} onClick={() => setView("prompt")}>
               Prompt Mode <span className="cat-badge" style={{ marginLeft: 4 }}>BETA</span>
-            </button>
+            </button> */}
             <div className="profile-wrap" ref={profileRef}>
               <button className="head-nav-btn profile-btn" onClick={() => setProfileOpen((o) => !o)}>
                 My Profile
