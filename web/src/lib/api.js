@@ -277,6 +277,14 @@ export async function executeSwap({ inputMint, outputMint, amount, taker, signWi
 // module (a plain fetch wrapper, no React/Hyperliquid state) doesn't have.
 
 const DUST_USD = 0.01; // positions worth less than $0.01 are treated as dust (always hidden)
+// A share count this small is never a deliberate purchase — the app's own
+// buy flow is dollar-denominated, so even the smallest realistic intentional
+// buy of the priciest listed stock lands many orders of magnitude above
+// this. Below it, it's arithmetic residue (a sell-all or rebalance that
+// didn't land at exactly zero), the same way DUST_USD already treats a
+// sub-cent *priced* position as noise — this is that same judgment made
+// available for a position whose price isn't known yet (see below).
+const DUST_SHARES = 0.0001;
 
 /** Given holdings + prices, compute the invested rows and totals. */
 export function derivePortfolio(holdings, prices, registry, { yieldMode = false } = {}) {
@@ -303,7 +311,23 @@ export function derivePortfolio(holdings, prices, registry, { yieldMode = false 
     // with priceUnavailable set instead, so the UI can show it honestly
     // rather than hiding a real position.
     const priceUnavailable = prices[t.mint] == null;
-    if (priceUnavailable) { rows.push({ ...t, price: null, value: null, priceUnavailable: true }); continue; }
+    if (priceUnavailable) {
+      // BUT a share count this small can't be dust-filtered the normal way
+      // (that check needs a price, which is exactly what's missing) — and a
+      // dust-sized remainder is disproportionately likely to be the thing
+      // with no price in the first place (a quote this small often has no
+      // routable liquidity at all, confirmed in a real case — see the
+      // "no real AMM liquidity" fix). Left unguarded, that produced a real,
+      // reproducible bug: a true-zero-value rounding remainder from a past
+      // sell/rebalance would sit on the dashboard indefinitely as a full
+      // "Goldman Sachs — Price unavailable" row, reading as a real
+      // position the user never actually holds, instead of the dust it
+      // is — this is that same filter, just applied before price exists
+      // rather than after.
+      if ((t.uiAmount || 0) < DUST_SHARES) { dustRows.push({ ...t, price: null, value: null }); continue; }
+      rows.push({ ...t, price: null, value: null, priceUnavailable: true });
+      continue;
+    }
     const price = prices[t.mint];
     const value = (t.uiAmount || 0) * price;
     if (value < DUST_USD) { dustRows.push({ ...t, price, value }); continue; }
