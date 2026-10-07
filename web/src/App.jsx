@@ -696,6 +696,26 @@ export default function App() {
     return () => clearInterval(id);
   }, [registry]);
 
+  // ——— fast top-up: prices for just what's actually HELD —————
+  // The poll above covers the full registry (400+ mints — xStocks + Ondo)
+  // because other screens (Markets browsing, Portfolio Builder previews)
+  // need that broad coverage. That means ~10 concurrent 50-mint batches
+  // against Jupiter's shared rate limit every cycle — confirmed as a real,
+  // reproducible failure: a user's own ~8 held assets can land in whichever
+  // batches lose that race, cycle after cycle, leaving real positions
+  // stuck on "Price unavailable" for minutes rather than one poll's worth
+  // of delay. The dashboard itself never needs all 400+ prices to render
+  // correctly — just these few — so fetching them separately, in a batch
+  // small enough to essentially never trip the limit, gets the portfolio
+  // to its real total fast regardless of how backed-up the full poll is.
+  // Runs whenever `holdings` changes (fires immediately on first load, and
+  // again on every 30s holdings refresh) — no new interval needed.
+  useEffect(() => {
+    const heldMints = (holdings?.tokens || []).map((t) => t.mint).filter(Boolean);
+    if (!heldMints.length) return;
+    api.prices(heldMints).then((fresh) => setPrices((prev) => ({ ...prev, ...fresh }))).catch(() => {});
+  }, [holdings]);
+
   /* ——— holdings: poll every 30s ——— */
   const refreshHoldings = useCallback(() => {
     if (!address) return Promise.resolve();
