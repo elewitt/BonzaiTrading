@@ -794,6 +794,24 @@ export default function App() {
     return inRange.length >= 2 ? inRange : history;
   }, [history, statsPeriod]);
 
+  // Today's change, next to the big total up top — independent of
+  // whatever period the Portfolio Stats flip-card's own toggle is
+  // currently set to, so the headline number always reads as "today"
+  // rather than shifting if someone left that card on "Week" or "Month".
+  // Hidden entirely (not a "—" placeholder) when there isn't yet a day's
+  // worth of real history to compare against, same "don't show a stat
+  // that isn't real yet" instinct as the flip-card's own fallback, just
+  // omitted rather than dashed since this sits right next to the
+  // headline figure rather than inside its own dedicated stats panel.
+  const dayChangePct = useMemo(() => {
+    const cutoff = Date.now() - STATS_PERIOD_MS.perpDay;
+    const inRange = history.filter((p) => p.ts >= cutoff);
+    if (inRange.length < 2) return null;
+    const first = inRange[0].v, last = inRange[inRange.length - 1].v;
+    if (first <= 0) return null;
+    return ((last - first) / first) * 100;
+  }, [history]);
+
   /* ——— portfolio history: load from localStorage when address changes ——— */
   useEffect(() => {
     if (!address) return;
@@ -2505,7 +2523,15 @@ export default function App() {
             </div>
           </div>
 
-          <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} onAssetClick={setAssetInfoSymbol} />
+          {/* No legend here — the full Positions table below (dash-grid)
+              is the canonical holdings list with its own Quantity/Sell/
+              Lend columns; a second near-identical list stacked right
+              under this one was pure duplication, not a second view.
+              Sized up (not the default 220) since without a legend beside
+              it to fill the card's width, the chart is the whole point of
+              this card now — a small centered circle in a wide card read
+              as leftover space rather than a deliberate hero chart. */}
+          <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} showLegend={false} size={280} />
           {portfolio.total > 0 && (
             <div className="alloc-actions">
               {portfolio.rows.length >= 1 && (
@@ -3072,7 +3098,14 @@ export default function App() {
                   </svg>
                 </button>
               </div>
-              <h2 className="display value-serif">${usd(myPortfolioTotal)}</h2>
+              <div className="hero-value-row">
+                <h2 className="display value-serif">${usd(myPortfolioTotal)}</h2>
+                {dayChangePct != null && (
+                  <span className={`lvp-pnl-focal-chip mono hero-value-chip ${dayChangePct >= 0 ? "gain" : "loss"}`}>
+                    {dayChangePct >= 0 ? "+" : ""}{dayChangePct.toFixed(2)}% today
+                  </span>
+                )}
+              </div>
               <div className="yield-ctrl">
                 <span className="yield-ctrl-label">Earn Yield On Idle Cash</span>
                 <div className="seg-ctrl">
@@ -3136,7 +3169,10 @@ export default function App() {
                 product-summary card above. */}
             <div className="hero-mobile-buttons">
               <div className="hero-btns">
-                <button className="btn ghost hero-action-btn" onClick={() => setDepositOpen(true)}>Deposit</button>
+                {/* Primary, not ghost — the one default next move for most
+                    visits, same treatment the empty-brokerage state's own
+                    Deposit button already gets; Withdraw stays secondary. */}
+                <button className="btn primary hero-action-btn" onClick={() => setDepositOpen(true)}>Deposit</button>
                 <button className="btn ghost hero-action-btn" onClick={() => {
                   setWithdrawAsset(portfolio?.rows[0]?.symbol || "USDC");
                   setWithdrawAddress("");
@@ -3170,7 +3206,10 @@ export default function App() {
               </div>
               {error && <p className="err tiny">{error}</p>}
               <div className="hero-btns">
-                <button className="btn ghost hero-action-btn" onClick={() => setDepositOpen(true)}>Deposit</button>
+                {/* Primary, not ghost — the one default next move for most
+                    visits, same treatment the empty-brokerage state's own
+                    Deposit button already gets; Withdraw stays secondary. */}
+                <button className="btn primary hero-action-btn" onClick={() => setDepositOpen(true)}>Deposit</button>
                 <button className="btn ghost hero-action-btn" onClick={() => {
                   setWithdrawAsset(portfolio?.rows[0]?.symbol || "USDC");
                   setWithdrawAddress("");

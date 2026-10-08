@@ -30,7 +30,7 @@ function shade(hex, percent) {
   return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }
 
-export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick }) {
+export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick, showLegend = true, size = 220 }) {
   const [active, setActive] = useState(null);
   // Dashboard cards render the same Donut twice at once (mobile + desktop
   // copies, CSS-toggled rather than removed from the DOM — see
@@ -67,7 +67,7 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
     });
   }, [rows, cash, total, cashUsdy]);
 
-  const S = 220, cx = S / 2, cy = S / 2, R = 100, r = 62;
+  const S = size, cx = S / 2, cy = S / 2, R = S * (100 / 220), r = S * (62 / 220);
   const pol = (rad, ang) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
   const pad = segs.length > 1 ? 0.018 : 0;
   const arcPath = (a0, a1) => {
@@ -81,7 +81,7 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
   const nPos = rows.length + (cash > 0.005 ? 1 : 0);
 
   return (
-    <div className="alloc-row">
+    <div className={`alloc-row ${!showLegend ? "alloc-row-chart-only" : ""}`}>
       <svg width={S} height={S} viewBox={`0 0 ${S} ${S}`} role="img"
         aria-label="Portfolio allocation" onMouseLeave={() => setActive(null)}>
         <defs>
@@ -145,6 +145,7 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
         )}
       </svg>
 
+      {showLegend && (
       <div className="alloc-legend">
         <div className="legend-header tiny label">
           <span />
@@ -190,6 +191,7 @@ export default function Donut({ rows, cash, total, cashUsdy = 0, onAssetClick })
           </button>
         ))}
       </div>
+      )}
     </div>
   );
 }

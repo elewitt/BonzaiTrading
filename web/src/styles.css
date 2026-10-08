@@ -189,6 +189,15 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .display.sm  { font-size: 30px; letter-spacing: -.02em; }
 .value-serif { font-size: 56px; margin: 2px 0 8px; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+/* The day's change, right beside the headline total — previously the
+   single most-expected number on a finance dashboard home screen
+   ("how am I doing today") lived one click away behind the Portfolio
+   Stats flip-card below instead of up top where the eye actually lands
+   first. */
+.hero-value-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.hero-value-row .value-serif { margin-bottom: 0; }
+.hero-value-chip { font-size: 15px; white-space: nowrap; }
+@media (max-width: 600px) { .hero-value-chip { font-size: 13px; } }
 .lede    { color: var(--moss); font-size: 16px; max-width: 50ch; margin: 0 0 30px; line-height: 1.68; }
 .lede.sm { font-size: 14px; margin-bottom: 14px; line-height: 1.58; }
 
@@ -789,6 +798,12 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .alloc-card .label { display: block; margin-bottom: 4px; }
 .alloc-row { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; }
 @media(max-width:640px) { .alloc-row { grid-template-columns: 1fr; justify-items: center; } }
+/* The brokerage hero card drops the legend entirely (the full Positions
+   table below is the single canonical holdings list now — see dash-grid
+   JSX) and keeps just the chart, so the single-column grid above would
+   otherwise leave it pinned to the left with a dead gap where the legend
+   used to be. */
+.alloc-row-chart-only { grid-template-columns: 1fr; justify-items: center; padding: 8px 0 4px; }
 .donut-label { font-family: 'Instrument Sans', sans-serif; font-size: 11px; fill: var(--moss); text-transform: uppercase; letter-spacing: .12em; }
 .donut-value { font-family: 'Young Serif', Georgia, serif; font-size: 22px; fill: var(--ink); }
 .donut-sub   { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: var(--moss); }
@@ -829,8 +844,14 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 .lg-price { text-align: right; font-size: 13px; color: var(--moss); }
 .lg-val   { text-align: right; font-size: 13px; font-weight: 500; }
 .lg-alloc { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
-.alloc-bar-track { flex: 1; height: 3px; background: var(--line); border-radius: 99px; overflow: hidden; min-width: 30px; }
-.alloc-bar-fill  { height: 100%; border-radius: 99px; transition: width .4s ease; opacity: .8; }
+/* Already color-matched per-wedge (background is set inline from the
+   segment's own color in Donut.jsx) — but at 3px/opacity .8 the pale end
+   of the wedge gradient (light green, light gray cash-gold) barely
+   registers against --line, so a 35% and a 7% position read as nearly
+   the same length at a glance. Taller + fuller opacity, not a color
+   change — the point was always legibility, not the color itself. */
+.alloc-bar-track { flex: 1; height: 5px; background: var(--line); border-radius: 99px; overflow: hidden; min-width: 30px; }
+.alloc-bar-fill  { height: 100%; border-radius: 99px; transition: width .4s ease; }
 .lg-pct { color: var(--moss); width: 38px; text-align: right; flex-shrink: 0; }
 /* Mobile: 5 cramped columns (Price/Value/Allocation all fighting for
    space next to an already-ellipsis-truncated name) become a 2-row card
