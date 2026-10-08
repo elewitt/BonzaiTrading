@@ -2523,15 +2523,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* No legend here — the full Positions table below (dash-grid)
-              is the canonical holdings list with its own Quantity/Sell/
-              Lend columns; a second near-identical list stacked right
-              under this one was pure duplication, not a second view.
-              Sized up (not the default 220) since without a legend beside
-              it to fill the card's width, the chart is the whole point of
-              this card now — a small centered circle in a wide card read
-              as leftover space rather than a deliberate hero chart. */}
-          <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} showLegend={false} size={280} />
+          <Donut rows={displayPortfolio.rows} cash={displayPortfolio.cash} total={displayPortfolio.total} cashUsdy={displayPortfolio.cashUsdy} onAssetClick={setAssetInfoSymbol} />
           {portfolio.total > 0 && (
             <div className="alloc-actions">
               {portfolio.rows.length >= 1 && (
