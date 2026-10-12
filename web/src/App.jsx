@@ -44,12 +44,39 @@ const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 // threshold matches MAX_PRICE_IMPACT_PCT server-side (server/src/index.js)
 // — at that point the real trade would actually be rejected, not just risky.
 function impactBadge(impact) {
-  if (!impact) return null;
-  if (impact.error) return { label: "no quote available", className: "warn" };
+  if (!impact || impact.error) return null; // couldn't fetch a preview quote — not worth alarming the user over
   const pct = impact.priceImpactPct;
   if (pct >= 5) return { label: `${pct.toFixed(1)}% impact — likely to fail`, className: "warn" };
   if (pct >= 2) return { label: `${pct.toFixed(1)}% impact`, className: "gold" };
   return null; // normal — no badge needed
+}
+
+// Rows for the "Routing your swaps" execution modal. A plain stock-to-stock
+// swap (sell AAPL, buy TSLA) is really one user-facing move even though it
+// takes two on-chain legs through USDC — showing "AAPL → USDC" then
+// "USDC → TSLA" makes a single swap look like two confusing, unrelated
+// trades. Collapse that exact pair into one "AAPL → TSLA" row, tracking
+// whichever leg hasn't finished yet. Bigger rebalances (3+ legs) keep USDC
+// visible since it's a genuine shared pool there, not a 1:1 pass-through.
+function buildExecLegRows(legs) {
+  if (legs.length === 2 && legs[0]?.side === "sell" && legs[1]?.side === "buy") {
+    const [sell, buy] = legs;
+    const status = buy.status === "confirmed" ? "confirmed"
+      : buy.status === "failed" ? "failed"
+      : sell.status === "failed" ? "failed"
+      : sell.status !== "confirmed" ? sell.status
+      : buy.status;
+    return [{
+      route: `${displayTicker(sell.symbol)} → ${displayTicker(buy.symbol)}`,
+      usd: sell.usd, status, sig: buy.sig, err: buy.err || sell.err,
+    }];
+  }
+  return legs.map((l) => ({
+    route: l.side === "send" ? `${displayTicker(l.symbol) || "USDC"} → ${short(l.to)}`
+      : l.side === "buy" ? `USDC → ${displayTicker(l.symbol)}`
+      : `${displayTicker(l.symbol)} → USDC`,
+    usd: l.usd, status: l.status, sig: l.sig, err: l.err,
+  }));
 }
 // Proposal-body renderers, shared between each domain's own single-prompt
 // confirm modal and the compound multi-op review modal (App body, below) —
@@ -583,6 +610,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [proposal]);
   const [legs, setLegs] = useState([]);
+  const execLegRows = useMemo(() => buildExecLegRows(legs), [legs]);
   const [error, setError] = useState("");
   const [investAmountInput, setInvestAmountInput] = useState("");
   const [statsFlipped, setStatsFlipped] = useState(false);
@@ -793,24 +821,6 @@ export default function App() {
     const inRange = history.filter((p) => p.ts >= cutoff);
     return inRange.length >= 2 ? inRange : history;
   }, [history, statsPeriod]);
-
-  // Today's change, next to the big total up top — independent of
-  // whatever period the Portfolio Stats flip-card's own toggle is
-  // currently set to, so the headline number always reads as "today"
-  // rather than shifting if someone left that card on "Week" or "Month".
-  // Hidden entirely (not a "—" placeholder) when there isn't yet a day's
-  // worth of real history to compare against, same "don't show a stat
-  // that isn't real yet" instinct as the flip-card's own fallback, just
-  // omitted rather than dashed since this sits right next to the
-  // headline figure rather than inside its own dedicated stats panel.
-  const dayChangePct = useMemo(() => {
-    const cutoff = Date.now() - STATS_PERIOD_MS.perpDay;
-    const inRange = history.filter((p) => p.ts >= cutoff);
-    if (inRange.length < 2) return null;
-    const first = inRange[0].v, last = inRange[inRange.length - 1].v;
-    if (first <= 0) return null;
-    return ((last - first) / first) * 100;
-  }, [history]);
 
   /* ——— portfolio history: load from localStorage when address changes ——— */
   useEffect(() => {
@@ -3092,11 +3102,6 @@ export default function App() {
               </div>
               <div className="hero-value-row">
                 <h2 className="display value-serif">${usd(myPortfolioTotal)}</h2>
-                {dayChangePct != null && (
-                  <span className={`lvp-pnl-focal-chip mono hero-value-chip ${dayChangePct >= 0 ? "gain" : "loss"}`}>
-                    {dayChangePct >= 0 ? "+" : ""}{dayChangePct.toFixed(2)}% today
-                  </span>
-                )}
               </div>
               <div className="yield-ctrl">
                 <span className="yield-ctrl-label">Earn Yield On Idle Cash</span>
@@ -4092,12 +4097,12 @@ export default function App() {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span className="tiny muted mono">
-                  {legs.filter((l) => l.status === "confirmed").length} / {legs.length} confirmed
+                  {execLegRows.filter((l) => l.status === "confirmed").length} / {execLegRows.length} confirmed
                 </span>
                 {!busy.current && <button className="x" onClick={() => setExecuteOpen(false)}>×</button>}
               </div>
             </div>
-            {legs.map((l, i) => (
+            {execLegRows.map((l, i) => (
               <div className={`leg ${l.status}`} key={i}>
                 <span className={`leg-icon-badge ${l.status}`}>
                   {l.status === "queued"    && "○"}
@@ -4107,11 +4112,7 @@ export default function App() {
                   {l.status === "confirmed" && "✓"}
                   {l.status === "failed"    && "×"}
                 </span>
-                <span className="leg-route mono">
-                  {l.side === "send" ? `${displayTicker(l.symbol) || "USDC"} → ${short(l.to)}`
-                    : l.side === "buy" ? `USDC → ${displayTicker(l.symbol)}`
-                    : `${displayTicker(l.symbol)} → USDC`}
-                </span>
+                <span className="leg-route mono">{l.route}</span>
                 <span className="mono tiny muted">${usd(l.usd)}</span>
                 <span className={`leg-status-badge ${l.status}`}>
                   {l.status === "queued"    && "Pending"}

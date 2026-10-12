@@ -189,15 +189,8 @@ body { margin: 0; -webkit-font-smoothing: antialiased; }
 }
 .display.sm  { font-size: 30px; letter-spacing: -.02em; }
 .value-serif { font-size: 56px; margin: 2px 0 8px; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
-/* The day's change, right beside the headline total — previously the
-   single most-expected number on a finance dashboard home screen
-   ("how am I doing today") lived one click away behind the Portfolio
-   Stats flip-card below instead of up top where the eye actually lands
-   first. */
 .hero-value-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .hero-value-row .value-serif { margin-bottom: 0; }
-.hero-value-chip { font-size: 15px; white-space: nowrap; }
-@media (max-width: 600px) { .hero-value-chip { font-size: 13px; } }
 .lede    { color: var(--moss); font-size: 16px; max-width: 50ch; margin: 0 0 30px; line-height: 1.68; }
 .lede.sm { font-size: 14px; margin-bottom: 14px; line-height: 1.58; }
 
